@@ -20,7 +20,7 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.1.3"
+readonly ARMAZE_VERSION="0.1.4"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
 
@@ -28,6 +28,9 @@ ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:-${0:A:h:h}}"
 ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:A}"
 
 typeset -ga SELECTED
+typeset -g  APP_ACTION=quit   # what the app decided: add | update | quit
+typeset -ga FR                # frame under construction while UI_CAPTURE=1
+typeset -gi UI_CAPTURE=0      # 1: ui_line/ui_edge append to FR instead of printing
 
 # ---------------------------------------------------------------------------
 # Output helpers
@@ -152,17 +155,21 @@ ui_trunc_r() {  # <text> <width>
 }
 ui_trunc() { ui_trunc_r "$1" "$2"; print -r -- "$REPLY" }
 
+# Where a finished line goes: printed, or collected into FR while the app is
+# building a frame (UI_CAPTURE=1), so a whole screen is emitted in one write.
+ui_emit() { if (( UI_CAPTURE )); then FR+=("$1"); else print -r -- "$1"; fi }
+
 # One line of the layout. Inside a box: left border, content padded to UI_COLS,
 # right border. Outside (UI_BOX=0) the content prints plain, so the pickers that
 # read from stdin can keep using ui_section/ui_item below a closed box.
 ui_line() {  # [content]
   local s e=''
   ui_trunc_r "${1:-}" $UI_COLS; s=$REPLY
-  if (( ! UI_BOX )); then print -r -- "$s"; return; fi
+  if (( ! UI_BOX )); then ui_emit "$s"; return; fi
   local plain=${s//$'\e'\[[0-9;]#m/}
   local -i pad=$(( UI_COLS - ${(m)#plain} ))
   (( pad < 0 )) && pad=0
-  print -r -- "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${B_V}${C_RESET} ${s}${C_RESET}${(pl:$pad:: :)e} ${C_SHADOW}${B_V}${C_RESET}"
+  ui_emit "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${B_V}${C_RESET} ${s}${C_RESET}${(pl:$pad:: :)e} ${C_SHADOW}${B_V}${C_RESET}"
 }
 ui_blank() { ui_line '' }
 
@@ -170,22 +177,25 @@ ui_blank() { ui_line '' }
 # gets borders; ui_rule is a divider inside the box, a dotted rule outside it.
 ui_edge() {  # <left corner> <right corner>
   local e=''
-  print -r -- "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${1}$(ui_fill $(( UI_WIDTH - 2 )) "$B_H")${2}${C_RESET}"
+  local -i n=$(( UI_WIDTH - 2 ))
+  ui_emit "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${1}${(pl:$n::$B_H:)e}${2}${C_RESET}"
 }
 ui_top()    { UI_BOX=1; ui_edge "$B_TL" "$B_TR" }
 ui_bottom() { ui_edge "$B_BL" "$B_BR"; UI_BOX=0 }
 ui_rule() {
+  local e=''
   if (( UI_BOX )); then ui_edge "$B_LT" "$B_RT"
-  else print -r -- "${C_SHADOW}$(ui_fill $UI_COLS "$G_DASH")${C_RESET}"
+  else ui_emit "${C_SHADOW}${(pl:$UI_COLS::$G_DASH:)e}${C_RESET}"
   fi
 }
 
 # Centre a (possibly coloured) line within the box.
 ui_center() {
-  local -i pad=$(( (UI_COLS - $(ui_vis "$1")) / 2 ))
-  if (( pad > 0 )); then ui_line "$(ui_fill $pad ' ')$1"
-  else ui_line "$1"
-  fi
+  local e=''
+  ui_vis_r "$1"
+  local -i pad=$(( (UI_COLS - REPLY) / 2 ))
+  (( pad < 0 )) && pad=0
+  ui_line "${(pl:$pad:: :)e}$1"
 }
 
 # Wordmark plus the command bar, current command highlighted.
@@ -193,7 +203,7 @@ ui_banner() {  # <current command>
   local cur=$1 word='ARMAZE AI STACK'
   local -a rows=('' '' '') g
   local c; local -i j r art=0
-  print
+  (( UI_CAPTURE )) || print   # breathing room above the box; the app starts on a cleared screen instead
   ui_top
   ui_blank
   if ui_unicode; then
@@ -219,13 +229,28 @@ ui_banner() {  # <current command>
   ui_center "${bar%  }"
 }
 
-# A rule, one line with $1 on the left and $2 on the right, a rule.
+# A rule, one line with $1 on the left and $2 on the right, a rule. When both
+# don't fit, the right side is capped at half the width and the left side is
+# trimmed to what remains, so the line stays a single line.
 ui_status() {  # <left> <right>
-  local -i gap=$(( UI_COLS - $(ui_vis "$1") - $(ui_vis "$2") ))
-  ui_rule
-  if (( gap >= 2 )); then ui_line "$1$(ui_fill $gap ' ')$2"
-  else ui_line "$1"; ui_line "$2"
+  local left=$1 right=$2 e=''
+  local -i lw rw gap
+  ui_vis_r "$left"; lw=$REPLY
+  ui_vis_r "$right"; rw=$REPLY
+  gap=$(( UI_COLS - lw - rw ))
+  if (( gap < 2 && rw > UI_COLS / 2 )); then
+    ui_trunc_r "$right" $(( UI_COLS / 2 )); right=$REPLY
+    ui_vis_r "$right"; rw=$REPLY
+    gap=$(( UI_COLS - lw - rw ))
   fi
+  if (( gap < 2 )); then
+    ui_trunc_r "$left" $(( UI_COLS - rw - 2 )); left=$REPLY
+    ui_vis_r "$left"; lw=$REPLY
+    gap=$(( UI_COLS - lw - rw ))
+    (( gap < 1 )) && gap=1
+  fi
+  ui_rule
+  ui_line "${left}${(pl:$gap:: :)e}${right}"
   ui_rule
 }
 
@@ -270,8 +295,9 @@ usage_text() {
 ${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to a repo
 
 ${C_BOLD}Usage${C_RESET}
+  aistack                                  Open the app on the add tab
   aistack list [skills|agents] [--names]   List what the stack offers
-  aistack add [options] [NAME ...]         Add components to a repo (picker if no NAME)
+  aistack add [options] [NAME ...]         Add components to a repo (the app if no NAME)
   aistack update [--to DIR]                Pull the latest stack, then refresh this project
   aistack root                             Print the stack checkout path
   aistack help | -h | --help               Show this help
@@ -288,13 +314,15 @@ ${C_BOLD}add options${C_RESET}
   -l, --link              Symlink instead of copy (handy while developing a skill)
 
   NAME may be bare (pr-review) or qualified (skills/pr-review, agents/reviewer).
-  Without NAME: arrow keys or j/k move, space toggles, a toggles all, enter adds, q cancels.
-  ARMAZE_PICKER=menu for a numbered list, =fzf for fuzzy search.
+  Without NAME the app opens on the add tab: tab / shift-tab switch tabs, arrows or j/k move,
+  space toggles, a toggles all, enter adds, q quits. Plain aistack does the same.
+  ARMAZE_PICKER=menu for a numbered list instead, =fzf for fuzzy search.
   ARMAZE_ICONS=0 for ASCII markers; ARMAZE_WIDTH=N box width (default 100); ARMAZE_ALIGN=left.
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
   Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies.
+  In a terminal it opens the app's update tab; enter runs it. Piped or scripted, it just runs.
 
 ${C_BOLD}Layouts${C_RESET}
   claude    .claude/skills/<name>/    .claude/agents/<name>.md
@@ -306,6 +334,7 @@ USAGE
 
 usage() {
   if (( ! UI )); then usage_text; return; fi
+  if app_available; then app_open help; return; fi
   ui_banner help
   ui_blank
   local line
@@ -534,18 +563,13 @@ resolve_name() {  # <arg> <allowed types...>
   esac
 }
 
-# Which picker `add` uses when no names are given:
-#   tui   arrow keys + space, drawn in place (needs a terminal on stdin and stdout)
-#   menu  numbered list read from stdin (no terminal, ARMAZE_NO_FZF=1, or ARMAZE_PICKER=menu)
-#   fzf   fuzzy multi-select, opt-in with ARMAZE_PICKER=fzf
+# Which stdin-reading picker `add` falls back to when the app can't run
+# (see app_available): the numbered menu, or fzf when asked for with
+# ARMAZE_PICKER=fzf and installed.
 pick_mode() {  # sets REPLY (not printed: inside $(...) stdout is a pipe and the tty test would lie)
   case ${ARMAZE_PICKER:-auto} in
-    fzf)  (( $+commands[fzf] )) && REPLY=fzf || REPLY=menu ;;
-    menu) REPLY=menu ;;
-    *)    if [[ -n ${ARMAZE_NO_FZF:-} ]]; then REPLY=menu
-          elif [[ -t 0 && -t 1 ]]; then REPLY=tui
-          else REPLY=menu
-          fi ;;
+    fzf) (( $+commands[fzf] )) && REPLY=fzf || REPLY=menu ;;
+    *)   REPLY=menu ;;
   esac
 }
 
@@ -610,17 +634,36 @@ pick_fzf() {  # <type> [dest dir]
   SELECTED=("${(@)SELECTED:#}")
 }
 
-# In-place checklist across all given types: arrows or j/k move, space toggles,
-# a toggles everything, enter confirms, q or esc cancels. Fills SELECTED with
-# "type<TAB>name". Reads the caller's $target and $dest_rel (zsh scoping is
-# dynamic) to tag components that are already installed.
-pick_tui() {  # <types...>
+# ---------------------------------------------------------------------------
+# The app: one screen, four tabs — list · add · update · help. The screen is
+# cleared and the whole frame is redrawn from the top on every key, so nothing
+# depends on cursor arithmetic. tab / shift-tab (or ← →) switch tabs; each tab
+# lists its own keys in the footer; q or esc quits.
+#
+# Runs only when stdin and stdout are both terminals and the picker isn't forced
+# to menu/fzf (app_available). Sets APP_ACTION to add | update | quit and, for
+# add, SELECTED to "type<TAB>name" entries. Reads target, platform, dest_rel,
+# types and add_ok from the caller (zsh scoping is dynamic).
+# ---------------------------------------------------------------------------
+readonly -a TABS=(list add update help)
+
+app_available() {
+  (( UI )) || return 1
+  [[ -t 0 && -t 1 ]] || return 1
+  [[ -z ${ARMAZE_NO_FZF:-} ]] || return 1
+  [[ ${ARMAZE_PICKER:-auto} == (auto|tui) ]]
+}
+
+tui() {  # <start tab>
   setopt local_options local_traps
-  local -a r_type=() r_name=() r_desc=() r_tag=()   # one entry per drawn row; r_type '' = not selectable
-  local -a names
+  local -i tab=${TABS[(Ie)$1]}
+  (( tab )) || tab=2
+
+  # Rows for the list and add tabs: one entry per drawn row; r_type '' = not selectable.
+  local -a r_type=() r_name=() r_desc=() r_tag=() names
   local type name desc
-  local -i i n=0
-  for type in "$@"; do
+  local -i i
+  for type in "${types[@]}"; do
     (( $#r_type )) && { r_type+=(''); r_name+=(''); r_desc+=(''); r_tag+=(blank) }
     r_type+=(''); r_name+=("$type"); r_desc+=(''); r_tag+=(header)
     names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
@@ -628,107 +671,228 @@ pick_tui() {  # <types...>
     for name in "${names[@]}"; do
       desc=$(component_description "$(component_doc "$type" "$name")")
       r_type+=("$type"); r_name+=("$name"); r_desc+=("${desc:-}")
-      r_tag+=("$(pick_tag "$type" "$name" "${target:-}/${dest_rel[$type]:-}")")
-      (( n += 1 ))
+      r_tag+=("$(pick_tag "$type" "$name" "$target/${dest_rel[$type]}")")
     done
   done
-  SELECTED=()
-  if (( ! n )); then
-    print -r -- "${C_MUTED}nothing to pick — the stack is empty${C_RESET}"
-    return 0
-  fi
-
-  # Selectable rows, cursor position within them, marks.
   local -a sel=()
   for (( i = 1; i <= $#r_type; i++ )); do [[ -n ${r_type[i]} ]] && sel+=($i); done
-  local -i pos=1 total=$#r_type marked_n=0
+  local -i pos=1 total=$#r_type marked_n=0 rtop=1
   local -A marked
-  local -i w=$(ui_name_width "$@")
+  local -i w=$(ui_name_width "${types[@]}")
 
-  # Window: how many rows fit under the banner; scroll it to follow the cursor.
+  # Help tab: the usage text, scrolled with the arrows.
+  local -a help=("${(@f)$(usage_text)}")
+  local -i htop=1
+
+  # Shown on every frame, computed once.
+  local rev=$(stack_rev) stack_shown=$(pretty_path "$ARMAZE_STACK_DIR") target_shown=$(pretty_path "$target")
+  local stack_info="${C_MUTED}${ICON[rev]} ${rev} ${G_DOT} ${ICON[stack]} ${stack_shown}${C_RESET}"
+  local -i recorded=0
+  [[ -f $target/$MANIFEST_NAME ]] && recorded=$(grep -vc '^#' "$target/$MANIFEST_NAME")
+
+  # Content rows that fit: a frame is banner (6) + status (3) + rows + footer (2) + edge (1),
+  # and one line is left so the cursor never scrolls the screen.
   local -i lines=${LINES:-0}
   (( lines > 0 )) || lines=$(tput lines 2>/dev/null)
   (( lines > 0 )) || lines=24
-  local -i win=$(( lines - 16 ))   # banner, status, footer and the two box edges
-  (( win < 5 )) && win=5
-  (( win > total )) && win=$total
-  local -i top=1
+  local -i win=$(( lines - 13 ))
+  (( win < 3 )) && win=3
 
-  # Every frame line goes through ui_line (borders come from UI_BOX=1, set by the
-  # ui_top in ui_banner) and ends with the box's bottom edge, redrawn each time.
+  local key_tab="${C_KEY}tab${C_RESET} ${C_MUTED}switch${C_RESET}"   # shift-tab goes the other way; both wrap around
+  local key_move="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}"
+  local key_quit="${C_KEY}q${C_RESET} ${C_MUTED}quit${C_RESET}"
+
   draw() {
-    local frame='' line prefix box tag style
-    local -i k cur=${sel[pos]} last
-    # keep the cursor inside the window, leaving room for the more-markers
-    (( cur < top + (top > 1) )) && top=$(( cur - (cur > 1) ))
-    last=$(( top + win - 1 ))
-    (( cur > last - (last < total) )) && top=$(( cur + (cur < total) - win + 1 ))
-    (( top < 1 )) && top=1
-    last=$(( top + win - 1 ))
-    for (( k = top; k <= last; k++ )); do
-      if (( k == top && top > 1 )); then
-        line=$(ui_line "  ${C_MUTED}${G_UP} $(( top - 1 )) more${C_RESET}")
-      elif (( k == last && last < total )); then
-        line=$(ui_line "  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}")
-      elif [[ -z ${r_type[k]} ]]; then
-        case ${r_tag[k]} in
-          header) line=$(ui_section "${r_name[k]}" "${(C)r_name[k]}") ;;
-          none)   line=$(ui_line "  ${C_MUTED}${G_OFF} none yet${C_RESET}") ;;
-          *)      line=$(ui_blank) ;;
-        esac
-      else
-        (( k == cur )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
-        (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
-        (( k == cur )) && style=bold || style=''
-        line=$(ui_item "${prefix} ${box}" "${r_name[k]}" "${r_tag[k]}${r_desc[k]}" $w $style)
-      fi
-      frame+="${line}${C_RESET}"$'\e[K\n'
-    done
-    frame+="$(ui_rule)"$'\e[K\n'
-    frame+="$(ui_line "  ${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}  ${C_KEY}q${C_RESET} ${C_MUTED}cancel${C_RESET}")"$'\e[K\n'
-    frame+="$(ui_bottom)"$'\e[K\n'
-    print -rn -- "$frame"
-  }
-  local -i height=$(( win + 3 ))
-  toggle() { local -i k=$1; if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); else marked[$k]=1; (( marked_n += 1 )); fi }
+    local cur=${TABS[tab]} prefix box style foot
+    local -i k cur_row last shown=0
+    FR=(); UI_CAPTURE=1
+    ui_banner "$cur"
+    case $cur in
+      list)   ui_status "${C_BOLD}Armaze AI Stack${C_RESET} ${C_MUTED}(${#sel} components)${C_RESET}" "$stack_info" ;;
+      add)    if (( add_ok )); then
+                ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} ${target_shown} ${G_DOT} layout ${platform}${C_RESET}" "$stack_info"
+              else
+                ui_status "${C_BOLD}Add${C_RESET} ${C_MUTED}${ICON[dir]} you are inside the stack — cd into a project to add${C_RESET}" "$stack_info"
+              fi ;;
+      update) ui_status "${C_BOLD}Update${C_RESET} ${C_MUTED}${ICON[dir]} ${target_shown}${C_RESET}" "$stack_info" ;;
+      help)   ui_status "${C_BOLD}Help${C_RESET} ${C_MUTED}aistack ${ARMAZE_VERSION}${C_RESET}" "$stack_info" ;;
+    esac
 
-  print -n -- $'\e[?25l'
+    case $cur in
+      list|add)
+        if (( ! $#sel )); then
+          ui_line "  ${C_MUTED}nothing here yet — the stack is empty${C_RESET}"; shown=1
+        else
+          cur_row=${sel[pos]}
+          # keep the cursor inside the window, leaving room for the more-markers
+          (( cur_row < rtop + (rtop > 1) )) && rtop=$(( cur_row - (cur_row > 1) ))
+          last=$(( rtop + win - 1 ))
+          (( cur_row > last - (last < total) )) && rtop=$(( cur_row + (cur_row < total) - win + 1 ))
+          (( rtop < 1 )) && rtop=1
+          last=$(( rtop + win - 1 ))
+          (( last > total )) && last=$total
+          for (( k = rtop; k <= last; k++ )); do
+            if (( k == rtop && rtop > 1 )); then
+              ui_line "  ${C_MUTED}${G_UP} $(( rtop - 1 )) more${C_RESET}"
+            elif (( k == last && last < total )); then
+              ui_line "  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}"
+            elif [[ -z ${r_type[k]} ]]; then
+              case ${r_tag[k]} in
+                header) ui_section "${r_name[k]}" "${(C)r_name[k]}" ;;
+                none)   ui_line "  ${C_MUTED}${G_OFF} none yet${C_RESET}" ;;
+                *)      ui_blank ;;
+              esac
+            else
+              (( k == cur_row )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
+              if [[ $cur == add ]]; then
+                (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
+              else
+                box="${C_ITEM}${G_ON}${C_RESET}"
+              fi
+              (( k == cur_row )) && style=bold || style=''
+              ui_item "${prefix} ${box}" "${r_name[k]}" "${r_tag[k]}${r_desc[k]}" $w $style
+            fi
+            (( shown += 1 ))
+          done
+        fi ;;
+      update)
+        ui_line "  ${C_HEAD}${ICON[stack]}  Stack${C_RESET}"
+        ui_line "     ${stack_shown} ${C_MUTED}${G_DOT} ${rev}${C_RESET}"
+        ui_line "     ${C_MUTED}git pull --ff-only, then a summary of what was added, changed or removed${C_RESET}"
+        ui_blank
+        ui_line "  ${C_HEAD}${ICON[dir]}  Project${C_RESET}"
+        if (( recorded )); then
+          ui_line "     ${target_shown} ${C_MUTED}${G_DOT} ${recorded} recorded in ${MANIFEST_NAME}${C_RESET}"
+          ui_line "     ${C_MUTED}each one is re-copied from the updated stack; symlinked ones are live already${C_RESET}"
+        else
+          ui_line "     ${target_shown} ${C_MUTED}${G_DOT} no ${MANIFEST_NAME} here${C_RESET}"
+          ui_line "     ${C_MUTED}nothing to re-copy — only the stack is pulled${C_RESET}"
+        fi
+        ui_blank
+        ui_line "  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}runs it now${C_RESET}"
+        shown=9 ;;
+      help)
+        last=$(( htop + win - 1 ))
+        (( last > $#help )) && last=$#help
+        for (( k = htop; k <= last; k++ )); do
+          if (( k == htop && htop > 1 )); then
+            ui_line "  ${C_MUTED}${G_UP} $(( htop - 1 )) more${C_RESET}"
+          elif (( k == last && last < $#help )); then
+            ui_line "  ${C_MUTED}${G_DOWN} $(( $#help - last )) more${C_RESET}"
+          else
+            ui_line "${help[k]}"
+          fi
+          (( shown += 1 ))
+        done ;;
+    esac
+    for (( k = shown; k < win; k++ )); do ui_blank; done
+
+    case $cur in
+      list)   foot="${key_tab}  ${key_move}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add this${C_RESET}  ${key_quit}" ;;
+      add)    foot="${key_tab}  ${key_move}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}"
+              (( add_ok )) && foot+="  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}"
+              foot+="  ${key_quit}" ;;
+      update) foot="${key_tab}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}pull & refresh${C_RESET}  ${key_quit}" ;;
+      help)   foot="${key_tab}  ${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}scroll${C_RESET}  ${key_quit}" ;;
+    esac
+    ui_rule
+    ui_line "  ${foot}"
+    ui_bottom
+    UI_CAPTURE=0
+    print -rn -- $'\e[H'"${(pj:\e[K\n:)FR}"$'\e[K\e[J'
+  }
+
+  toggle() { local -i k=$1; if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); else marked[$k]=1; (( marked_n += 1 )); fi }
+  toggle_all() {
+    if (( marked_n == $#sel )); then for i in "${sel[@]}"; do marked[$i]=0; done; marked_n=0
+    else for i in "${sel[@]}"; do marked[$i]=1; done; marked_n=$#sel
+    fi
+  }
+  # Move the cursor (list, add) or scroll (help) by $1 = +1 / -1.
+  nav() {
+    local -i d=$1 hmax
+    case ${TABS[tab]} in
+      list|add) (( $#sel )) && (( pos = (pos - 1 + d + $#sel) % $#sel + 1 )) ;;
+      help)     hmax=$(( $#help - win + 1 )); (( hmax < 1 )) && hmax=1
+                (( htop += d )); (( htop < 1 )) && htop=1; (( htop > hmax )) && htop=$hmax ;;
+    esac
+  }
+  # Both wrap: tab on the last tab lands on the first, shift-tab on the first lands on the last.
+  next_tab() { (( tab = tab % $#TABS + 1 )) }
+  prev_tab() { (( tab = tab > 1 ? tab - 1 : $#TABS )) }
+
+  APP_ACTION=quit; SELECTED=()
+  print -n -- $'\e[?25l\e[H\e[2J'   # hide the cursor, clear the screen
   trap 'print -n -- $'"'"'\e[?25h'"'"'; print; exit 130' INT TERM
   local key seq
-  local -i cancelled=0
   draw
-  while true; do
-    read -sk1 key || { cancelled=1; break }
+  while read -sk1 key; do
     case $key in
+      $'\t')  next_tab ;;
       $'\e')
         seq=''; read -sk1 -t 0.05 seq
         if [[ $seq == '[' ]]; then
           read -sk1 -t 0.05 seq
           case $seq in
-            A) (( pos = pos > 1 ? pos - 1 : $#sel )) ;;
-            B) (( pos = pos < $#sel ? pos + 1 : 1 )) ;;
+            Z) prev_tab ;;   # shift-tab
+            C) next_tab ;;   # →
+            D) prev_tab ;;   # ←
+            A) nav -1 ;;
+            B) nav 1 ;;
           esac
         else
-          cancelled=1; break
+          break            # bare escape quits
         fi ;;
-      k|p)       (( pos = pos > 1 ? pos - 1 : $#sel )) ;;
-      j|n)       (( pos = pos < $#sel ? pos + 1 : 1 )) ;;
-      ' ')       toggle ${sel[pos]} ;;
-      a)         if (( marked_n == $#sel )); then for i in "${sel[@]}"; do marked[$i]=0; done; marked_n=0
-                 else for i in "${sel[@]}"; do marked[$i]=1; done; marked_n=$#sel; fi ;;
-      $'\n'|$'\r') break ;;
-      q|$'\x04')   cancelled=1; break ;;                       # q, ctrl-d
-      $'\x03')     print -n -- $'\e[?25h'; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
+      k|p) nav -1 ;;
+      j|n) nav 1 ;;
+      ' ') [[ ${TABS[tab]} == add ]] && (( $#sel )) && toggle ${sel[pos]} ;;
+      a)   [[ ${TABS[tab]} == add ]] && toggle_all ;;
+      $'\n'|$'\r')
+        case ${TABS[tab]} in
+          add)    if (( $#sel && add_ok )); then
+                    (( marked_n )) || toggle ${sel[pos]}   # enter on an unmarked list adds the current row
+                    APP_ACTION=add; break
+                  fi ;;
+          list)   tab=${TABS[(Ie)add]} ;;
+          update) APP_ACTION=update; break ;;
+        esac ;;
+      q|$'\x04') break ;;                                    # q, ctrl-d
+      $'\x03')   print -n -- $'\e[?25h'; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
     esac
-    print -n -- $'\e['"${height}"'A'
     draw
   done
   print -n -- $'\e[?25h'
-  UI_BOX=0   # draw() closed the box from a subshell; mirror that here
-  (( cancelled )) && { print -r -- "${C_MUTED}cancelled${C_RESET}"; return 0 }
-  for i in "${sel[@]}"; do
-    (( ${marked[$i]:-0} )) && SELECTED+=("${r_type[i]}"$'\t'"${r_name[i]}")
-  done
+  print
+  UI_BOX=0 UI_CAPTURE=0
+  if [[ $APP_ACTION == add ]]; then
+    for i in "${sel[@]}"; do
+      (( ${marked[$i]:-0} )) && SELECTED+=("${r_type[i]}"$'\t'"${r_name[i]}")
+    done
+  fi
+}
+
+# Open the app on a tab, then carry out what the user chose below the box.
+# Reads target, platform, dest_rel, force, mode and types from the caller;
+# app_open supplies defaults for the entry points without add options.
+app_run() {  # <tab>
+  local -i add_ok=1
+  [[ $target == $ARMAZE_STACK_DIR ]] && add_ok=0
+  tui "$1"
+  case $APP_ACTION in
+    add)    install_queue "${SELECTED[@]}" ;;
+    update) do_update ;;
+  esac
+}
+
+app_open() {  # <tab> [types...]
+  local target platform=claude force=0 mode=copy
+  local -a types=("${@:2}")
+  (( $#types )) || types=("${TYPES[@]}")
+  target=$(resolve_target "") || exit 1
+  local -A dest_rel
+  dest_rel[skills]=$(dest_dir claude skills)
+  dest_rel[agents]=$(dest_dir claude agents)
+  app_run "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -817,7 +981,10 @@ cmd_list() {
     return 0
   fi
 
-  # Banner layout.
+  # Interactive: the app, on its list tab.
+  if app_available; then app_open list "${types[@]}"; return; fi
+
+  # Banner layout, printed once (a terminal on stdout but not on stdin).
   local counts='' t
   for t in "${TYPES[@]}"; do
     names=("${(@f)$(list_names "$t")}"); names=("${(@)names:#}")
@@ -869,56 +1036,68 @@ cmd_add() {
   [[ $platform == (claude|generic) ]] || die "unknown platform '$platform' (expected: claude, generic)"
 
   target=$(resolve_target "$target") || exit 1
-  [[ $target == $ARMAZE_STACK_DIR ]] \
-    && die "the target is the stack itself — cd into your own repo or pass --to DIR"
+  # Installing into the stack itself is refused — except that the app may still
+  # open here with its add tab disabled, so list/update/help stay reachable.
+  local -i in_stack=0
+  [[ $target == $ARMAZE_STACK_DIR ]] && in_stack=1
 
   local -A dest_rel
   dest_rel[skills]=${skills_dir:-$(dest_dir "$platform" skills)}
   dest_rel[agents]=${agents_dir:-$(dest_dir "$platform" agents)}
 
-  # Which picker runs is decided before drawing: the in-place picker keeps
-  # drawing inside the box, while the menu and fzf pickers read from stdin, so
-  # for those the box is closed after the status line and they print below it.
-  local picker=''
-  if (( UI && ! $#names )); then
-    pick_mode; picker=$REPLY
+  local -a queue=()
+  local type name entry
+
+  # Names given: install them, no UI.
+  if (( $#names )); then
+    (( in_stack )) && die "the target is the stack itself — cd into your own repo or pass --to DIR"
+    info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
+    info "target  $(pretty_path "$target") ${C_DIM}(layout: $platform)${C_RESET}"
+    print
+    for name in "${names[@]}"; do
+      entry=$(resolve_name "$name" "${types[@]}") || exit 1
+      queue+=("$entry")
+    done
+    install_queue "${queue[@]}"
+    return
+  fi
+
+  # No names and a terminal on both ends: the app, on its add tab.
+  if app_available; then app_run add; return; fi
+
+  # Otherwise a picker that reads from stdin — the numbered menu, or fzf if asked
+  # for. With the banner layout on, the boxed header is drawn and closed first so
+  # the picker can prompt below it.
+  (( in_stack )) && die "the target is the stack itself — cd into your own repo or pass --to DIR"
+  local picker; pick_mode; picker=$REPLY
+  if (( UI )); then
     ui_banner add
     ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} $(pretty_path "$target") ${G_DOT} layout ${platform}${C_RESET}" \
               "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
-    [[ $picker == tui ]] || ui_bottom
+    ui_bottom
   else
     info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
     info "target  $(pretty_path "$target") ${C_DIM}(layout: $platform)${C_RESET}"
     print
   fi
+  for type in "${types[@]}"; do
+    pick_$picker "$type" "$target/${dest_rel[$type]}"
+    for name in "${SELECTED[@]}"; do queue+=("$type"$'\t'"$name"); done
+  done
+  print
+  install_queue "${queue[@]}"
+}
 
-  local -a queue=()
-  local type name entry
-  if (( $#names )); then
-    for name in "${names[@]}"; do
-      entry=$(resolve_name "$name" "${types[@]}") || exit 1
-      queue+=("$entry")
-    done
-  else
-    [[ -n $picker ]] || { pick_mode; picker=$REPLY }
-    if [[ $picker == tui ]]; then
-      pick_tui "${types[@]}"
-      queue=("${SELECTED[@]}")
-    else
-      for type in "${types[@]}"; do
-        pick_$picker "$type" "$target/${dest_rel[$type]}"
-        for name in "${SELECTED[@]}"; do queue+=("$type"$'\t'"$name"); done
-      done
-    fi
-    print
-  fi
-  queue=("${(@u)queue}")
+# Install "type<TAB>name" entries into $target, using dest_rel, force and mode
+# from the caller, then print the summary.
+install_queue() {
+  local -a queue=("${(@u)@}")
   if (( ! $#queue )); then
     print -r -- "Nothing selected."
     return 0
   fi
-
-  local added=0 skipped=0 rel
+  local entry type name rel
+  local -i added=0 skipped=0
   for entry in "${queue[@]}"; do
     type=${entry%%$'\t'*}; name=${entry#*$'\t'}
     rel="${dest_rel[$type]}/$(dest_leaf "$type" "$name")"
@@ -939,7 +1118,8 @@ cmd_add() {
 
 cmd_update() {
   require_stack
-  local target=""
+  local target="" platform=claude force=0 mode=copy
+  local -a types=("${TYPES[@]}")
   while (( $# )); do
     case $1 in
       -t|--to)   [[ -n ${2:-} ]] || die "$1 needs a value"; target=$2; shift 2 ;;
@@ -950,6 +1130,19 @@ cmd_update() {
 
   target=$(resolve_target "$target") || exit 1
 
+  # In a terminal: the app, on its update tab (enter runs it). Otherwise run now.
+  if app_available; then
+    local -A dest_rel
+    dest_rel[skills]=$(dest_dir claude skills)
+    dest_rel[agents]=$(dest_dir claude agents)
+    app_run update
+    return
+  fi
+  do_update
+}
+
+# Pull the stack, then re-copy whatever $target's manifest records.
+do_update() {
   # 1. The stack: pull whatever is new (warns and carries on if it can't).
   stack_pull
   print
@@ -1000,7 +1193,11 @@ cmd_update() {
 }
 
 main() {
-  local cmd=${1:-help}
+  # No command: the app on its add tab when there is a terminal, otherwise help.
+  local cmd=${1:-}
+  if [[ -z $cmd ]]; then
+    if app_available; then cmd=add; else cmd=help; fi
+  fi
   (( $# )) && shift
   case $cmd in
     list|ls)               cmd_list "$@" ;;

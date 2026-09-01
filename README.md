@@ -23,30 +23,46 @@ Already have a checkout? `./install.zsh` from inside it does the same without cl
 ## Using `aistack`
 
 ```zsh
-aistack list                    # what the stack offers, with one-line descriptions
-aistack list agents             # just one type
-
 cd ~/my-project                 # or any folder, even an empty one
-aistack add                     # picker: ↑↓ move, space toggle, a all, ⏎ add, q cancel
+aistack                         # the app, opened on the add tab (see below)
+
+aistack list                    # the app on its list tab; piped, a plain list with descriptions
+aistack list agents             # just one type
+aistack list --names            # plain type/name lines (what tab completion uses)
+
+aistack add                     # the app on its add tab
 aistack add pr-review reviewer  # non-interactive: bare names ...
 aistack add skills/pr-review agents/reviewer  # ... or qualified when a name exists as both
 aistack add --skills            # only offer skills (or --agents)
 aistack add --force             # overwrite anything already there without asking
 aistack add --link              # symlink instead of copy — for developing a skill against a real repo
 
-aistack update                  # pull the latest stack, then re-copy everything this repo previously added
+aistack update                  # the app on its update tab; ⏎ pulls the stack and re-copies what this repo added
+aistack help                    # the app on its help tab
 
 aistack --version               # which release you have (see CHANGELOG.md); also -v or version
-aistack --help                  # every command and option
 ```
 
-### The picker and the display
+### The app
 
-`aistack list`, the `aistack add` picker and `aistack help` draw a banner layout — wordmark, command bar, sections with icons, and a key legend — when they are talking to a terminal. It sits inside a rounded box of fixed width (100 columns, or the terminal width if that is narrower) centred in the window, so it reads the same on a laptop screen and an ultrawide; long descriptions are trimmed with an ellipsis. Pipe the commands, or use `list --names`, and you get plain text. The picker marks components the target already has, so you can see at a glance what a re-run would overwrite.
+In a terminal, `aistack` clears the screen and opens one app with four tabs — `list`, `add`, `update`, `help` — drawn inside a rounded box of fixed width (100 columns, or the terminal width if narrower) centred in the window. Bare `aistack` starts on **add**; `aistack list`, `aistack update` and `aistack help` start on their own tab. Everything else is keys:
+
+| Key | Does |
+|-----|------|
+| `tab` / `shift-tab` | Next / previous tab — wrapping around at either end |
+| `↑` `↓` (or `j` `k`) | Move the cursor on **list** and **add**; scroll on **help** |
+| `space` | Mark or unmark the component under the cursor (**add**) |
+| `a` | Mark everything, or clear all marks (**add**) |
+| `⏎` | **add**: install the marked components (or the one under the cursor if nothing is marked) · **list**: jump to add · **update**: pull the stack and refresh this project |
+| `q` / `esc` | Quit without doing anything |
+
+The **add** tab marks components the project already has, so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Long descriptions are trimmed with an ellipsis to fit the box.
+
+Without a terminal on both ends — piped output, scripts, `list --names`, `add NAME` — nothing interactive happens: `list` prints plain text, `add NAME` installs, `update` runs straight away.
 
 | Variable | Effect |
 |----------|--------|
-| `ARMAZE_PICKER=menu` | Numbered list instead of the arrow-key picker (also what you get without a terminal, or with `ARMAZE_NO_FZF=1`) |
+| `ARMAZE_PICKER=menu` | A numbered list read from stdin instead of the app (also what you get without a terminal, or with `ARMAZE_NO_FZF=1`) |
 | `ARMAZE_PICKER=fzf` | Fuzzy multi-select through [fzf](https://github.com/junegunn/fzf), if installed |
 | `ARMAZE_WIDTH=N` | Box width in columns (default 100; never wider than the terminal) |
 | `ARMAZE_ALIGN=left` | Pin the box to the left edge instead of centring it |
@@ -56,7 +72,7 @@ aistack --help                  # every command and option
 
 ### Keeping up to date
 
-The stack is a git checkout on your machine, and every project holds its own copies of the components it added. `aistack update` handles both in one go:
+The stack is a git checkout on your machine, and every project holds its own copies of the components it added. `aistack update` handles both in one go — in a terminal it opens the app's **update** tab and `⏎` runs it; piped or scripted it just runs:
 
 1. It fast-forwards the checkout and lists which skills and agents were added (`+`), changed (`~`) or removed (`-`). If it can't pull — no git checkout, local edits, a diverged branch — it says so and carries on with what you have.
 2. Inside a project, it then re-copies whatever `.armaze-stack` records from the now-current stack. Components that already match are left alone; symlinked ones (`--link`) are live already.

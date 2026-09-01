@@ -2,6 +2,17 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.4 - 2026-09-01
+
+### Added
+
+- **`aistack` is now an app.** Run it bare in a terminal and it clears the screen and opens on the **add** tab; `tab` (and `shift-tab`) cycle through `list · add · update · help`, wrapping at either end. `aistack list`, `aistack update` and `aistack help` open the same app on their own tab. On **update**, `⏎` pulls the stack and refreshes the project; on **list**, `⏎` jumps to add; `q` quits. Piped or scripted, every command behaves as before — plain output, direct install, immediate update.
+
+### Changed
+
+- The whole frame is redrawn from the top on each key instead of moving the cursor back up, and frames are built without spawning subshells, so the app feels instant.
+- The status line trims its left side instead of wrapping when the terminal is narrow.
+
 ## 0.1.3 - 2026-09-01
 
 ### Changed
