@@ -2,6 +2,16 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.2.0 - 2026-09-01
+
+### Added
+
+- **time-tracker** skill — sets up automatic, transcript-based time tracking on a Node/npm project: a measurement engine under `lib/time-tracking/`, a labelling agent, a `SessionStart` hook, a project rule and a `project-management/` folder with monthly timesheets and a PDF report. No timer to start or stop; hours are measured from Claude Code session transcripts, and only the task labels are written by hand (or by the agent). Idempotent setup script; the scheduled labelling runs are `orca automations` you register once per machine.
+
+### Changed
+
+- Components the current project already has are marked with a green check instead of an `installed ·` tag in the description: before the name on the **list** tab (which also drops the `▶` every row used to carry), right after the name on the **add** tab and in the numbered menu.
+
 ## 0.1.4 - 2026-09-01
 
 ### Added

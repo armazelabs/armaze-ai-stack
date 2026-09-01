@@ -56,7 +56,7 @@ In a terminal, `aistack` clears the screen and opens one app with four tabs — 
 | `⏎` | **add**: install the marked components (or the one under the cursor if nothing is marked) · **list**: jump to add · **update**: pull the stack and refresh this project |
 | `q` / `esc` | Quit without doing anything |
 
-The **add** tab marks components the project already has, so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Long descriptions are trimmed with an ellipsis to fit the box.
+A green check marks components the project already has — before the name on the **list** tab, right after it on the **add** tab — so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Long descriptions are trimmed with an ellipsis to fit the box.
 
 Without a terminal on both ends — piped output, scripts, `list --names`, `add NAME` — nothing interactive happens: `list` prints plain text, `add NAME` installs, `update` runs straight away.
 

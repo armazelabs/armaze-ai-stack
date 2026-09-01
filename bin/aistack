@@ -20,7 +20,7 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.1.4"
+readonly ARMAZE_VERSION="0.2.0"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
 
@@ -258,14 +258,21 @@ ui_section() { ui_line "${C_HEAD}${ICON[$1]}  ${2}${C_RESET}" }  # <type> <title
 
 # One component row: marker, name padded to $4, description truncated to fit.
 # Style `dim` mutes the name; `bold` emboldens the row (the picker's cursor line).
-ui_item() {  # <prefix> <name> <desc> <name width> [dim|bold]
-  local prefix=$1 name=$2 desc=$3 style=${5:-} e=''
+# $6, if given, is a marker placed right after the name, inside the name column —
+# callers that use it widen $4 by two cells so the description column stays put.
+ui_item() {  # <prefix> <name> <desc> <name width> [dim|bold] [after]
+  local prefix=$1 name=$2 desc=$3 style=${5:-} after=${6:-} e=''
   local -i w=$4
   ui_vis_r "$prefix"
-  local -i room=$(( UI_COLS - 2 - REPLY - 1 - w - 2 )) gap=$(( w - ${#name} ))
-  (( gap < 0 )) && gap=0
+  local -i room=$(( UI_COLS - 2 - REPLY - 1 - w - 2 )) used=${#name}
   local nm="${C_ITEM}${name}${C_RESET}"
   [[ $style == dim ]] && nm="${C_MUTED}${name}${C_RESET}"
+  if [[ -n $after ]]; then
+    ui_vis_r "$after"; (( used += 1 + REPLY ))
+    nm+=" ${after}"
+  fi
+  local -i gap=$(( w - used ))
+  (( gap < 0 )) && gap=0
   ui_trunc_r "$desc" $room
   local content="  ${prefix} ${nm}${(pl:$gap:: :)e}  ${C_MUTED}${REPLY}${C_RESET}"
   [[ $style == bold ]] && content="${C_BOLD}${content}"
@@ -587,13 +594,14 @@ pick_menu() {  # <type> [dest dir]
     print -r -- "${C_MUTED}${ICON[$type]}  no ${type} in the stack yet${C_RESET}"
     return 0
   fi
-  local -i w=$(ui_name_width "$type") i
-  local name desc
+  local -i w=$(( $(ui_name_width "$type") + 2 )) i
+  local name desc after
   ui_section "$type" "${(C)type}"
   for (( i = 1; i <= $#names; i++ )); do
     name=${names[i]}
     desc=$(component_description "$(component_doc "$type" "$name")")
-    ui_item "${C_MUTED}$(printf '%2d)' $i)${C_RESET}" "$name" "$(pick_tag "$type" "$name" "$dest")${desc:-}" $w
+    [[ -n $(pick_tag "$type" "$name" "$dest") ]] && after="${C_ITEM}${ICON[ok]}${C_RESET}" || after=''
+    ui_item "${C_MUTED}$(printf '%2d)' $i)${C_RESET}" "$name" "${desc:-}" $w '' "$after"
   done
   local answer
   print -rn -- "  ${C_KEY}1 3-4${C_RESET} ${C_MUTED}pick${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}skip ${type}${C_RESET}  ${C_ACCENT}${G_CUR}${C_RESET} "
@@ -678,7 +686,7 @@ tui() {  # <start tab>
   for (( i = 1; i <= $#r_type; i++ )); do [[ -n ${r_type[i]} ]] && sel+=($i); done
   local -i pos=1 total=$#r_type marked_n=0 rtop=1
   local -A marked
-  local -i w=$(ui_name_width "${types[@]}")
+  local -i w=$(( $(ui_name_width "${types[@]}") + 2 ))   # room for the check after a name on add
 
   # Help tab: the usage text, scrolled with the arrows.
   local -a help=("${(@f)$(usage_text)}")
@@ -703,7 +711,7 @@ tui() {  # <start tab>
   local key_quit="${C_KEY}q${C_RESET} ${C_MUTED}quit${C_RESET}"
 
   draw() {
-    local cur=${TABS[tab]} prefix box style foot
+    local cur=${TABS[tab]} prefix box style after foot
     local -i k cur_row last shown=0
     FR=(); UI_CAPTURE=1
     ui_banner "$cur"
@@ -744,13 +752,17 @@ tui() {  # <start tab>
               esac
             else
               (( k == cur_row )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
+              (( k == cur_row )) && style=bold || style=''
+              # A green check marks what the project already has: before the name on
+              # list, right after it on add (where the slot before is the ○/◉ mark).
               if [[ $cur == add ]]; then
                 (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
+                [[ -n ${r_tag[k]} ]] && after="${C_ITEM}${ICON[ok]}${C_RESET}" || after=''
+                ui_item "${prefix} ${box}" "${r_name[k]}" "${r_desc[k]}" $w "$style" "$after"
               else
-                box="${C_ITEM}${G_ON}${C_RESET}"
+                [[ -n ${r_tag[k]} ]] && box="${C_ITEM}${ICON[ok]}${C_RESET}" || box=' '
+                ui_item "${prefix} ${box}" "${r_name[k]}" "${r_desc[k]}" $w "$style"
               fi
-              (( k == cur_row )) && style=bold || style=''
-              ui_item "${prefix} ${box}" "${r_name[k]}" "${r_tag[k]}${r_desc[k]}" $w $style
             fi
             (( shown += 1 ))
           done
@@ -991,6 +1003,9 @@ cmd_list() {
     counts+="${counts:+ ${G_DOT} }${#names} ${t}"
   done
   local -i w=$(ui_name_width "${types[@]}")
+  # Same marker as the app's list tab: a green check beside what this project already has.
+  local target mark
+  target=$(resolve_target "") || exit 1
   ui_banner list
   ui_status "${C_BOLD}Armaze AI Stack${C_RESET} ${C_MUTED}(${counts})${C_RESET}" \
             "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
@@ -1003,7 +1018,12 @@ cmd_list() {
     fi
     for name in "${names[@]}"; do
       desc=$(component_description "$(component_doc "$type" "$name")")
-      ui_item "${C_ITEM}${G_ON}${C_RESET}" "$name" "${desc:-}" $w
+      if [[ -e "$target/$(dest_dir claude "$type")/$(dest_leaf "$type" "$name")" ]]; then
+        mark="${C_ITEM}${ICON[ok]}${C_RESET}"
+      else
+        mark=' '
+      fi
+      ui_item "$mark" "$name" "${desc:-}" $w
     done
     ui_blank
   done
