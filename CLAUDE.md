@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Armaze's internal shelf of reusable AI skills and agents, plus `armaze`, a zsh CLI that lets a member pick components and copy them into their own project. Every member runs zsh with oh-my-zsh, so all tooling here is **zsh only** — no bash, no Python/Node dependencies. Scripts must work on both macOS (BSD awk/sed/grep/ln) and Linux (GNU), so stick to the POSIX subset: no `grep -P`, no `\|` alternation in BRE, no `sed -i` without an explicit suffix argument (macOS needs `sed -i ''`), no `ln -n`/`-h` (remove then relink instead).
+Armaze's internal shelf of reusable AI skills and agents, plus `aistack`, a zsh CLI that lets a member pick components and copy them into their own project. Every member runs zsh with oh-my-zsh, so all tooling here is **zsh only** — no bash, no Python/Node dependencies. Scripts must work on both macOS (BSD awk/sed/grep/ln) and Linux (GNU), so stick to the POSIX subset: no `grep -P`, no `\|` alternation in BRE, no `sed -i` without an explicit suffix argument (macOS needs `sed -i ''`), no `ln -n`/`-h` (remove then relink instead).
 
 There is no build step, package manager, or test framework. Testing is done by running the scripts against fixtures.
 
@@ -12,21 +12,31 @@ There is no build step, package manager, or test framework. Testing is done by r
 
 ```zsh
 # Syntax-check every script (the only "lint" there is)
-zsh -n bin/armaze && zsh -n install.zsh && zsh -n oh-my-zsh/armaze/armaze.plugin.zsh
+zsh -n bin/aistack && zsh -n install.zsh && zsh -n oh-my-zsh/armaze/armaze.plugin.zsh
 
 # Run the CLI straight from the checkout
-./bin/armaze list
-./bin/armaze help
+./bin/aistack list
+./bin/aistack help
 
 # Exercise the CLI against a fixture stack (never against a member's real project)
 #   ARMAZE_STACK_DIR  point at a scratch copy of the repo with fake skills/agents in it
 #   ARMAZE_NO_FZF=1   force the numbered picker so tests don't need a tty
 #   NO_COLOR=1        plain output for greppable assertions
-ARMAZE_STACK_DIR=/path/to/fixture NO_COLOR=1 ARMAZE_NO_FZF=1 ./bin/armaze add --to /path/to/scratch-project pr-review
-printf '1\na\n' | ARMAZE_STACK_DIR=... ARMAZE_NO_FZF=1 ./bin/armaze add --to ...   # drive the picker via stdin
+ARMAZE_STACK_DIR=/path/to/fixture NO_COLOR=1 ARMAZE_NO_FZF=1 ./bin/aistack add --to /path/to/scratch-project pr-review
+printf '1\na\n' | ARMAZE_STACK_DIR=... ARMAZE_NO_FZF=1 ./bin/aistack add --to ...   # drive the numbered picker via stdin
+
+# The banner layout without a terminal, and the arrow-key picker through a pseudo-terminal
+COLUMNS=100 ARMAZE_UI=1 NO_COLOR=1 ./bin/aistack list                              # ARMAZE_UI=1 forces the layout on
+( perl -e 'select(undef,undef,undef,1)'; printf ' \e[B \r'; perl -e 'select(undef,undef,undef,1)' ) \
+  | COLUMNS=100 LINES=40 NO_COLOR=1 script -q /dev/null ./bin/aistack add --to /path/to/scratch
+#   keys: space, down, space, enter. Keep stdin open around the keys (the perl sleeps): if `script` sees EOF
+#   before the picker's first read -k, it tears the pty down and the picker reports "cancelled".
+#   That is the macOS `script`; on Linux it is `script -qc "cmd" /dev/null`.
+#   Strip the redraw codes before asserting: tr -d '\r' | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'
+#   Ctrl-C can't be typed through the pty here; test the trap with `pkill -INT -f 'bin/aistack add'` instead.
 
 # Exercise self-update against a fixture clone that has a remote (never the real checkout while editing it)
-ARMAZE_STACK_DIR=/path/to/fixture-clone NO_COLOR=1 ./bin/armaze self-update
+ARMAZE_STACK_DIR=/path/to/fixture-clone NO_COLOR=1 ./bin/aistack self-update
 
 # Exercise install.zsh without touching your real shell config (fakehome needs .oh-my-zsh/ and a .zshrc)
 HOME=/path/to/fakehome ZSH= ZSH_CUSTOM= zsh ./install.zsh --yes
@@ -34,7 +44,7 @@ cat install.zsh | HOME=/path/to/fakehome ZSH= ZSH_CUSTOM= ARMAZE_STACK_DIR=/path
   ARMAZE_REPO_URL=/path/to/local-clone zsh -s -- --yes                # the curl bootstrap path, offline
 
 # Check the plugin resolves the repo root and registers completion
-zsh -fc 'autoload -Uz compinit; compinit -u -d /dev/null; source oh-my-zsh/armaze/armaze.plugin.zsh; print $ARMAZE_STACK_DIR ${_comps[armaze]}'
+zsh -fc 'autoload -Uz compinit; compinit -u -d /dev/null; source oh-my-zsh/armaze/armaze.plugin.zsh; print $ARMAZE_STACK_DIR ${_comps[aistack]}'
 ```
 
 `git rev-parse HEAD` must succeed in the fixture stack for `stack_rev` to produce a real value; `git init && git commit` the fixture first.
@@ -43,13 +53,13 @@ zsh -fc 'autoload -Uz compinit; compinit -u -d /dev/null; source oh-my-zsh/armaz
 
 Three pieces that all have to agree on where the repo lives:
 
-- **`bin/armaze`** — the CLI. Finds the stack root from `$ARMAZE_STACK_DIR`, else `${0:A:h:h}` (two levels up from the resolved script path, so it works whether invoked via the plugin's PATH entry, a symlink, or `./bin/armaze`).
-- **`oh-my-zsh/armaze/armaze.plugin.zsh`** — sourced by oh-my-zsh. Uses the zsh-plugin-standard `$0` idiom to find its own file through the `$ZSH_CUSTOM/plugins/armaze` symlink, exports `ARMAZE_STACK_DIR=${0:A:h:h:h}`, prepends `bin/` to `path`, and defines the `_armaze` completion inline (guarded by `$+functions[compdef]` so sourcing outside oh-my-zsh doesn't error). Completion for `add` shells out to `armaze list --names`.
-- **`install.zsh`** — one-time setup. Symlinks the plugin dir into `$ZSH_CUSTOM/plugins/armaze` and inserts `plugins+=(armaze)` *before* the `source $ZSH/oh-my-zsh.sh` line in `~/.zshrc` (a plain `plugins=(...)` edit can't be done safely because the array is often multi-line). Always backs up `.zshrc`, never edits it non-interactively unless `--yes`. It also doubles as the `curl … | zsh` bootstrap: when `$0` isn't a file inside a checkout it clones `$ARMAZE_REPO_URL` to `$ARMAZE_STACK_DIR` (default `~/armaze-ai-stack`, pulled instead if already there) and re-`exec`s itself from the clone with `/dev/tty` on stdin so the `.zshrc` prompt still works under a pipe.
+- **`bin/aistack`** — the CLI. Finds the stack root from `$ARMAZE_STACK_DIR`, else `${0:A:h:h}` (two levels up from the resolved script path, so it works whether invoked via the plugin's PATH entry, a symlink, or `./bin/aistack`).
+- **`oh-my-zsh/armaze/armaze.plugin.zsh`** — sourced by oh-my-zsh. Uses the zsh-plugin-standard `$0` idiom to find its own file through the `$ZSH_CUSTOM/plugins/armaze` symlink, exports `ARMAZE_STACK_DIR=${0:A:h:h:h}`, prepends `bin/` to `path`, and defines the `_aistack` completion inline (guarded by `$+functions[compdef]` so sourcing outside oh-my-zsh doesn't error). Completion for `add` shells out to `aistack list --names`.
+- **`install.zsh`** — one-time setup. Symlinks the plugin dir into `$ZSH_CUSTOM/plugins/armaze` and inserts `plugins+=(armaze)` *before* the `source $ZSH/oh-my-zsh.sh` line in `~/.zshrc` (a plain `plugins=(...)` edit can't be done safely because the array is often multi-line). Always backs up `.zshrc`, never edits it non-interactively unless `--yes`. It also doubles as the `curl … | zsh` bootstrap: when `$0` isn't a file inside a checkout it clones `$ARMAZE_REPO_URL` to `$ARMAZE_STACK_DIR` (default `~/armaze-ai-stack`, pulled instead if already there) and re-`exec`s itself from the clone with `/dev/tty` on stdin so the `.zshrc` prompt still works under a pipe. It ends with `exec zsh` so the plugin is live immediately — but only when stdin and stdout are both ttys *and* `.zshrc` enables the plugin (re-grepped after step 2), and never with `--no-exec`; the non-tty fixture runs above therefore fall through to the printed "open a new shell" instructions rather than hanging in an interactive shell.
 
-### Component model inside `bin/armaze`
+### Component model inside `bin/aistack`
 
-Component *types* are the `TYPES` array (`skills agents`). Everything type-specific is a `case` on the type name in a small set of helper functions — `type_singular`, `dest_dir`, `dest_leaf`, `component_src`, `component_doc_rel` (and `component_doc` built on it), `component_exists`, `list_names`. Adding a new installable type (e.g. workflows) means adding a branch to each of those, extending `TYPES`, and updating the `_armaze` completion in the plugin. `workflows/` and `tools/` exist in the repo but are deliberately not wired in yet.
+Component *types* are the `TYPES` array (`skills agents`). Everything type-specific is a `case` on the type name in a small set of helper functions — `type_singular`, `dest_dir`, `dest_leaf`, `component_src`, `component_doc_rel` (and `component_doc` built on it), `component_exists`, `list_names`. Adding a new installable type (e.g. workflows) means adding a branch to each of those, extending `TYPES`, and updating the `_aistack` completion in the plugin. `workflows/` and `tools/` exist in the repo but are deliberately not wired in yet.
 
 Discovery rules (`list_names` / `component_exists`): a skill is a directory under `skills/` that contains `SKILL.md`; an agent is a `*.md` file under `agents/`. Anything whose name starts with `.` or `_` is ignored (use `_drafts/` for WIP), as is `README.md`. The one-line description shown by `list`/the picker is the `description:` key from YAML front matter (`component_description` handles quoted values and `>`/`|` block scalars), falling back to the first plain body line.
 
@@ -57,25 +67,33 @@ Destination layouts live in `dest_dir()`: `claude` → `.claude/<type>/`, `gener
 
 `install_one` returns 0 installed / 1 failed / 2 skipped; callers rely on those codes for the summary counts. It copies (`cp -R`) by default or symlinks with `--link`, and only prompts to overwrite when both stdin and stdout are ttys — otherwise an existing destination is skipped unless `--force`.
 
+### The banner layout and the pickers
+
+`UI` (set once at startup: stdout is a tty, or `ARMAZE_UI=1/0`) gates the banner layout in `cmd_list`, the interactive branch of `cmd_add`, and `usage`. Everything visual goes through the `ui_*` helpers: `ui_banner` renders the Calvin S wordmark from `UI_FONT` (the same font table git-persona uses) and the command bar; `ui_status`, `ui_section`, `ui_item`, `ui_footer` draw the rest; `ui_vis` measures display width ignoring colour codes (`${(m)#}`); `ui_trunc` cuts descriptions to `UI_COLS`. Icons live in the `ICON` map — Nerd Font glyphs as `\u` escapes when the locale is UTF-8 and `ARMAZE_ICONS` isn't 0, one-cell ASCII otherwise — and the plain-Unicode markers (`G_ON`, `G_CUR`, `G_DASH`…) fall back the same way. `ui_unicode` must be asked *before* defining any `\u` escape above 0xFF, or `LANG=C` errors at startup.
+
+`pick_mode` chooses the `add` picker: `tui` (both stdin and stdout are ttys), else `menu`; `ARMAZE_PICKER=menu|fzf` and the older `ARMAZE_NO_FZF=1` override it. It sets `REPLY` rather than printing because inside `$(...)` stdout is a pipe and a `-t 1` test there is always false. `pick_menu`/`pick_fzf` work per type and fill `SELECTED` with names; `pick_tui` draws one checklist across all types and fills `SELECTED` with `type<TAB>name`. It redraws in place by moving the cursor up `height` lines, so every drawn line must be truncated to `UI_COLS` (a wrapped line breaks the maths), and it reads the caller's `$target`/`$dest_rel` through zsh's dynamic scoping to tag installed components. Keys: arrows or j/k, space, `a`, enter, `q`/esc; `read -sk1` handles raw mode itself, and a `-t 0.05` follow-up read distinguishes a bare escape from an arrow sequence.
+
 ### The `.armaze-stack` manifest
 
 Written to the root of the *target* repo by `manifest_upsert`, tab-separated: `type name path stack_rev synced_utc`, with two `#` header lines. **Rows are keyed by `path`, not by name** — the same component installed under two layouts is two rows (this was a real bug once; don't regress it). `cmd_update` reads the manifest into an array *before* the loop because each `manifest_upsert` rewrites the file. Update semantics: a symlinked destination is reported "already live" and left alone; `diff -rq src dest` clean means "up to date" (still re-stamped with the current `stack_rev`); otherwise it force-reinstalls.
 
 ### Updating the stack itself
 
-`armaze self-update` and `armaze update --pull` share `stack_pull`: `git pull --ff-only` on the checkout (dies with git's own message if it can't fast-forward), then `stack_changes` diffs `skills/` and `agents/` between the old and new HEAD and classifies each touched component as added / changed / removed by whether its `component_doc_rel` file exists at each revision. Hidden, `_`-prefixed and `README` names are skipped, matching the discovery rules.
+`aistack self-update` and `aistack update --pull` share `stack_pull`: `git pull --ff-only` on the checkout (dies with git's own message if it can't fast-forward), then `stack_changes` diffs `skills/` and `agents/` between the old and new HEAD and classifies each touched component as added / changed / removed by whether its `component_doc_rel` file exists at each revision. Hidden, `_`-prefixed and `README` names are skipped, matching the discovery rules.
 
 ## Conventions for scripts
 
 - Start scripts with `emulate -R zsh` then `setopt` only what's needed (`pipe_fail extended_glob typeset_silent`). Don't enable `err_exit`; errors are handled explicitly via `die`/return codes.
 - `die` inside `$(...)` only exits the subshell — after `x=$(fn_that_may_die)` add `|| exit 1`, as `resolve_target`/`resolve_name` callers do.
+- Never write `local a=$1 b="…$a…"` in one statement: every word is expanded before `local` runs, so `$a` is the *caller's* `a` (zsh scoping is dynamic), not the one being declared. `list_names` had exactly this bug and only worked while every caller happened to loop over a variable named `type`. Declare, then use, in separate statements.
+- `local path` (or `path=` anywhere) clobbers `$PATH` — `path` is the array tied to it. Use `file`, `p`, etc.
 - Colour via `C_*` variables set once at the top, disabled when stdout isn't a tty or `NO_COLOR` is set. Use `print -r --`, `info`/`ok`/`warn`/`die` helpers; `warn`/`die` go to stderr.
 - Use `pretty_path` for anything user-facing (relative to `$PWD`, else `~`-prefixed); never print raw absolute paths in success lines.
 - `local` is only valid inside functions; `install.zsh` runs at top level, so it uses plain variables.
 
 ## Component authoring
 
-Conventions for adding skills and agents are in `skills/README.md` and `agents/README.md` (kebab-case names matching the directory/file name, front matter with `name` + one-line `description`, self-contained because each component is copied as a unit). Verify a new component with `./bin/armaze list` and try it with `armaze add --link <name>` from a real project.
+Conventions for adding skills and agents are in `skills/README.md` and `agents/README.md` (kebab-case names matching the directory/file name, front matter with `name` + one-line `description`, self-contained because each component is copied as a unit). Verify a new component with `./bin/aistack list` and try it with `aistack add --link <name>` from a real project.
 
 ## Git commits
 

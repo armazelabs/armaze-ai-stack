@@ -1,0 +1,938 @@
+#!/usr/bin/env zsh
+#
+# aistack — pick skills and agents from the Armaze AI Stack and add them to a repo.
+#
+#   aistack list [skills|agents] [--names]
+#   aistack add  [--to DIR] [--platform claude|generic] [--skills-dir DIR] [--agents-dir DIR]
+#               [--skills] [--agents] [--force] [--link] [NAME ...]
+#   aistack update [--to DIR] [--pull]
+#   aistack self-update
+#   aistack root | help | version        (also: -h/--help, -v/--version)
+#
+# Environment:
+#   ARMAZE_STACK_DIR   Path to the armaze-ai-stack checkout (default: the repo this script lives in)
+#   ARMAZE_NO_FZF      Set to 1 to always use the numbered picker instead of fzf
+#   ARMAZE_ICONS       Set to 0 for ASCII markers instead of Nerd Font glyphs
+#   ARMAZE_UI          1/0 to force the banner layout on/off (default: on when stdout is a terminal)
+#   NO_COLOR           Disable coloured output; CLICOLOR_FORCE=1 keeps it on without a terminal
+
+emulate -R zsh
+setopt pipe_fail extended_glob typeset_silent
+
+readonly ARMAZE_VERSION="0.1.1"
+readonly MANIFEST_NAME=".armaze-stack"
+readonly -a TYPES=(skills agents)
+
+ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:-${0:A:h:h}}"
+ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:A}"
+
+typeset -ga SELECTED
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+if [[ ( -t 1 || -n ${CLICOLOR_FORCE:-} ) && -z "${NO_COLOR:-}" ]]; then
+  C_RESET=$'\e[0m' C_BOLD=$'\e[1m' C_DIM=$'\e[2m'
+  C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_YELLOW=$'\e[33m' C_BLUE=$'\e[34m'
+  # 256-colour accents for the banner layout, muted so they sit next to any prompt theme.
+  C_ACCENT=$'\e[38;5;110m' C_SHADOW=$'\e[38;5;238m' C_HEAD=$'\e[1;38;5;110m'
+  C_ITEM=$'\e[38;5;114m' C_MUTED=$'\e[38;5;243m' C_KEY=$'\e[1;38;5;75m' C_TAB=$'\e[38;5;255;48;5;68m'
+else
+  C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE=""
+  C_ACCENT="" C_SHADOW="" C_HEAD="" C_ITEM="" C_MUTED="" C_KEY="" C_TAB=""
+fi
+
+info() { print -r -- "${C_BLUE}==>${C_RESET} $*" }
+ok()   { print -r -- "${C_GREEN}✔${C_RESET} $*" }
+warn() { print -r -u2 -- "${C_YELLOW}!${C_RESET} $*" }
+die()  { print -r -u2 -- "${C_RED}error:${C_RESET} $*"; exit 1 }
+
+# Shorten an absolute path for display: relative to $PWD when inside it, else ~-prefixed.
+pretty_path() {  # <abs path>
+  local p=$1
+  if [[ $p == $PWD ]]; then print -r -- "."
+  elif [[ $p == $PWD/* ]]; then print -r -- "${p#$PWD/}"
+  else print -r -- "${p/#$HOME/~}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# UI: the banner layout used by `list`, the `add` picker and `help`.
+#
+# Drawn only when stdout is a terminal (override with ARMAZE_UI=1/0), so piped
+# output, `list --names` and tab completion stay plain. Icons are Nerd Font
+# glyphs written as \u escapes, with one-cell ASCII stand-ins outside a UTF-8
+# locale or when ARMAZE_ICONS=0 — the layout is identical either way.
+# ---------------------------------------------------------------------------
+if [[ -n ${ARMAZE_UI:-} ]]; then [[ $ARMAZE_UI == 0 ]] && UI=0 || UI=1
+elif [[ -t 1 ]]; then UI=1
+else UI=0
+fi
+
+# True when the locale can represent the glyphs below; under LANG=C a \u escape
+# above 0xFF is an error rather than a fallback, so this is asked first.
+ui_unicode() { [[ ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} == *[Uu][Tt][Ff]* ]] }
+
+typeset -gA ICON
+if ui_unicode && [[ ${ARMAZE_ICONS:-1} != 0 ]]; then
+  ICON=(
+    skills $''    # book
+    agents $''    # user-secret
+    stack  $''    # cubes
+    rev    $''    # branch
+    dir    $''    # folder
+    ok     $''    # check
+  )
+else
+  ICON=( skills '#' agents '@' stack '=' rev '+' dir '/' ok 'v' )
+fi
+if ui_unicode; then
+  G_ON=$'▶' G_OFF=$'○' G_DASH=$'┄' G_ELL=$'…' G_DOT=$'·' G_ENTER=$'⏎'
+  G_CUR=$'❯' G_SEL=$'◉' G_UNSEL=$'○' G_UP=$'↑' G_DOWN=$'↓'
+else
+  G_ON='>' G_OFF='o' G_DASH='-' G_ELL='...' G_DOT='-' G_ENTER='enter'
+  G_CUR='>' G_SEL='[x]' G_UNSEL='[ ]' G_UP='^' G_DOWN='v'
+fi
+
+# Terminal width. zsh reports COLUMNS=0 with no terminal attached, so fall
+# through to tput, then to 80.
+typeset -gi UI_COLS=${COLUMNS:-0}
+(( UI_COLS > 0 )) || UI_COLS=$(tput cols 2>/dev/null)
+(( UI_COLS > 0 )) || UI_COLS=80
+
+# Calvin S, three rows per glyph, as used by git-persona. Rows within a glyph
+# are equal width and glyphs sit flush against each other.
+typeset -gA UI_FONT=(
+  A $'╔═╗\n╠═╣\n╩ ╩'  B $'╔╗ \n╠╩╗\n╚═╝'  C $'╔═╗\n║  \n╚═╝'  D $'╔╦╗\n ║║\n═╩╝'
+  E $'╔═╗\n║╣ \n╚═╝'  F $'╔═╗\n╠╣ \n╚  '  G $'╔═╗\n║ ╦\n╚═╝'  H $'╦ ╦\n╠═╣\n╩ ╩'
+  I $'╦\n║\n╩'        J $' ╦\n ║\n╚╝'      K $'╦╔═\n╠╩╗\n╩ ╩'  L $'╦  \n║  \n╩═╝'
+  M $'╔╦╗\n║║║\n╩ ╩'  N $'╔╗╔\n║║║\n╝╚╝'  O $'╔═╗\n║ ║\n╚═╝'  P $'╔═╗\n╠═╝\n╩  '
+  Q $'╔═╗\n║ ║\n╚═╝'  R $'╦═╗\n╠╦╝\n╩╚═'  S $'╔═╗\n╚═╗\n╚═╝'  T $'╔╦╗\n ║ \n ╩ '
+  U $'╦ ╦\n║ ║\n╚═╝'  V $'╦  ╦\n╚╗╔╝\n ╚╝ ' W $'╦ ╦\n║║║\n╚╩╝'  X $'═╗ ╦\n╔╩╦╝\n╩ ╚═'
+  Y $'╦ ╦\n╚╦╝\n ╩ '  Z $'╔═╗\n╔═╝\n╚═╝'  ' ' $'  \n  \n  '
+)
+
+# Display width of a string, ignoring colour codes.
+ui_vis() { local s=${1//$'\e'\[[0-9;]#m/}; print -r -- ${(m)#s} }
+
+# $2 repeated $1 times.
+ui_fill() { local e=''; print -r -- "${(pl:$1::$2:)e}" }
+
+# Truncate to $2 cells with an ellipsis.
+ui_trunc() {  # <text> <width>
+  local s=$1; local -i w=$2
+  (( w < 4 )) && { print -r -- ""; return }
+  (( ${(m)#s} > w )) && s="${s[1,w-${#G_ELL}]}${G_ELL}"
+  print -r -- "$s"
+}
+
+# Centre a (possibly coloured) line in the terminal.
+ui_center() {
+  local -i pad=$(( (UI_COLS - $(ui_vis "$1")) / 2 ))
+  (( pad > 0 )) && print -rn -- "$(ui_fill $pad ' ')"
+  print -r -- "$1"
+}
+
+ui_rule() { print -r -- "${C_SHADOW}$(ui_fill $UI_COLS "$G_DASH")${C_RESET}" }
+
+# Wordmark plus the command bar, current command highlighted.
+ui_banner() {  # <current command>
+  local cur=$1 word=AISTACK
+  local -a rows=('' '' '') g
+  local c; local -i j r
+  print
+  if ui_unicode; then
+    for (( j = 1; j <= ${#word}; j++ )); do
+      c=$word[j]; g=( "${(@f)UI_FONT[$c]}" )
+      for (( r = 1; r <= 3; r++ )); do rows[r]+=$g[r]; done
+    done
+    for (( r = 1; r <= 3; r++ )); do
+      (( r == 3 )) && ui_center "${C_SHADOW}${rows[r]}${C_RESET}" || ui_center "${C_ACCENT}${rows[r]}${C_RESET}"
+    done
+  else
+    ui_center "${C_ACCENT}${C_BOLD}${word}${C_RESET}"
+  fi
+  local bar='' name
+  for name in list add update self-update help; do
+    if [[ $name == $cur ]]; then bar+="${C_TAB} ${name} ${C_RESET}  "
+    else bar+="${C_MUTED} ${name} ${C_RESET}  "
+    fi
+  done
+  ui_center "${bar%  }"
+}
+
+# A rule, one line with $1 on the left and $2 on the right, a rule.
+ui_status() {  # <left> <right>
+  local -i gap=$(( UI_COLS - $(ui_vis "$1") - $(ui_vis "$2") ))
+  ui_rule
+  if (( gap >= 2 )); then print -r -- "$1$(ui_fill $gap ' ')$2"
+  else print -r -- "$1"; print -r -- "$2"
+  fi
+  ui_rule
+}
+
+ui_section() { print -r -- "${C_HEAD}${ICON[$1]}  ${2}${C_RESET}" }  # <type> <title>
+
+# One component row: marker, name padded to $4, description truncated to fit.
+ui_item() {  # <prefix> <name> <desc> <name width> [dim]
+  local prefix=$1 name=$2 desc=$3 style=${5:-}
+  local -i w=$4
+  local -i room=$(( UI_COLS - 2 - $(ui_vis "$prefix") - 1 - w - 2 ))
+  local nm="${C_ITEM}${name}${C_RESET}"
+  [[ $style == dim ]] && nm="${C_MUTED}${name}${C_RESET}"
+  print -r -- "  ${prefix} ${nm}$(ui_fill $(( w - ${#name} )) ' ')  ${C_MUTED}$(ui_trunc "$desc" $room)${C_RESET}"
+}
+
+# Key legend, pairs of <key> <label>.
+ui_footer() {
+  local out=''
+  while (( $# >= 2 )); do out+="${out:+    }${C_KEY}$1${C_RESET}  ${C_MUTED}$2${C_RESET}"; shift 2; done
+  ui_rule
+  print -r -- "  ${out}"
+}
+
+# Longest name across the given types, for column alignment.
+ui_name_width() {
+  local -i w=12; local t n
+  for t in "$@"; do
+    for n in "${(@f)$(list_names "$t")}"; do (( ${#n} > w )) && w=${#n}; done
+  done
+  print -r -- $w
+}
+
+usage() {
+  (( UI )) && ui_banner help && print
+  cat <<USAGE
+${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to a repo
+
+${C_BOLD}Usage${C_RESET}
+  aistack list [skills|agents] [--names]   List what the stack offers
+  aistack add [options] [NAME ...]         Add components to a repo (interactive picker if no NAME)
+  aistack update [--to DIR] [--pull]       Re-copy everything recorded in ${MANIFEST_NAME}
+  aistack self-update                      Pull the latest stack and show what changed
+  aistack root                             Print the stack checkout path
+  aistack help | -h | --help               Show this help
+  aistack version | -v | --version         Print the CLI version
+
+${C_BOLD}add options${C_RESET}
+  -t, --to DIR            Target repo (default: current git repo, else the current directory)
+  -p, --platform NAME     Destination layout: claude (default) | generic
+      --skills-dir DIR    Override where skills go (relative to the target)
+      --agents-dir DIR    Override where agents go (relative to the target)
+  -s, --skills            Only offer skills
+  -a, --agents            Only offer agents
+  -f, --force             Overwrite existing files without asking
+  -l, --link              Symlink instead of copy (handy while developing a skill)
+
+  NAME may be bare (pr-review) or qualified (skills/pr-review, agents/reviewer).
+  Without NAME: arrow keys or j/k move, space toggles, a toggles all, enter adds, q cancels.
+  ARMAZE_PICKER=menu for a numbered list, =fzf for fuzzy search; ARMAZE_ICONS=0 for ASCII markers.
+
+${C_BOLD}update options${C_RESET}
+  -t, --to DIR            Target repo (default: current git repo, else the current directory)
+      --pull              Run 'aistack self-update' first
+
+${C_BOLD}Layouts${C_RESET}
+  claude    .claude/skills/<name>/    .claude/agents/<name>.md
+  generic   .ai/skills/<name>/        .ai/agents/<name>.md
+
+${C_BOLD}Stack${C_RESET}  ${ARMAZE_STACK_DIR}
+USAGE
+}
+
+# ---------------------------------------------------------------------------
+# Stack introspection
+# ---------------------------------------------------------------------------
+require_stack() {
+  [[ -d "$ARMAZE_STACK_DIR/skills" || -d "$ARMAZE_STACK_DIR/agents" ]] \
+    || die "no stack found at $ARMAZE_STACK_DIR — set ARMAZE_STACK_DIR to your armaze-ai-stack checkout"
+}
+
+stack_rev() {
+  git -C "$ARMAZE_STACK_DIR" rev-parse --short HEAD 2>/dev/null || print -r -- "unknown"
+}
+
+# Fast-forward the stack checkout and report which components changed. Dies if
+# the checkout is not a git repo or the pull fails (local edits, diverged branch).
+stack_pull() {
+  local dir=$ARMAZE_STACK_DIR before after
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "$(pretty_path "$dir") is not a git checkout — update the stack by hand"
+  before=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || die "cannot read the stack's current revision"
+  info "stack   $(pretty_path "$dir") ${C_DIM}($(stack_rev))${C_RESET}"
+  git -C "$dir" pull --ff-only --quiet \
+    || die "git pull failed in $(pretty_path "$dir") — local changes or a diverged branch? fix it there and retry"
+  after=$(git -C "$dir" rev-parse HEAD)
+  if [[ $before == $after ]]; then
+    ok "stack already up to date"
+    return 0
+  fi
+  ok "stack updated ${C_DIM}${before[1,7]} → ${after[1,7]}${C_RESET}"
+  stack_changes "$before" "$after"
+}
+
+# List components added (+), changed (~) or removed (-) between two stack revisions.
+stack_changes() {  # <from-rev> <to-rev>
+  local from=$1 to=$2 file type name key mark   # (not `path` — that would shadow $PATH)
+  local -A state
+  local -a files=("${(@f)$(git -C "$ARMAZE_STACK_DIR" diff --name-only "$from" "$to" -- "${TYPES[@]}" 2>/dev/null)}")
+  files=("${(@)files:#}")
+  for file in "${files[@]}"; do
+    type=${file%%/*}
+    name=${${file#*/}%%/*}
+    [[ $type == agents ]] && name=${name%.md}
+    [[ $name == (.|_)* || $name == (README|README.md) ]] && continue
+    key="$type"$'\t'"$name"
+    [[ -n ${state[$key]:-} ]] && continue
+    if ! git -C "$ARMAZE_STACK_DIR" cat-file -e "$from:$(component_doc_rel "$type" "$name")" 2>/dev/null; then
+      state[$key]=added
+    elif ! git -C "$ARMAZE_STACK_DIR" cat-file -e "$to:$(component_doc_rel "$type" "$name")" 2>/dev/null; then
+      state[$key]=removed
+    else
+      state[$key]=changed
+    fi
+  done
+  (( $#state )) || return 0
+  for key in "${(ko)state[@]}"; do
+    type=${key%%$'\t'*}; name=${key#*$'\t'}
+    case ${state[$key]} in
+      added)   mark="${C_GREEN}+${C_RESET}" ;;
+      removed) mark="${C_RED}-${C_RESET}" ;;
+      *)       mark="${C_YELLOW}~${C_RESET}" ;;
+    esac
+    printf '  %s %-5s %s\n' "$mark" "$(type_singular "$type")" "$name"
+  done
+}
+
+type_singular() { case $1 in skills) print -r -- skill ;; agents) print -r -- agent ;; esac }
+
+# Relative destination directory for a component type under a platform layout.
+dest_dir() {  # <platform> <type>
+  case $1 in
+    claude)  print -r -- ".claude/$2" ;;
+    generic) print -r -- ".ai/$2" ;;
+  esac
+}
+
+# Leaf name inside the destination directory.
+dest_leaf() {  # <type> <name>
+  case $1 in
+    skills) print -r -- "$2" ;;
+    agents) print -r -- "$2.md" ;;
+  esac
+}
+
+# Source path of a component inside the stack.
+component_src() {  # <type> <name>
+  case $1 in
+    skills) print -r -- "$ARMAZE_STACK_DIR/skills/$2" ;;
+    agents) print -r -- "$ARMAZE_STACK_DIR/agents/$2.md" ;;
+  esac
+}
+
+# The Markdown file carrying a component's front matter, relative to the stack root.
+component_doc_rel() {  # <type> <name>
+  case $1 in
+    skills) print -r -- "skills/$2/SKILL.md" ;;
+    agents) print -r -- "agents/$2.md" ;;
+  esac
+}
+
+# Absolute path of the same file.
+component_doc() {  # <type> <name>
+  print -r -- "$ARMAZE_STACK_DIR/$(component_doc_rel "$1" "$2")"
+}
+
+component_exists() {  # <type> <name>
+  case $1 in
+    skills) [[ -f "$ARMAZE_STACK_DIR/skills/$2/SKILL.md" ]] ;;
+    agents) [[ $2 != README && -f "$ARMAZE_STACK_DIR/agents/$2.md" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Names of available components of a type, one per line.
+list_names() {  # <type>
+  local type=$1 p
+  local src="$ARMAZE_STACK_DIR/$type"   # separate statement: in `local a=$1 b=$a`, $a is expanded before a is set
+  [[ -d $src ]] || return 0
+  case $type in
+    skills)
+      for p in "$src"/[^._]*(N/); do
+        [[ -f "$p/SKILL.md" ]] && print -r -- "${p:t}"
+      done ;;
+    agents)
+      for p in "$src"/[^._]*.md(N.); do
+        [[ ${p:t} == README.md ]] && continue
+        print -r -- "${p:t:r}"
+      done ;;
+  esac
+}
+
+# One-line description from YAML front matter (`description:`), with a fallback
+# to the first plain line of the body.
+component_description() {  # <file>
+  local file=$1 desc
+  [[ -f $file ]] || return 0
+  desc=$(awk '
+    NR == 1 { if ($0 ~ /^---[ \t]*$/) { fm = 1; next } exit }
+    !fm { exit }
+    /^---[ \t]*$/ { if (block) print out; exit }
+    block {
+      if ($0 ~ /^[ \t]/) { sub(/^[ \t]+/, ""); out = out (length(out) ? " " : "") $0; next }
+      print out; exit
+    }
+    /^description:/ {
+      sub(/^description:[ \t]*/, "")
+      if ($0 ~ /^[>|]/) { block = 1; next }
+      print; exit
+    }
+  ' "$file")
+  desc=${desc#\"}; desc=${desc%\"}; desc=${desc#\'}; desc=${desc%\'}
+  if [[ -z $desc ]]; then
+    desc=$(awk '
+      NR == 1 && /^---/ { fm = 1; next }
+      fm && /^---/ { fm = 0; next }
+      !fm && NF && !/^#/ { print; exit }
+    ' "$file")
+  fi
+  print -r -- "$desc"
+}
+
+# ---------------------------------------------------------------------------
+# Target repo + manifest
+# ---------------------------------------------------------------------------
+resolve_target() {  # <dir-or-empty>
+  local t=$1
+  if [[ -z $t ]]; then
+    t=$(git rev-parse --show-toplevel 2>/dev/null) || t=$PWD
+  fi
+  [[ -d $t ]] || die "target directory not found: $t"
+  print -r -- "${t:A}"
+}
+
+# Record (or refresh) one component in the target's manifest. Entries are keyed
+# by destination path, so the same component installed in two places is two rows.
+manifest_upsert() {  # <target> <type> <name> <relpath>
+  local file="$1/$MANIFEST_NAME" type=$2 name=$3 rel=$4
+  local rev=$(stack_rev) stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local tmp="$file.$$.tmp"
+  {
+    print -r -- "# Components added from armaze-ai-stack. Managed by \`armaze\`; safe to commit."
+    print -r -- "# type"$'\t'"name"$'\t'"path"$'\t'"stack_rev"$'\t'"synced_utc"
+    [[ -f $file ]] && awk -F'\t' -v p="$rel" '!/^#/ && $3 != p' "$file"
+    print -r -- "$type"$'\t'"$name"$'\t'"$rel"$'\t'"$rev"$'\t'"$stamp"
+  } > "$tmp" && mv -f -- "$tmp" "$file"
+}
+
+# ---------------------------------------------------------------------------
+# Selection
+# ---------------------------------------------------------------------------
+
+# Turn "name" or "type/name" into "type<TAB>name". Dies on unknown/ambiguous input.
+resolve_name() {  # <arg> <allowed types...>
+  local arg=$1; shift
+  local -a allowed=("$@")
+  local type
+
+  if [[ $arg == */* ]]; then
+    type=${arg%%/*}; type=${type%s}s
+    local name=${arg#*/}
+    (( ${allowed[(Ie)$type]} )) || die "unknown component type in '$arg' (expected: ${(j:, :)allowed})"
+    component_exists "$type" "$name" || die "no such $(type_singular $type): $name (run: aistack list)"
+    print -r -- "$type"$'\t'"$name"
+    return
+  fi
+
+  local -a hits=()
+  for type in "${allowed[@]}"; do
+    component_exists "$type" "$arg" && hits+=("$type")
+  done
+  case $#hits in
+    0) die "no skill or agent named '$arg' (run: aistack list)" ;;
+    1) print -r -- "${hits[1]}"$'\t'"$arg" ;;
+    *) die "'$arg' is both a skill and an agent — say skills/$arg or agents/$arg" ;;
+  esac
+}
+
+# Which picker `add` uses when no names are given:
+#   tui   arrow keys + space, drawn in place (needs a terminal on stdin and stdout)
+#   menu  numbered list read from stdin (no terminal, ARMAZE_NO_FZF=1, or ARMAZE_PICKER=menu)
+#   fzf   fuzzy multi-select, opt-in with ARMAZE_PICKER=fzf
+pick_mode() {  # sets REPLY (not printed: inside $(...) stdout is a pipe and the tty test would lie)
+  case ${ARMAZE_PICKER:-auto} in
+    fzf)  (( $+commands[fzf] )) && REPLY=fzf || REPLY=menu ;;
+    menu) REPLY=menu ;;
+    *)    if [[ -n ${ARMAZE_NO_FZF:-} ]]; then REPLY=menu
+          elif [[ -t 0 && -t 1 ]]; then REPLY=tui
+          else REPLY=menu
+          fi ;;
+  esac
+}
+
+# "installed" tag for a component already present under <dest dir>, else empty.
+pick_tag() {  # <type> <name> <dest dir>
+  [[ -n $3 && -e "$3/$(dest_leaf "$1" "$2")" ]] && print -r -- "${ICON[ok]} installed ${G_DOT} "
+}
+
+# Numbered picker for one type. Fills SELECTED with names.
+pick_menu() {  # <type> [dest dir]
+  local type=$1 dest=${2:-}
+  local -a names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
+  SELECTED=()
+  if (( ! $#names )); then
+    print -r -- "${C_MUTED}${ICON[$type]}  no ${type} in the stack yet${C_RESET}"
+    return 0
+  fi
+  local -i w=$(ui_name_width "$type") i
+  local name desc
+  ui_section "$type" "${(C)type}"
+  for (( i = 1; i <= $#names; i++ )); do
+    name=${names[i]}
+    desc=$(component_description "$(component_doc "$type" "$name")")
+    ui_item "${C_MUTED}$(printf '%2d)' $i)${C_RESET}" "$name" "$(pick_tag "$type" "$name" "$dest")${desc:-}" $w
+  done
+  local answer
+  print -rn -- "  ${C_KEY}1 3-4${C_RESET} ${C_MUTED}pick${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}skip ${type}${C_RESET}  ${C_ACCENT}${G_CUR}${C_RESET} "
+  read -r answer
+  [[ -t 0 ]] || print   # a piped answer is not echoed, so end the prompt line ourselves
+  local -a picks=(${(s:,:)${answer// /,}})
+  local tok lo hi
+  for tok in "${picks[@]}"; do
+    if [[ $tok == (a|all) ]]; then SELECTED=("${names[@]}"); break; fi
+    if [[ $tok == <->-<-> ]]; then lo=${tok%-*}; hi=${tok#*-}
+    elif [[ $tok == <-> ]]; then lo=$tok; hi=$tok
+    else warn "ignoring '$tok'"; continue
+    fi
+    for (( i = lo; i <= hi; i++ )); do
+      (( i >= 1 && i <= $#names )) && SELECTED+=("${names[i]}")
+    done
+  done
+  SELECTED=("${(@u)SELECTED}")
+}
+
+# fzf picker for one type. Fills SELECTED with names.
+pick_fzf() {  # <type> [dest dir]
+  local type=$1 dest=${2:-}
+  local -a names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
+  SELECTED=()
+  (( $#names )) || { print -r -- "${C_MUTED}${ICON[$type]}  no ${type} in the stack yet${C_RESET}"; return 0 }
+  local -a rows=()
+  local name desc
+  for name in "${names[@]}"; do
+    desc=$(component_description "$(component_doc "$type" "$name")")
+    rows+=("$(printf '%-28s %s' "$name" "$(pick_tag "$type" "$name" "$dest")${desc:-}")")
+  done
+  SELECTED=("${(@f)$(printf '%s\n' "${rows[@]}" \
+    | fzf --multi --reverse --height=60% --marker="${G_ON} " \
+          --prompt="${type} ${G_CUR} " \
+          --header="TAB to mark, ENTER to confirm, ESC to skip ${type}" \
+    | cut -d' ' -f1)}")
+  SELECTED=("${(@)SELECTED:#}")
+}
+
+# In-place checklist across all given types: arrows or j/k move, space toggles,
+# a toggles everything, enter confirms, q or esc cancels. Fills SELECTED with
+# "type<TAB>name". Reads the caller's $target and $dest_rel (zsh scoping is
+# dynamic) to tag components that are already installed.
+pick_tui() {  # <types...>
+  setopt local_options local_traps
+  local -a r_type=() r_name=() r_desc=() r_tag=()   # one entry per drawn row; r_type '' = not selectable
+  local -a names
+  local type name desc
+  local -i i n=0
+  for type in "$@"; do
+    (( $#r_type )) && { r_type+=(''); r_name+=(''); r_desc+=(''); r_tag+=(blank) }
+    r_type+=(''); r_name+=("$type"); r_desc+=(''); r_tag+=(header)
+    names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
+    (( $#names )) || { r_type+=(''); r_name+=(''); r_desc+=(''); r_tag+=(none); continue }
+    for name in "${names[@]}"; do
+      desc=$(component_description "$(component_doc "$type" "$name")")
+      r_type+=("$type"); r_name+=("$name"); r_desc+=("${desc:-}")
+      r_tag+=("$(pick_tag "$type" "$name" "${target:-}/${dest_rel[$type]:-}")")
+      (( n += 1 ))
+    done
+  done
+  SELECTED=()
+  if (( ! n )); then
+    print -r -- "${C_MUTED}nothing to pick — the stack is empty${C_RESET}"
+    return 0
+  fi
+
+  # Selectable rows, cursor position within them, marks.
+  local -a sel=()
+  for (( i = 1; i <= $#r_type; i++ )); do [[ -n ${r_type[i]} ]] && sel+=($i); done
+  local -i pos=1 total=$#r_type marked_n=0
+  local -A marked
+  local -i w=$(ui_name_width "$@")
+
+  # Window: how many rows fit under the banner; scroll it to follow the cursor.
+  local -i lines=${LINES:-0}
+  (( lines > 0 )) || lines=$(tput lines 2>/dev/null)
+  (( lines > 0 )) || lines=24
+  local -i win=$(( lines - 14 ))
+  (( win < 5 )) && win=5
+  (( win > total )) && win=$total
+  local -i top=1
+
+  draw() {
+    local frame='' line prefix box tag
+    local -i k cur=${sel[pos]} last
+    # keep the cursor inside the window, leaving room for the more-markers
+    (( cur < top + (top > 1) )) && top=$(( cur - (cur > 1) ))
+    last=$(( top + win - 1 ))
+    (( cur > last - (last < total) )) && top=$(( cur + (cur < total) - win + 1 ))
+    (( top < 1 )) && top=1
+    last=$(( top + win - 1 ))
+    for (( k = top; k <= last; k++ )); do
+      if (( k == top && top > 1 )); then
+        line="  ${C_MUTED}${G_UP} $(( top - 1 )) more${C_RESET}"
+      elif (( k == last && last < total )); then
+        line="  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}"
+      elif [[ -z ${r_type[k]} ]]; then
+        case ${r_tag[k]} in
+          header) line=$(ui_section "${r_name[k]}" "${(C)r_name[k]}") ;;
+          none)   line="  ${C_MUTED}${G_OFF} none yet${C_RESET}" ;;
+          *)      line='' ;;
+        esac
+      else
+        (( k == cur )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
+        (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
+        line=$(ui_item "${prefix} ${box}" "${r_name[k]}" "${r_tag[k]}${r_desc[k]}" $w)
+        (( k == cur )) && line="${C_BOLD}${line}"
+      fi
+      frame+="${line}${C_RESET}"$'\e[K\n'
+    done
+    frame+="$(ui_rule)"$'\e[K\n'
+    frame+="  ${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}  ${C_KEY}q${C_RESET} ${C_MUTED}cancel${C_RESET}"$'\e[K\n'
+    print -rn -- "$frame"
+  }
+  local -i height=$(( win + 2 ))
+  toggle() { local -i k=$1; if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); else marked[$k]=1; (( marked_n += 1 )); fi }
+
+  print -n -- $'\e[?25l'
+  trap 'print -n -- $'"'"'\e[?25h'"'"'; print; exit 130' INT TERM
+  local key seq
+  local -i cancelled=0
+  draw
+  while true; do
+    read -sk1 key || { cancelled=1; break }
+    case $key in
+      $'\e')
+        seq=''; read -sk1 -t 0.05 seq
+        if [[ $seq == '[' ]]; then
+          read -sk1 -t 0.05 seq
+          case $seq in
+            A) (( pos = pos > 1 ? pos - 1 : $#sel )) ;;
+            B) (( pos = pos < $#sel ? pos + 1 : 1 )) ;;
+          esac
+        else
+          cancelled=1; break
+        fi ;;
+      k|p)       (( pos = pos > 1 ? pos - 1 : $#sel )) ;;
+      j|n)       (( pos = pos < $#sel ? pos + 1 : 1 )) ;;
+      ' ')       toggle ${sel[pos]} ;;
+      a)         if (( marked_n == $#sel )); then for i in "${sel[@]}"; do marked[$i]=0; done; marked_n=0
+                 else for i in "${sel[@]}"; do marked[$i]=1; done; marked_n=$#sel; fi ;;
+      $'\n'|$'\r') break ;;
+      q|$'\x04')   cancelled=1; break ;;                       # q, ctrl-d
+      $'\x03')     print -n -- $'\e[?25h'; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
+    esac
+    print -n -- $'\e['"${height}"'A'
+    draw
+  done
+  print -n -- $'\e[?25h'
+  (( cancelled )) && { print -r -- "${C_MUTED}cancelled${C_RESET}"; return 0 }
+  for i in "${sel[@]}"; do
+    (( ${marked[$i]:-0} )) && SELECTED+=("${r_type[i]}"$'\t'"${r_name[i]}")
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+
+# Copy or link one component to <dest>. Returns 0 installed, 1 failed, 2 skipped.
+install_one() {  # <type> <name> <dest> <force 0|1> <copy|link>
+  local type=$1 name=$2 dest=$3 force=$4 mode=$5
+  local src=$(component_src "$type" "$name")
+  local shown=$(pretty_path "$dest")
+
+  component_exists "$type" "$name" || { warn "no such $(type_singular $type): $name"; return 1 }
+
+  if [[ -e $dest || -L $dest ]]; then
+    if [[ -L $dest && ${dest:A} == ${src:A} ]]; then
+      ok "$(type_singular $type) ${C_BOLD}$name${C_RESET} already linked → $shown"
+      return 0
+    fi
+    if (( ! force )); then
+      if [[ -t 0 && -t 1 ]]; then
+        local ans
+        if ! read -q "ans?  ${C_YELLOW}$shown exists${C_RESET} — overwrite? [y/N] "; then
+          print; print -r -- "  ${C_DIM}skipped $name${C_RESET}"
+          return 2
+        fi
+        print
+      else
+        warn "skipping $name — $shown exists (use --force to overwrite)"
+        return 2
+      fi
+    fi
+    rm -rf -- "$dest"
+  fi
+
+  mkdir -p -- "${dest:h}" || { warn "cannot create ${dest:h}"; return 1 }
+  case $mode in
+    link) ln -s -- "$src" "$dest" ;;
+    *)    if [[ -d $src ]]; then cp -R -- "$src" "$dest"; else cp -- "$src" "$dest"; fi ;;
+  esac || { warn "failed to install $name"; return 1 }
+
+  ok "$(type_singular $type) ${C_BOLD}$name${C_RESET} → $shown${${(M)mode:#link}:+ ${C_DIM}(symlink)${C_RESET}}"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+cmd_list() {
+  require_stack
+  local names_only=0
+  local -a types=()
+  while (( $# )); do
+    case $1 in
+      --names)      names_only=1 ;;
+      skills|skill) types+=(skills) ;;
+      agents|agent) types+=(agents) ;;
+      -h|--help)    usage; return 0 ;;
+      *)            die "unknown argument '$1' (expected: skills, agents, --names)" ;;
+    esac
+    shift
+  done
+  (( $#types )) || types=("${TYPES[@]}")
+  types=("${(@u)types}")
+
+  local type name desc
+  local -a names
+  if (( names_only || ! UI )); then
+    # Plain output: for pipes, scripts and tab completion.
+    for type in "${types[@]}"; do
+      names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
+      if (( names_only )); then
+        for name in "${names[@]}"; do print -r -- "$type/$name"; done
+        continue
+      fi
+      print -r -- "${C_BOLD}${type}${C_RESET} ${C_DIM}(${#names})${C_RESET}"
+      if (( ! $#names )); then
+        print -r -- "  ${C_DIM}none yet${C_RESET}"; print
+        continue
+      fi
+      for name in "${names[@]}"; do
+        desc=$(component_description "$(component_doc "$type" "$name")")
+        printf '  %-28s %s\n' "$name" "${C_DIM}${desc:-—}${C_RESET}"
+      done
+      print
+    done
+    return 0
+  fi
+
+  # Banner layout.
+  local counts='' t
+  for t in "${TYPES[@]}"; do
+    names=("${(@f)$(list_names "$t")}"); names=("${(@)names:#}")
+    counts+="${counts:+ ${G_DOT} }${#names} ${t}"
+  done
+  local -i w=$(ui_name_width "${types[@]}")
+  ui_banner list
+  ui_status "${C_BOLD}Armaze AI Stack${C_RESET} ${C_MUTED}(${counts})${C_RESET}" \
+            "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
+  for type in "${types[@]}"; do
+    names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
+    ui_section "$type" "${(C)type}"
+    if (( ! $#names )); then
+      print -r -- "  ${C_MUTED}${G_OFF} none yet${C_RESET}"; print
+      continue
+    fi
+    for name in "${names[@]}"; do
+      desc=$(component_description "$(component_doc "$type" "$name")")
+      ui_item "${C_ITEM}${G_ON}${C_RESET}" "$name" "${desc:-}" $w
+    done
+    print
+  done
+  ui_footer 'add NAME' Install 'add' Pick 'add --link NAME' Develop 'self-update' 'Pull stack' 'help' Options
+}
+
+cmd_add() {
+  require_stack
+  local target="" platform=claude force=0 mode=copy skills_dir="" agents_dir=""
+  local -a types=() names=()
+  while (( $# )); do
+    case $1 in
+      -t|--to)        [[ -n ${2:-} ]] || die "$1 needs a value"; target=$2; shift 2 ;;
+      -p|--platform)  [[ -n ${2:-} ]] || die "$1 needs a value"; platform=$2; shift 2 ;;
+      --skills-dir)   [[ -n ${2:-} ]] || die "$1 needs a value"; skills_dir=$2; shift 2 ;;
+      --agents-dir)   [[ -n ${2:-} ]] || die "$1 needs a value"; agents_dir=$2; shift 2 ;;
+      -s|--skills)    types+=(skills); shift ;;
+      -a|--agents)    types+=(agents); shift ;;
+      -f|--force)     force=1; shift ;;
+      -l|--link)      mode=link; shift ;;
+      -h|--help)      usage; return 0 ;;
+      --)             shift; names+=("$@"); break ;;
+      -*)             die "unknown option '$1' (run: aistack help)" ;;
+      *)              names+=("$1"); shift ;;
+    esac
+  done
+  (( $#types )) || types=("${TYPES[@]}")
+  types=("${(@u)types}")
+  [[ $platform == (claude|generic) ]] || die "unknown platform '$platform' (expected: claude, generic)"
+
+  target=$(resolve_target "$target") || exit 1
+  [[ $target == $ARMAZE_STACK_DIR ]] \
+    && die "the target is the stack itself — cd into your own repo or pass --to DIR"
+
+  local -A dest_rel
+  dest_rel[skills]=${skills_dir:-$(dest_dir "$platform" skills)}
+  dest_rel[agents]=${agents_dir:-$(dest_dir "$platform" agents)}
+
+  if (( UI && ! $#names )); then
+    ui_banner add
+    ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} $(pretty_path "$target") ${G_DOT} layout ${platform}${C_RESET}" \
+              "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
+  else
+    info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
+    info "target  $(pretty_path "$target") ${C_DIM}(layout: $platform)${C_RESET}"
+    print
+  fi
+
+  local -a queue=()
+  local type name entry mode
+  if (( $#names )); then
+    for name in "${names[@]}"; do
+      entry=$(resolve_name "$name" "${types[@]}") || exit 1
+      queue+=("$entry")
+    done
+  else
+    pick_mode; mode=$REPLY
+    if [[ $mode == tui ]]; then
+      pick_tui "${types[@]}"
+      queue=("${SELECTED[@]}")
+    else
+      for type in "${types[@]}"; do
+        pick_$mode "$type" "$target/${dest_rel[$type]}"
+        for name in "${SELECTED[@]}"; do queue+=("$type"$'\t'"$name"); done
+      done
+    fi
+    print
+  fi
+  queue=("${(@u)queue}")
+  if (( ! $#queue )); then
+    print -r -- "Nothing selected."
+    return 0
+  fi
+
+  local added=0 skipped=0 rel
+  for entry in "${queue[@]}"; do
+    type=${entry%%$'\t'*}; name=${entry#*$'\t'}
+    rel="${dest_rel[$type]}/$(dest_leaf "$type" "$name")"
+    if install_one "$type" "$name" "$target/$rel" "$force" "$mode"; then
+      manifest_upsert "$target" "$type" "$name" "$rel"
+      (( added += 1 ))
+    else
+      (( skipped += 1 ))
+    fi
+  done
+  print
+  if (( added )); then
+    ok "$added added, $skipped skipped — recorded in $(pretty_path "$target/$MANIFEST_NAME")"
+  else
+    ok "$added added, $skipped skipped"
+  fi
+}
+
+cmd_update() {
+  require_stack
+  local target="" pull=0
+  while (( $# )); do
+    case $1 in
+      -t|--to)   [[ -n ${2:-} ]] || die "$1 needs a value"; target=$2; shift 2 ;;
+      --pull)    pull=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      *)         die "unknown option '$1' (run: aistack help)" ;;
+    esac
+  done
+
+  target=$(resolve_target "$target") || exit 1
+  local manifest="$target/$MANIFEST_NAME"
+  [[ -f $manifest ]] || die "no $MANIFEST_NAME in $target — nothing to update (run: aistack add)"
+
+  if (( pull )); then
+    stack_pull
+    print
+  fi
+  info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
+  info "target  $(pretty_path "$target")"
+  print
+
+  local -a entries=("${(@f)$(grep -v '^#' "$manifest")}"); entries=("${(@)entries:#}")
+  if (( ! $#entries )); then
+    print -r -- "Manifest is empty."
+    return 0
+  fi
+
+  local line type name rel rest dest src updated=0 unchanged=0 failed=0
+  for line in "${entries[@]}"; do
+    IFS=$'\t' read -r type name rel rest <<< "$line"
+    if [[ -z $type || -z $name || -z $rel ]]; then
+      warn "skipping malformed manifest line: $line"; (( failed += 1 )); continue
+    fi
+    dest="$target/$rel"
+    src=$(component_src "$type" "$name")
+    if [[ -L $dest ]]; then
+      ok "$(type_singular $type) ${C_BOLD}$name${C_RESET} is a symlink — already live"
+      continue
+    fi
+    if [[ -e $dest ]] && diff -rq -- "$src" "$dest" >/dev/null 2>&1; then
+      print -r -- "  ${C_DIM}$(type_singular $type) $name up to date${C_RESET}"
+      manifest_upsert "$target" "$type" "$name" "$rel"
+      (( unchanged += 1 ))
+      continue
+    fi
+    if install_one "$type" "$name" "$dest" 1 copy; then
+      manifest_upsert "$target" "$type" "$name" "$rel"
+      (( updated += 1 ))
+    else
+      (( failed += 1 ))
+    fi
+  done
+  print
+  ok "$updated updated, $unchanged already up to date, $failed failed"
+  (( failed == 0 ))
+}
+
+cmd_self_update() {
+  require_stack
+  while (( $# )); do
+    case $1 in
+      -h|--help) usage; return 0 ;;
+      *)         die "unknown option '$1' (run: aistack help)" ;;
+    esac
+  done
+  stack_pull
+  print
+  print -r -- "Projects keep their own copies — run ${C_BOLD}aistack update${C_RESET} inside one to refresh them."
+}
+
+main() {
+  local cmd=${1:-help}
+  (( $# )) && shift
+  case $cmd in
+    list|ls)               cmd_list "$@" ;;
+    add|install)           cmd_add "$@" ;;
+    update|upgrade)        cmd_update "$@" ;;
+    self-update|selfupdate) cmd_self_update "$@" ;;
+    root|path)             print -r -- "$ARMAZE_STACK_DIR" ;;
+    help|-h|--help)        usage ;;
+    version|-v|--version)  print -r -- "aistack $ARMAZE_VERSION" ;;
+    *)                     die "unknown command '$cmd' (run: aistack help)" ;;
+  esac
+}
+
+main "$@"

@@ -22,6 +22,6 @@ You are a meticulous code reviewer for Armaze projects. ...
 Conventions:
 
 - Names are lowercase kebab-case.
-- Files starting with `.` or `_`, and this `README.md`, are ignored by `armaze`.
+- Files starting with `.` or `_`, and this `README.md`, are ignored by `aistack`.
 - `tools` and `model` follow the Claude Code sub-agent format; other platforms ignore keys they don't know, so it's safe to keep them.
 - Keep the body self-contained — the file is copied on its own into other repos.

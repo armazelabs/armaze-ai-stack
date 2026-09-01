@@ -9,7 +9,7 @@ skills/<name>/
 └── scripts/        # optional helpers (zsh preferred; keep them portable)
 ```
 
-`SKILL.md` starts with YAML front matter. `name` must match the directory name; `description` is one line — it is what `armaze list` shows and what an assistant reads to decide when to use the skill.
+`SKILL.md` starts with YAML front matter. `name` must match the directory name; `description` is one line — it is what `aistack list` shows and what an assistant reads to decide when to use the skill.
 
 ```markdown
 ---
@@ -25,6 +25,6 @@ description: Review a pull request diff for correctness, security and style; use
 Conventions:
 
 - Names are lowercase kebab-case (`pr-review`, not `PR_Review`).
-- Directories starting with `.` or `_` are ignored by `armaze` — use `_drafts/` for work in progress.
+- Directories starting with `.` or `_` are ignored by `aistack` — use `_drafts/` for work in progress.
 - Keep the instructions platform-neutral. If a step only makes sense in one tool, say so in the text rather than depending on that tool's private format.
 - Don't reference files outside the skill directory; the directory is copied as a unit into other repos.

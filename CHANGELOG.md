@@ -1,6 +1,21 @@
 # Changelog
 
-All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `armaze` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
+All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
+
+## 0.1.1 - 2026-09-01
+
+### Added
+
+- **A new look for `list`, the `add` picker and `help`.** An `AISTACK` wordmark, a command bar with the current command highlighted, sections with icons, right-aligned stack info, descriptions cut to the terminal width, and a key legend at the bottom. Only when you are looking at a terminal — piped output and `list --names` stay plain. Nerd Font glyphs when you have one, ASCII markers otherwise.
+- **Arrow-key picker.** `aistack add` now opens an in-place checklist: `↑↓` (or `j`/`k`) move, `space` toggles, `a` toggles everything, `⏎` adds, `q` cancels. It marks components the target already has. No fzf needed.
+- `ARMAZE_PICKER=menu|fzf`, `ARMAZE_ICONS=0`, `ARMAZE_UI=0/1` and `CLICOLOR_FORCE=1` to adjust the picker and the display.
+- `aistack --version` / `-v` now appear in `help`, the README and tab completion.
+- `install.zsh` finishes by reloading your shell (`exec zsh`) when run from a terminal, so the command works immediately; `--no-exec` skips that.
+
+### Changed
+
+- fzf is no longer used automatically; set `ARMAZE_PICKER=fzf` if you prefer fuzzy search.
+- **The command is now `aistack`** (was `armaze`). The oh-my-zsh plugin, `plugins+=(armaze)`, the `.armaze-stack` manifest and the `ARMAZE_*` variables keep their names.
 
 ## 0.1.0 - 2026-09-01
 

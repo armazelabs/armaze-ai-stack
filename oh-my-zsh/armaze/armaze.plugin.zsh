@@ -1,6 +1,6 @@
 # Armaze AI Stack — oh-my-zsh plugin
 #
-# Puts the `armaze` CLI on PATH, exports ARMAZE_STACK_DIR, and adds tab completion.
+# Puts the `aistack` CLI on PATH, exports ARMAZE_STACK_DIR, and adds tab completion.
 # Enabled by ./install.zsh, or by hand:
 #   ln -s <checkout>/oh-my-zsh/armaze "$ZSH_CUSTOM/plugins/armaze"
 #   plugins+=(armaze)          # in ~/.zshrc, before oh-my-zsh loads
@@ -16,7 +16,7 @@ if [[ -d "$ARMAZE_STACK_DIR/bin" ]]; then
   typeset -U path
 fi
 
-_armaze() {
+_aistack() {
   local -a subcmds=(
     'list:List available skills and agents'
     'add:Add skills/agents to the current repo'
@@ -25,9 +25,11 @@ _armaze() {
     'root:Print the stack checkout path'
     'help:Show help'
     'version:Show version'
+    '--help:Show help'
+    '--version:Show version'
   )
   if (( CURRENT == 2 )); then
-    _describe -t commands 'armaze command' subcmds
+    _describe -t commands 'aistack command' subcmds
     return
   fi
   case ${words[2]} in
@@ -36,7 +38,7 @@ _armaze() {
       ;;
     add|install)
       local -a comps
-      comps=(${(f)"$(armaze list --names 2>/dev/null)"})
+      comps=(${(f)"$(aistack list --names 2>/dev/null)"})
       _arguments \
         '(-t --to)'{-t,--to}'[target repo]:dir:_directories' \
         '(-p --platform)'{-p,--platform}'[destination layout]:platform:(claude generic)' \
@@ -56,4 +58,4 @@ _armaze() {
   esac
 }
 
-(( $+functions[compdef] )) && compdef _armaze armaze
+(( $+functions[compdef] )) && compdef _aistack aistack
