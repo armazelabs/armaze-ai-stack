@@ -6,6 +6,7 @@
 #   armaze add  [--to DIR] [--platform claude|generic] [--skills-dir DIR] [--agents-dir DIR]
 #               [--skills] [--agents] [--force] [--link] [NAME ...]
 #   armaze update [--to DIR] [--pull]
+#   armaze self-update
 #   armaze root | help | version
 #
 # Environment:
@@ -57,6 +58,7 @@ ${C_BOLD}Usage${C_RESET}
   armaze list [skills|agents] [--names]   List what the stack offers
   armaze add [options] [NAME ...]         Add components to a repo (interactive picker if no NAME)
   armaze update [--to DIR] [--pull]       Re-copy everything recorded in ${MANIFEST_NAME}
+  armaze self-update                      Pull the latest stack and show what changed
   armaze root                             Print the stack checkout path
   armaze help | version
 
@@ -74,7 +76,7 @@ ${C_BOLD}add options${C_RESET}
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
-      --pull              Run 'git pull --ff-only' on the stack first
+      --pull              Run 'armaze self-update' first
 
 ${C_BOLD}Layouts${C_RESET}
   claude    .claude/skills/<name>/    .claude/agents/<name>.md
@@ -94,6 +96,58 @@ require_stack() {
 
 stack_rev() {
   git -C "$ARMAZE_STACK_DIR" rev-parse --short HEAD 2>/dev/null || print -r -- "unknown"
+}
+
+# Fast-forward the stack checkout and report which components changed. Dies if
+# the checkout is not a git repo or the pull fails (local edits, diverged branch).
+stack_pull() {
+  local dir=$ARMAZE_STACK_DIR before after
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "$(pretty_path "$dir") is not a git checkout — update the stack by hand"
+  before=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || die "cannot read the stack's current revision"
+  info "stack   $(pretty_path "$dir") ${C_DIM}($(stack_rev))${C_RESET}"
+  git -C "$dir" pull --ff-only --quiet \
+    || die "git pull failed in $(pretty_path "$dir") — local changes or a diverged branch? fix it there and retry"
+  after=$(git -C "$dir" rev-parse HEAD)
+  if [[ $before == $after ]]; then
+    ok "stack already up to date"
+    return 0
+  fi
+  ok "stack updated ${C_DIM}${before[1,7]} → ${after[1,7]}${C_RESET}"
+  stack_changes "$before" "$after"
+}
+
+# List components added (+), changed (~) or removed (-) between two stack revisions.
+stack_changes() {  # <from-rev> <to-rev>
+  local from=$1 to=$2 file type name key mark   # (not `path` — that would shadow $PATH)
+  local -A state
+  local -a files=("${(@f)$(git -C "$ARMAZE_STACK_DIR" diff --name-only "$from" "$to" -- "${TYPES[@]}" 2>/dev/null)}")
+  files=("${(@)files:#}")
+  for file in "${files[@]}"; do
+    type=${file%%/*}
+    name=${${file#*/}%%/*}
+    [[ $type == agents ]] && name=${name%.md}
+    [[ $name == (.|_)* || $name == (README|README.md) ]] && continue
+    key="$type"$'\t'"$name"
+    [[ -n ${state[$key]:-} ]] && continue
+    if ! git -C "$ARMAZE_STACK_DIR" cat-file -e "$from:$(component_doc_rel "$type" "$name")" 2>/dev/null; then
+      state[$key]=added
+    elif ! git -C "$ARMAZE_STACK_DIR" cat-file -e "$to:$(component_doc_rel "$type" "$name")" 2>/dev/null; then
+      state[$key]=removed
+    else
+      state[$key]=changed
+    fi
+  done
+  (( $#state )) || return 0
+  for key in "${(ko)state[@]}"; do
+    type=${key%%$'\t'*}; name=${key#*$'\t'}
+    case ${state[$key]} in
+      added)   mark="${C_GREEN}+${C_RESET}" ;;
+      removed) mark="${C_RED}-${C_RESET}" ;;
+      *)       mark="${C_YELLOW}~${C_RESET}" ;;
+    esac
+    printf '  %s %-5s %s\n' "$mark" "$(type_singular "$type")" "$name"
+  done
 }
 
 type_singular() { case $1 in skills) print -r -- skill ;; agents) print -r -- agent ;; esac }
@@ -122,12 +176,17 @@ component_src() {  # <type> <name>
   esac
 }
 
-# The Markdown file carrying a component's front matter.
-component_doc() {  # <type> <name>
+# The Markdown file carrying a component's front matter, relative to the stack root.
+component_doc_rel() {  # <type> <name>
   case $1 in
-    skills) print -r -- "$ARMAZE_STACK_DIR/skills/$2/SKILL.md" ;;
-    agents) print -r -- "$ARMAZE_STACK_DIR/agents/$2.md" ;;
+    skills) print -r -- "skills/$2/SKILL.md" ;;
+    agents) print -r -- "agents/$2.md" ;;
   esac
+}
+
+# Absolute path of the same file.
+component_doc() {  # <type> <name>
+  print -r -- "$ARMAZE_STACK_DIR/$(component_doc_rel "$1" "$2")"
 }
 
 component_exists() {  # <type> <name>
@@ -465,8 +524,8 @@ cmd_update() {
   [[ -f $manifest ]] || die "no $MANIFEST_NAME in $target — nothing to update (run: armaze add)"
 
   if (( pull )); then
-    info "pulling latest stack"
-    git -C "$ARMAZE_STACK_DIR" pull --ff-only || die "git pull failed"
+    stack_pull
+    print
   fi
   info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
   info "target  $(pretty_path "$target")"
@@ -508,6 +567,19 @@ cmd_update() {
   (( failed == 0 ))
 }
 
+cmd_self_update() {
+  require_stack
+  while (( $# )); do
+    case $1 in
+      -h|--help) usage; return 0 ;;
+      *)         die "unknown option '$1' (run: armaze help)" ;;
+    esac
+  done
+  stack_pull
+  print
+  print -r -- "Projects keep their own copies — run ${C_BOLD}armaze update${C_RESET} inside one to refresh them."
+}
+
 main() {
   local cmd=${1:-help}
   (( $# )) && shift
@@ -515,6 +587,7 @@ main() {
     list|ls)               cmd_list "$@" ;;
     add|install)           cmd_add "$@" ;;
     update|upgrade)        cmd_update "$@" ;;
+    self-update|selfupdate) cmd_self_update "$@" ;;
     root|path)             print -r -- "$ARMAZE_STACK_DIR" ;;
     help|-h|--help)        usage ;;
     version|-v|--version)  print -r -- "armaze $ARMAZE_VERSION" ;;

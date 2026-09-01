@@ -21,6 +21,7 @@ _armaze() {
     'list:List available skills and agents'
     'add:Add skills/agents to the current repo'
     'update:Re-copy components recorded in .armaze-stack'
+    'self-update:Pull the latest stack and show what changed'
     'root:Print the stack checkout path'
     'help:Show help'
     'version:Show version'

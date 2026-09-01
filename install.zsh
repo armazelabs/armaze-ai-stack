@@ -1,25 +1,33 @@
 #!/usr/bin/env zsh
 #
-# One-time setup for Armaze members.
+# Set up the armaze CLI on this machine. Two ways to run it:
 #
-# Links this checkout's oh-my-zsh plugin into $ZSH_CUSTOM/plugins/armaze and,
-# with your OK, adds `plugins+=(armaze)` to ~/.zshrc so the `armaze` command
-# is available in every shell.
+#   curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh
+#       No checkout yet: clones the stack to ~/armaze-ai-stack (or $ARMAZE_STACK_DIR)
+#       and continues as below. Running it again pulls the latest stack instead.
 #
-#   ./install.zsh            interactive
-#   ./install.zsh --yes      edit ~/.zshrc without asking
-#   ./install.zsh --no-rc    link the plugin only; you edit ~/.zshrc yourself
+#   ./install.zsh
+#       From an existing checkout.
+#
+# Either way it links the checkout's oh-my-zsh plugin into $ZSH_CUSTOM/plugins/armaze
+# and, with your OK, adds `plugins+=(armaze)` to ~/.zshrc so `armaze` is on PATH in
+# every shell.
+#
+#   --yes      edit ~/.zshrc without asking
+#   --no-rc    link the plugin only; you edit ~/.zshrc yourself
+#
+# Environment:
+#   ARMAZE_STACK_DIR   where to clone when bootstrapping (default: ~/armaze-ai-stack)
+#   ARMAZE_REPO_URL    what to clone (default: the GitHub repo)
 
 emulate -R zsh
 setopt pipe_fail
 
-REPO="${0:A:h}"
 ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
 OMZ="${ZSH:-$HOME/.oh-my-zsh}"
 ZSH_CUSTOM="${ZSH_CUSTOM:-$OMZ/custom}"
-PLUGIN_SRC="$REPO/oh-my-zsh/armaze"
-PLUGIN_DST="$ZSH_CUSTOM/plugins/armaze"
 RC_LINE='plugins+=(armaze)   # Armaze AI Stack CLI'
+REPO_URL="${ARMAZE_REPO_URL:-https://github.com/armazelabs/armaze-ai-stack.git}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   C_RESET=$'\e[0m' C_BOLD=$'\e[1m' C_DIM=$'\e[2m'
@@ -36,7 +44,9 @@ usage() {
   cat <<USAGE
 ${C_BOLD}install.zsh${C_RESET} — set up the armaze CLI for this shell
 
-  ./install.zsh            interactive
+  curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh
+                           clone the stack to ~/armaze-ai-stack (or \$ARMAZE_STACK_DIR) and set up
+  ./install.zsh            from an existing checkout
   ./install.zsh --yes      edit ~/.zshrc without asking
   ./install.zsh --no-rc    link the plugin only; you edit ~/.zshrc yourself
 USAGE
@@ -52,7 +62,37 @@ for arg in "$@"; do
   esac
 done
 
-[[ -d $OMZ ]] || die "oh-my-zsh not found at $OMZ — set \$ZSH if it lives somewhere else"
+[[ -d $OMZ ]] || die "oh-my-zsh not found at $OMZ — install it first (https://ohmyz.sh), or set \$ZSH if it lives somewhere else"
+
+# 0. Find the checkout — or make one ------------------------------------------
+# Run from a checkout, $0 is this file inside the repo. Piped from curl, $0 is
+# just "zsh": clone (or pull) the stack, then re-run this script from the
+# checkout with the terminal on stdin so the .zshrc prompt still works.
+SELF="${0:A}"
+if [[ -f $SELF && -f ${SELF:h}/bin/armaze && -f ${SELF:h}/oh-my-zsh/armaze/armaze.plugin.zsh ]]; then
+  REPO="${SELF:h}"
+else
+  (( $+commands[git] )) || die "git is required to fetch the stack"
+  REPO="${ARMAZE_STACK_DIR:-$HOME/armaze-ai-stack}"
+  REPO="${REPO:A}"
+  if [[ -f $REPO/bin/armaze ]]; then
+    info "stack already at ${REPO/#$HOME/~} — pulling the latest"
+    git -C "$REPO" pull --ff-only --quiet || warn "git pull failed — continuing with the checkout as it is"
+  elif [[ -e $REPO ]]; then
+    die "$REPO exists but is not an armaze-ai-stack checkout — set ARMAZE_STACK_DIR to another path"
+  else
+    info "cloning $REPO_URL → ${REPO/#$HOME/~}"
+    git clone --quiet -- "$REPO_URL" "$REPO" || die "clone failed"
+  fi
+  if { : </dev/tty; } 2>/dev/null; then
+    exec zsh "$REPO/install.zsh" "$@" </dev/tty
+  else
+    exec zsh "$REPO/install.zsh" "$@"
+  fi
+fi
+
+PLUGIN_SRC="$REPO/oh-my-zsh/armaze"
+PLUGIN_DST="$ZSH_CUSTOM/plugins/armaze"
 [[ -f $PLUGIN_SRC/armaze.plugin.zsh ]] || die "plugin source missing: $PLUGIN_SRC"
 
 chmod +x "$REPO/bin/armaze" 2>/dev/null
@@ -110,6 +150,7 @@ fi
 
 # 3. Done ----------------------------------------------------------------------
 print
-print -r -- "${C_BOLD}Next:${C_RESET} open a new shell (or run: source ${ZSHRC/#$HOME/~}), then try"
-print -r -- "    armaze list"
-print -r -- "    cd ~/your-project && armaze add"
+print -r -- "${C_BOLD}Next:${C_RESET} open a new shell (or run: exec zsh), then try"
+print -r -- "    armaze list                          what the stack offers"
+print -r -- "    cd ~/your-project && armaze add      pick skills to add"
+print -r -- "    armaze self-update                   pull the latest stack later on"
