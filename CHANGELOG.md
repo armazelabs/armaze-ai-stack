@@ -2,6 +2,16 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.3 - 2026-09-01
+
+### Changed
+
+- The banner layout (`list`, the `add` picker, `help`) now sits inside a rounded box of fixed width — 100 columns, or the terminal width if narrower — centred in the window, instead of stretching across it. Long descriptions are trimmed with an ellipsis. `ARMAZE_WIDTH=N` changes the width, `ARMAZE_ALIGN=left` pins the box to the left.
+
+### Fixed
+
+- `aistack add --link` with the interactive picker now symlinks as asked; it used to copy, because the picker's mode overwrote the copy/link mode.
+
 ## 0.1.2 - 2026-09-01
 
 ### Changed

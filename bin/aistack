@@ -13,12 +13,14 @@
 #   ARMAZE_NO_FZF      Set to 1 to always use the numbered picker instead of fzf
 #   ARMAZE_ICONS       Set to 0 for ASCII markers instead of Nerd Font glyphs
 #   ARMAZE_UI          1/0 to force the banner layout on/off (default: on when stdout is a terminal)
+#   ARMAZE_WIDTH       Width of the boxed layout in columns (default 100, never wider than the terminal)
+#   ARMAZE_ALIGN       left to pin the box to the left edge (default: centred in the terminal)
 #   NO_COLOR           Disable coloured output; CLICOLOR_FORCE=1 keeps it on without a terminal
 
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.1.2"
+readonly ARMAZE_VERSION="0.1.3"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
 
@@ -58,6 +60,11 @@ pretty_path() {  # <abs path>
 # ---------------------------------------------------------------------------
 # UI: the banner layout used by `list`, the `add` picker and `help`.
 #
+# Everything is drawn inside a rounded box of fixed width (ARMAZE_WIDTH, default
+# 100 columns, or the terminal width if that is narrower) rather than stretched
+# across the window. Lines go through ui_line, which adds the borders while a
+# box is open (UI_BOX=1, between ui_top and ui_bottom) and prints plainly outside.
+#
 # Drawn only when stdout is a terminal (override with ARMAZE_UI=1/0), so piped
 # output, `list --names` and tab completion stay plain. Icons are Nerd Font
 # glyphs written as \u escapes, with one-cell ASCII stand-ins outside a UTF-8
@@ -88,16 +95,30 @@ fi
 if ui_unicode; then
   G_ON=$'▶' G_OFF=$'○' G_DASH=$'┄' G_ELL=$'…' G_DOT=$'·' G_ENTER=$'⏎'
   G_CUR=$'❯' G_SEL=$'◉' G_UNSEL=$'○' G_UP=$'↑' G_DOWN=$'↓'
+  B_TL=$'╭' B_TR=$'╮' B_BL=$'╰' B_BR=$'╯' B_H=$'─' B_V=$'│' B_LT=$'├' B_RT=$'┤'
 else
   G_ON='>' G_OFF='o' G_DASH='-' G_ELL='...' G_DOT='-' G_ENTER='enter'
   G_CUR='>' G_SEL='[x]' G_UNSEL='[ ]' G_UP='^' G_DOWN='v'
+  B_TL='+' B_TR='+' B_BL='+' B_BR='+' B_H='-' B_V='|' B_LT='+' B_RT='+'
 fi
 
-# Terminal width. zsh reports COLUMNS=0 with no terminal attached, so fall
-# through to tput, then to 80.
-typeset -gi UI_COLS=${COLUMNS:-0}
-(( UI_COLS > 0 )) || UI_COLS=$(tput cols 2>/dev/null)
-(( UI_COLS > 0 )) || UI_COLS=80
+# Layout width. UI_WIDTH is the box, UI_COLS the content between its borders
+# ("│ " and " │" take two cells each side). zsh reports COLUMNS=0 with no
+# terminal attached, so fall through to tput, then to 80.
+typeset -gi UI_TERM=${COLUMNS:-0}
+(( UI_TERM > 0 )) || UI_TERM=$(tput cols 2>/dev/null)
+(( UI_TERM > 0 )) || UI_TERM=80
+typeset -gi UI_WIDTH=${ARMAZE_WIDTH:-100}
+(( UI_WIDTH > 0 )) || UI_WIDTH=100
+(( UI_WIDTH > UI_TERM )) && UI_WIDTH=$UI_TERM
+(( UI_WIDTH < 40 )) && UI_WIDTH=40
+typeset -gi UI_COLS=$(( UI_WIDTH - 4 ))
+typeset -gi UI_BOX=0   # 1 while a box is open (ui_top … ui_bottom): ui_line draws borders
+
+# Horizontal position: the box is centred in the terminal unless ARMAZE_ALIGN=left.
+typeset -gi UI_MARGIN=0
+[[ ${ARMAZE_ALIGN:-center} == left ]] || UI_MARGIN=$(( (UI_TERM - UI_WIDTH) / 2 ))
+(( UI_MARGIN < 0 )) && UI_MARGIN=0
 
 # Calvin S, three rows per glyph, as used by git-persona. Rows within a glyph
 # are equal width and glyphs sit flush against each other.
@@ -111,28 +132,61 @@ typeset -gA UI_FONT=(
   Y $'╦ ╦\n╚╦╝\n ╩ '  Z $'╔═╗\n╔═╝\n╚═╝'  ' ' $'  \n  \n  '
 )
 
-# Display width of a string, ignoring colour codes.
-ui_vis() { local s=${1//$'\e'\[[0-9;]#m/}; print -r -- ${(m)#s} }
+# Display width of a string, ignoring colour codes. ui_vis prints it; ui_vis_r
+# leaves it in REPLY for callers on the redraw path, where every $(...) is a fork.
+ui_vis_r() { local s=${1//$'\e'\[[0-9;]#m/}; REPLY=${(m)#s} }
+ui_vis()   { ui_vis_r "$1"; print -r -- $REPLY }
 
 # $2 repeated $1 times.
 ui_fill() { local e=''; print -r -- "${(pl:$1::$2:)e}" }
 
-# Truncate to $2 cells with an ellipsis.
-ui_trunc() {  # <text> <width>
+# Truncate to $2 cells with an ellipsis. Measured on the visible text; a line
+# that has colour codes and is too long loses them so the cut lands correctly.
+# ui_trunc_r leaves the result in REPLY (no fork); ui_trunc prints it.
+ui_trunc_r() {  # <text> <width>
   local s=$1; local -i w=$2
-  (( w < 4 )) && { print -r -- ""; return }
-  (( ${(m)#s} > w )) && s="${s[1,w-${#G_ELL}]}${G_ELL}"
-  print -r -- "$s"
+  (( w < 4 )) && { REPLY=''; return }
+  local plain=${s//$'\e'\[[0-9;]#m/}
+  (( ${(m)#plain} > w )) && s="${plain[1,w-${#G_ELL}]}${G_ELL}"
+  REPLY=$s
+}
+ui_trunc() { ui_trunc_r "$1" "$2"; print -r -- "$REPLY" }
+
+# One line of the layout. Inside a box: left border, content padded to UI_COLS,
+# right border. Outside (UI_BOX=0) the content prints plain, so the pickers that
+# read from stdin can keep using ui_section/ui_item below a closed box.
+ui_line() {  # [content]
+  local s e=''
+  ui_trunc_r "${1:-}" $UI_COLS; s=$REPLY
+  if (( ! UI_BOX )); then print -r -- "$s"; return; fi
+  local plain=${s//$'\e'\[[0-9;]#m/}
+  local -i pad=$(( UI_COLS - ${(m)#plain} ))
+  (( pad < 0 )) && pad=0
+  print -r -- "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${B_V}${C_RESET} ${s}${C_RESET}${(pl:$pad:: :)e} ${C_SHADOW}${B_V}${C_RESET}"
+}
+ui_blank() { ui_line '' }
+
+# Box edges. ui_top and ui_bottom also flip UI_BOX so everything between them
+# gets borders; ui_rule is a divider inside the box, a dotted rule outside it.
+ui_edge() {  # <left corner> <right corner>
+  local e=''
+  print -r -- "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${1}$(ui_fill $(( UI_WIDTH - 2 )) "$B_H")${2}${C_RESET}"
+}
+ui_top()    { UI_BOX=1; ui_edge "$B_TL" "$B_TR" }
+ui_bottom() { ui_edge "$B_BL" "$B_BR"; UI_BOX=0 }
+ui_rule() {
+  if (( UI_BOX )); then ui_edge "$B_LT" "$B_RT"
+  else print -r -- "${C_SHADOW}$(ui_fill $UI_COLS "$G_DASH")${C_RESET}"
+  fi
 }
 
-# Centre a (possibly coloured) line in the terminal.
+# Centre a (possibly coloured) line within the box.
 ui_center() {
   local -i pad=$(( (UI_COLS - $(ui_vis "$1")) / 2 ))
-  (( pad > 0 )) && print -rn -- "$(ui_fill $pad ' ')"
-  print -r -- "$1"
+  if (( pad > 0 )); then ui_line "$(ui_fill $pad ' ')$1"
+  else ui_line "$1"
+  fi
 }
-
-ui_rule() { print -r -- "${C_SHADOW}$(ui_fill $UI_COLS "$G_DASH")${C_RESET}" }
 
 # Wordmark plus the command bar, current command highlighted.
 ui_banner() {  # <current command>
@@ -140,6 +194,8 @@ ui_banner() {  # <current command>
   local -a rows=('' '' '') g
   local c; local -i j r art=0
   print
+  ui_top
+  ui_blank
   if ui_unicode; then
     for (( j = 1; j <= ${#word}; j++ )); do
       c=$word[j]; g=( "${(@f)UI_FONT[$c]}" )
@@ -167,22 +223,28 @@ ui_banner() {  # <current command>
 ui_status() {  # <left> <right>
   local -i gap=$(( UI_COLS - $(ui_vis "$1") - $(ui_vis "$2") ))
   ui_rule
-  if (( gap >= 2 )); then print -r -- "$1$(ui_fill $gap ' ')$2"
-  else print -r -- "$1"; print -r -- "$2"
+  if (( gap >= 2 )); then ui_line "$1$(ui_fill $gap ' ')$2"
+  else ui_line "$1"; ui_line "$2"
   fi
   ui_rule
 }
 
-ui_section() { print -r -- "${C_HEAD}${ICON[$1]}  ${2}${C_RESET}" }  # <type> <title>
+ui_section() { ui_line "${C_HEAD}${ICON[$1]}  ${2}${C_RESET}" }  # <type> <title>
 
 # One component row: marker, name padded to $4, description truncated to fit.
-ui_item() {  # <prefix> <name> <desc> <name width> [dim]
-  local prefix=$1 name=$2 desc=$3 style=${5:-}
+# Style `dim` mutes the name; `bold` emboldens the row (the picker's cursor line).
+ui_item() {  # <prefix> <name> <desc> <name width> [dim|bold]
+  local prefix=$1 name=$2 desc=$3 style=${5:-} e=''
   local -i w=$4
-  local -i room=$(( UI_COLS - 2 - $(ui_vis "$prefix") - 1 - w - 2 ))
+  ui_vis_r "$prefix"
+  local -i room=$(( UI_COLS - 2 - REPLY - 1 - w - 2 )) gap=$(( w - ${#name} ))
+  (( gap < 0 )) && gap=0
   local nm="${C_ITEM}${name}${C_RESET}"
   [[ $style == dim ]] && nm="${C_MUTED}${name}${C_RESET}"
-  print -r -- "  ${prefix} ${nm}$(ui_fill $(( w - ${#name} )) ' ')  ${C_MUTED}$(ui_trunc "$desc" $room)${C_RESET}"
+  ui_trunc_r "$desc" $room
+  local content="  ${prefix} ${nm}${(pl:$gap:: :)e}  ${C_MUTED}${REPLY}${C_RESET}"
+  [[ $style == bold ]] && content="${C_BOLD}${content}"
+  ui_line "$content"
 }
 
 # Key legend, pairs of <key> <label>.
@@ -190,7 +252,7 @@ ui_footer() {
   local out=''
   while (( $# >= 2 )); do out+="${out:+    }${C_KEY}$1${C_RESET}  ${C_MUTED}$2${C_RESET}"; shift 2; done
   ui_rule
-  print -r -- "  ${out}"
+  ui_line "  ${out}"
 }
 
 # Longest name across the given types, for column alignment.
@@ -202,15 +264,15 @@ ui_name_width() {
   print -r -- $w
 }
 
-usage() {
-  (( UI )) && ui_banner help && print
+# Help text. Lines are kept under 96 cells so they fit inside the default box.
+usage_text() {
   cat <<USAGE
 ${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to a repo
 
 ${C_BOLD}Usage${C_RESET}
   aistack list [skills|agents] [--names]   List what the stack offers
-  aistack add [options] [NAME ...]         Add components to a repo (interactive picker if no NAME)
-  aistack update [--to DIR]                Pull the latest stack, then re-copy everything in ${MANIFEST_NAME}
+  aistack add [options] [NAME ...]         Add components to a repo (picker if no NAME)
+  aistack update [--to DIR]                Pull the latest stack, then refresh this project
   aistack root                             Print the stack checkout path
   aistack help | -h | --help               Show this help
   aistack version | -v | --version         Print the CLI version
@@ -227,18 +289,28 @@ ${C_BOLD}add options${C_RESET}
 
   NAME may be bare (pr-review) or qualified (skills/pr-review, agents/reviewer).
   Without NAME: arrow keys or j/k move, space toggles, a toggles all, enter adds, q cancels.
-  ARMAZE_PICKER=menu for a numbered list, =fzf for fuzzy search; ARMAZE_ICONS=0 for ASCII markers.
+  ARMAZE_PICKER=menu for a numbered list, =fzf for fuzzy search.
+  ARMAZE_ICONS=0 for ASCII markers; ARMAZE_WIDTH=N box width (default 100); ARMAZE_ALIGN=left.
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
-  Run it anywhere to just pull the stack; inside a project it also refreshes that project's copies.
+  Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies.
 
 ${C_BOLD}Layouts${C_RESET}
   claude    .claude/skills/<name>/    .claude/agents/<name>.md
   generic   .ai/skills/<name>/        .ai/agents/<name>.md
 
-${C_BOLD}Stack${C_RESET}  ${ARMAZE_STACK_DIR}
+${C_BOLD}Stack${C_RESET}  $(pretty_path "$ARMAZE_STACK_DIR")
 USAGE
+}
+
+usage() {
+  if (( ! UI )); then usage_text; return; fi
+  ui_banner help
+  ui_blank
+  local line
+  usage_text | while IFS= read -r line; do ui_line "$line"; done
+  ui_bottom
 }
 
 # ---------------------------------------------------------------------------
@@ -577,13 +649,15 @@ pick_tui() {  # <types...>
   local -i lines=${LINES:-0}
   (( lines > 0 )) || lines=$(tput lines 2>/dev/null)
   (( lines > 0 )) || lines=24
-  local -i win=$(( lines - 14 ))
+  local -i win=$(( lines - 16 ))   # banner, status, footer and the two box edges
   (( win < 5 )) && win=5
   (( win > total )) && win=$total
   local -i top=1
 
+  # Every frame line goes through ui_line (borders come from UI_BOX=1, set by the
+  # ui_top in ui_banner) and ends with the box's bottom edge, redrawn each time.
   draw() {
-    local frame='' line prefix box tag
+    local frame='' line prefix box tag style
     local -i k cur=${sel[pos]} last
     # keep the cursor inside the window, leaving room for the more-markers
     (( cur < top + (top > 1) )) && top=$(( cur - (cur > 1) ))
@@ -593,28 +667,29 @@ pick_tui() {  # <types...>
     last=$(( top + win - 1 ))
     for (( k = top; k <= last; k++ )); do
       if (( k == top && top > 1 )); then
-        line="  ${C_MUTED}${G_UP} $(( top - 1 )) more${C_RESET}"
+        line=$(ui_line "  ${C_MUTED}${G_UP} $(( top - 1 )) more${C_RESET}")
       elif (( k == last && last < total )); then
-        line="  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}"
+        line=$(ui_line "  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}")
       elif [[ -z ${r_type[k]} ]]; then
         case ${r_tag[k]} in
           header) line=$(ui_section "${r_name[k]}" "${(C)r_name[k]}") ;;
-          none)   line="  ${C_MUTED}${G_OFF} none yet${C_RESET}" ;;
-          *)      line='' ;;
+          none)   line=$(ui_line "  ${C_MUTED}${G_OFF} none yet${C_RESET}") ;;
+          *)      line=$(ui_blank) ;;
         esac
       else
         (( k == cur )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
         (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
-        line=$(ui_item "${prefix} ${box}" "${r_name[k]}" "${r_tag[k]}${r_desc[k]}" $w)
-        (( k == cur )) && line="${C_BOLD}${line}"
+        (( k == cur )) && style=bold || style=''
+        line=$(ui_item "${prefix} ${box}" "${r_name[k]}" "${r_tag[k]}${r_desc[k]}" $w $style)
       fi
       frame+="${line}${C_RESET}"$'\e[K\n'
     done
     frame+="$(ui_rule)"$'\e[K\n'
-    frame+="  ${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}  ${C_KEY}q${C_RESET} ${C_MUTED}cancel${C_RESET}"$'\e[K\n'
+    frame+="$(ui_line "  ${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}  ${C_KEY}q${C_RESET} ${C_MUTED}cancel${C_RESET}")"$'\e[K\n'
+    frame+="$(ui_bottom)"$'\e[K\n'
     print -rn -- "$frame"
   }
-  local -i height=$(( win + 2 ))
+  local -i height=$(( win + 3 ))
   toggle() { local -i k=$1; if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); else marked[$k]=1; (( marked_n += 1 )); fi }
 
   print -n -- $'\e[?25l'
@@ -649,6 +724,7 @@ pick_tui() {  # <types...>
     draw
   done
   print -n -- $'\e[?25h'
+  UI_BOX=0   # draw() closed the box from a subshell; mirror that here
   (( cancelled )) && { print -r -- "${C_MUTED}cancelled${C_RESET}"; return 0 }
   for i in "${sel[@]}"; do
     (( ${marked[$i]:-0} )) && SELECTED+=("${r_type[i]}"$'\t'"${r_name[i]}")
@@ -755,16 +831,17 @@ cmd_list() {
     names=("${(@f)$(list_names "$type")}"); names=("${(@)names:#}")
     ui_section "$type" "${(C)type}"
     if (( ! $#names )); then
-      print -r -- "  ${C_MUTED}${G_OFF} none yet${C_RESET}"; print
+      ui_line "  ${C_MUTED}${G_OFF} none yet${C_RESET}"; ui_blank
       continue
     fi
     for name in "${names[@]}"; do
       desc=$(component_description "$(component_doc "$type" "$name")")
       ui_item "${C_ITEM}${G_ON}${C_RESET}" "$name" "${desc:-}" $w
     done
-    print
+    ui_blank
   done
-  ui_footer 'add NAME' Install 'add' Pick 'add --link NAME' Develop 'update' 'Pull & refresh' 'help' Options
+  ui_footer 'add NAME' Install 'add' Pick 'add --link NAME' Develop 'update' Refresh 'help' Options
+  ui_bottom
 }
 
 cmd_add() {
@@ -799,10 +876,16 @@ cmd_add() {
   dest_rel[skills]=${skills_dir:-$(dest_dir "$platform" skills)}
   dest_rel[agents]=${agents_dir:-$(dest_dir "$platform" agents)}
 
+  # Which picker runs is decided before drawing: the in-place picker keeps
+  # drawing inside the box, while the menu and fzf pickers read from stdin, so
+  # for those the box is closed after the status line and they print below it.
+  local picker=''
   if (( UI && ! $#names )); then
+    pick_mode; picker=$REPLY
     ui_banner add
     ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} $(pretty_path "$target") ${G_DOT} layout ${platform}${C_RESET}" \
               "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
+    [[ $picker == tui ]] || ui_bottom
   else
     info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
     info "target  $(pretty_path "$target") ${C_DIM}(layout: $platform)${C_RESET}"
@@ -810,20 +893,20 @@ cmd_add() {
   fi
 
   local -a queue=()
-  local type name entry mode
+  local type name entry
   if (( $#names )); then
     for name in "${names[@]}"; do
       entry=$(resolve_name "$name" "${types[@]}") || exit 1
       queue+=("$entry")
     done
   else
-    pick_mode; mode=$REPLY
-    if [[ $mode == tui ]]; then
+    [[ -n $picker ]] || { pick_mode; picker=$REPLY }
+    if [[ $picker == tui ]]; then
       pick_tui "${types[@]}"
       queue=("${SELECTED[@]}")
     else
       for type in "${types[@]}"; do
-        pick_$mode "$type" "$target/${dest_rel[$type]}"
+        pick_$picker "$type" "$target/${dest_rel[$type]}"
         for name in "${SELECTED[@]}"; do queue+=("$type"$'\t'"$name"); done
       done
     fi

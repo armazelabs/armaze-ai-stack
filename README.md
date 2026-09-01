@@ -42,12 +42,14 @@ aistack --help                  # every command and option
 
 ### The picker and the display
 
-`aistack list`, the `aistack add` picker and `aistack help` draw a banner layout — wordmark, command bar, sections with icons, and a key legend — when they are talking to a terminal. Pipe them, or use `list --names`, and you get plain text. The picker marks components the target already has, so you can see at a glance what a re-run would overwrite.
+`aistack list`, the `aistack add` picker and `aistack help` draw a banner layout — wordmark, command bar, sections with icons, and a key legend — when they are talking to a terminal. It sits inside a rounded box of fixed width (100 columns, or the terminal width if that is narrower) centred in the window, so it reads the same on a laptop screen and an ultrawide; long descriptions are trimmed with an ellipsis. Pipe the commands, or use `list --names`, and you get plain text. The picker marks components the target already has, so you can see at a glance what a re-run would overwrite.
 
 | Variable | Effect |
 |----------|--------|
 | `ARMAZE_PICKER=menu` | Numbered list instead of the arrow-key picker (also what you get without a terminal, or with `ARMAZE_NO_FZF=1`) |
 | `ARMAZE_PICKER=fzf` | Fuzzy multi-select through [fzf](https://github.com/junegunn/fzf), if installed |
+| `ARMAZE_WIDTH=N` | Box width in columns (default 100; never wider than the terminal) |
+| `ARMAZE_ALIGN=left` | Pin the box to the left edge instead of centring it |
 | `ARMAZE_ICONS=0` | ASCII markers instead of Nerd Font glyphs |
 | `ARMAZE_UI=0` | Plain output even on a terminal (`=1` forces the layout when piped) |
 | `NO_COLOR=1` | No colour; `CLICOLOR_FORCE=1` keeps colour when piped |
