@@ -13,12 +13,12 @@ This repo is internal to Armaze. It is the shared shelf: members pick the skills
 ## Setup (once per machine)
 
 ```zsh
-curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh
+curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh && exec zsh
 ```
 
-That clones the stack to `~/armaze-ai-stack` (set `ARMAZE_STACK_DIR` first to put it somewhere else), links the oh-my-zsh plugin into `$ZSH_CUSTOM/plugins/armaze`, and asks before adding `plugins+=(armaze)` to your `~/.zshrc` (a backup is kept). It finishes by reloading your shell (`exec zsh`), so `aistack` is on your PATH with tab completion straight away — no new terminal needed.
+That clones the stack to `~/armaze-ai-stack` (set `ARMAZE_STACK_DIR` first to put it somewhere else), links the oh-my-zsh plugin into `$ZSH_CUSTOM/plugins/armaze`, and asks before adding `plugins+=(armaze)` to your `~/.zshrc` (a backup is kept). The `exec zsh` at the end reloads your shell, so `aistack` is on your PATH with tab completion straight away — no new terminal needed.
 
-Already have a checkout? `./install.zsh` from inside it does the same without cloning. Pass `--yes` to skip the `.zshrc` prompt, `--no-rc` to link the plugin only and edit `.zshrc` yourself, or `--no-exec` to skip the shell reload (it's skipped automatically when there's no terminal or `.zshrc` doesn't enable the plugin). Prefer no plugin at all? Put `<checkout>/bin` on your PATH.
+Already have a checkout? `./install.zsh` from inside it does the same without cloning. Pass `--yes` to skip the `.zshrc` prompt, or `--no-rc` to link the plugin only and edit `.zshrc` yourself; either way, finish with `exec zsh`. Prefer no plugin at all? Put `<checkout>/bin` on your PATH.
 
 ## Using `aistack`
 
@@ -34,9 +34,7 @@ aistack add --skills            # only offer skills (or --agents)
 aistack add --force             # overwrite anything already there without asking
 aistack add --link              # symlink instead of copy — for developing a skill against a real repo
 
-aistack self-update             # pull the latest stack and see what was added, changed or removed
-aistack update                  # re-copy everything this repo previously added
-aistack update --pull           # both of the above in one go
+aistack update                  # pull the latest stack, then re-copy everything this repo previously added
 
 aistack --version               # which release you have (see CHANGELOG.md); also -v or version
 aistack --help                  # every command and option
@@ -56,12 +54,12 @@ aistack --help                  # every command and option
 
 ### Keeping up to date
 
-The stack is a git checkout on your machine, and every project holds its own copies of the components it added — so updating is two steps, each one command:
+The stack is a git checkout on your machine, and every project holds its own copies of the components it added. `aistack update` handles both in one go:
 
-1. `aistack self-update` fast-forwards the checkout and lists which skills and agents were added (`+`), changed (`~`) or removed (`-`). Re-running the setup one-liner does the same pull.
-2. `aistack update`, inside a project, re-copies whatever its `.armaze-stack` records from the now-current stack. Components that already match are left alone; symlinked ones (`--link`) are live already.
+1. It fast-forwards the checkout and lists which skills and agents were added (`+`), changed (`~`) or removed (`-`). If it can't pull — no git checkout, local edits, a diverged branch — it says so and carries on with what you have.
+2. Inside a project, it then re-copies whatever `.armaze-stack` records from the now-current stack. Components that already match are left alone; symlinked ones (`--link`) are live already.
 
-`aistack update --pull` runs both. Tab completion knows all of these.
+Run it outside a project and it just does the first step. Re-running the setup one-liner pulls the stack too.
 
 ### Where components land
 

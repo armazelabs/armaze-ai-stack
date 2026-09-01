@@ -2,7 +2,7 @@
 #
 # Set up the aistack CLI on this machine. Two ways to run it:
 #
-#   curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh
+#   curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh && exec zsh
 #       No checkout yet: clones the stack to ~/armaze-ai-stack (or $ARMAZE_STACK_DIR)
 #       and continues as below. Running it again pulls the latest stack instead.
 #
@@ -11,12 +11,11 @@
 #
 # Either way it links the checkout's oh-my-zsh plugin into $ZSH_CUSTOM/plugins/armaze
 # and, with your OK, adds `plugins+=(armaze)` to ~/.zshrc so `aistack` is on PATH in
-# every shell. When run from a terminal it finishes with `exec zsh`, so `aistack`
-# works immediately instead of after the next login.
+# every shell. It never reloads the shell itself; the `exec zsh` at the end of the
+# one-liner does that.
 #
 #   --yes      edit ~/.zshrc without asking
 #   --no-rc    link the plugin only; you edit ~/.zshrc yourself
-#   --no-exec  don't reload the shell at the end (for scripts)
 #
 # Environment:
 #   ARMAZE_STACK_DIR   where to clone when bootstrapping (default: ~/armaze-ai-stack)
@@ -46,21 +45,19 @@ usage() {
   cat <<USAGE
 ${C_BOLD}install.zsh${C_RESET} — set up the aistack CLI for this shell
 
-  curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh
+  curl -fsSL https://raw.githubusercontent.com/armazelabs/armaze-ai-stack/main/install.zsh | zsh && exec zsh
                            clone the stack to ~/armaze-ai-stack (or \$ARMAZE_STACK_DIR) and set up
   ./install.zsh            from an existing checkout
   ./install.zsh --yes      edit ~/.zshrc without asking
   ./install.zsh --no-rc    link the plugin only; you edit ~/.zshrc yourself
-  ./install.zsh --no-exec  don't reload the shell at the end (for scripts)
 USAGE
 }
 
-assume_yes=0 edit_rc=1 reload_shell=1
+assume_yes=0 edit_rc=1
 for arg in "$@"; do
   case $arg in
     -y|--yes)  assume_yes=1 ;;
     --no-rc)   edit_rc=0 ;;
-    --no-exec) reload_shell=0 ;;
     -h|--help) usage; exit 0 ;;
     *)         die "unknown option '$arg' (see: ./install.zsh --help)" ;;
   esac
@@ -153,24 +150,10 @@ if (( edit_rc )); then
 fi
 
 # 3. Done ----------------------------------------------------------------------
-# Reload the shell so `aistack` works right away — but only when there is a
-# terminal to hand over to and .zshrc actually enables the plugin; otherwise
-# (piped, CI, --no-rc declined) fall back to telling the user what to do.
-rc_enabled=0
-[[ -f $ZSHRC ]] && grep -Eq '^[^#]*armaze' "$ZSHRC" && rc_enabled=1
-
+# No `exec zsh` here: the one-liner does that, and an installer that replaces
+# its own process would leave a nested shell when run from a checkout.
 print
-if (( reload_shell && rc_enabled )) && [[ -t 0 && -t 1 ]]; then
-  print -r -- "${C_BOLD}Try:${C_RESET}"
-  print -r -- "    aistack list                          what the stack offers"
-  print -r -- "    cd ~/your-project && aistack add      pick skills to add"
-  print -r -- "    aistack self-update                   pull the latest stack later on"
-  print
-  info "reloading your shell so ${C_BOLD}aistack${C_RESET} is available now"
-  exec zsh
-fi
-
-print -r -- "${C_BOLD}Next:${C_RESET} open a new shell (or run: exec zsh), then try"
+print -r -- "${C_BOLD}Next:${C_RESET} reload your shell (exec zsh) if the one-liner hasn't, then try"
 print -r -- "    aistack list                          what the stack offers"
 print -r -- "    cd ~/your-project && aistack add      pick skills to add"
-print -r -- "    aistack self-update                   pull the latest stack later on"
+print -r -- "    aistack update                        pull the latest stack and refresh a project"

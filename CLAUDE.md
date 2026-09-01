@@ -35,8 +35,8 @@ COLUMNS=100 ARMAZE_UI=1 NO_COLOR=1 ./bin/aistack list                           
 #   Strip the redraw codes before asserting: tr -d '\r' | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'
 #   Ctrl-C can't be typed through the pty here; test the trap with `pkill -INT -f 'bin/aistack add'` instead.
 
-# Exercise self-update against a fixture clone that has a remote (never the real checkout while editing it)
-ARMAZE_STACK_DIR=/path/to/fixture-clone NO_COLOR=1 ./bin/aistack self-update
+# Exercise update's pull step against a fixture clone that has a remote (never the real checkout while editing it)
+ARMAZE_STACK_DIR=/path/to/fixture-clone NO_COLOR=1 ./bin/aistack update --to /path/to/scratch-project
 
 # Exercise install.zsh without touching your real shell config (fakehome needs .oh-my-zsh/ and a .zshrc)
 HOME=/path/to/fakehome ZSH= ZSH_CUSTOM= zsh ./install.zsh --yes
@@ -55,7 +55,7 @@ Three pieces that all have to agree on where the repo lives:
 
 - **`bin/aistack`** — the CLI. Finds the stack root from `$ARMAZE_STACK_DIR`, else `${0:A:h:h}` (two levels up from the resolved script path, so it works whether invoked via the plugin's PATH entry, a symlink, or `./bin/aistack`).
 - **`oh-my-zsh/armaze/armaze.plugin.zsh`** — sourced by oh-my-zsh. Uses the zsh-plugin-standard `$0` idiom to find its own file through the `$ZSH_CUSTOM/plugins/armaze` symlink, exports `ARMAZE_STACK_DIR=${0:A:h:h:h}`, prepends `bin/` to `path`, and defines the `_aistack` completion inline (guarded by `$+functions[compdef]` so sourcing outside oh-my-zsh doesn't error). Completion for `add` shells out to `aistack list --names`.
-- **`install.zsh`** — one-time setup. Symlinks the plugin dir into `$ZSH_CUSTOM/plugins/armaze` and inserts `plugins+=(armaze)` *before* the `source $ZSH/oh-my-zsh.sh` line in `~/.zshrc` (a plain `plugins=(...)` edit can't be done safely because the array is often multi-line). Always backs up `.zshrc`, never edits it non-interactively unless `--yes`. It also doubles as the `curl … | zsh` bootstrap: when `$0` isn't a file inside a checkout it clones `$ARMAZE_REPO_URL` to `$ARMAZE_STACK_DIR` (default `~/armaze-ai-stack`, pulled instead if already there) and re-`exec`s itself from the clone with `/dev/tty` on stdin so the `.zshrc` prompt still works under a pipe. It ends with `exec zsh` so the plugin is live immediately — but only when stdin and stdout are both ttys *and* `.zshrc` enables the plugin (re-grepped after step 2), and never with `--no-exec`; the non-tty fixture runs above therefore fall through to the printed "open a new shell" instructions rather than hanging in an interactive shell.
+- **`install.zsh`** — one-time setup. Symlinks the plugin dir into `$ZSH_CUSTOM/plugins/armaze` and inserts `plugins+=(armaze)` *before* the `source $ZSH/oh-my-zsh.sh` line in `~/.zshrc` (a plain `plugins=(...)` edit can't be done safely because the array is often multi-line). Always backs up `.zshrc`, never edits it non-interactively unless `--yes`. It also doubles as the `curl … | zsh` bootstrap: when `$0` isn't a file inside a checkout it clones `$ARMAZE_REPO_URL` to `$ARMAZE_STACK_DIR` (default `~/armaze-ai-stack`, pulled instead if already there) and re-`exec`s itself from the clone with `/dev/tty` on stdin so the `.zshrc` prompt still works under a pipe. It never reloads the shell itself — the documented one-liner ends with `&& exec zsh` — so the fixture runs above finish cleanly instead of landing in a nested interactive shell.
 
 ### Component model inside `bin/aistack`
 
@@ -79,7 +79,7 @@ Written to the root of the *target* repo by `manifest_upsert`, tab-separated: `t
 
 ### Updating the stack itself
 
-`aistack self-update` and `aistack update --pull` share `stack_pull`: `git pull --ff-only` on the checkout (dies with git's own message if it can't fast-forward), then `stack_changes` diffs `skills/` and `agents/` between the old and new HEAD and classifies each touched component as added / changed / removed by whether its `component_doc_rel` file exists at each revision. Hidden, `_`-prefixed and `README` names are skipped, matching the discovery rules.
+`cmd_update` is two steps: `stack_pull`, then the manifest loop (skipped with an info line when the target has no manifest, so `update` is useful from any directory). `stack_pull` runs `git pull --ff-only` on the checkout — when it can't (not a git checkout, no upstream, local edits, diverged) it *warns and returns 1* and the re-copy proceeds with the checkout as it is; it never dies. On a successful pull, `stack_changes` diffs `skills/` and `agents/` between the old and new HEAD and classifies each touched component as added / changed / removed by whether its `component_doc_rel` file exists at each revision. Hidden, `_`-prefixed and `README` names are skipped, matching the discovery rules.
 
 ## Conventions for scripts
 

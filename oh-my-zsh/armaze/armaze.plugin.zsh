@@ -20,8 +20,7 @@ _aistack() {
   local -a subcmds=(
     'list:List available skills and agents'
     'add:Add skills/agents to the current repo'
-    'update:Re-copy components recorded in .armaze-stack'
-    'self-update:Pull the latest stack and show what changed'
+    'update:Pull the latest stack, then refresh this repo'
     'root:Print the stack checkout path'
     'help:Show help'
     'version:Show version'
@@ -52,8 +51,7 @@ _aistack() {
       ;;
     update|upgrade)
       _arguments \
-        '(-t --to)'{-t,--to}'[target repo]:dir:_directories' \
-        '--pull[git pull the stack first]'
+        '(-t --to)'{-t,--to}'[target repo]:dir:_directories'
       ;;
   esac
 }

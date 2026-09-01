@@ -5,8 +5,7 @@
 #   aistack list [skills|agents] [--names]
 #   aistack add  [--to DIR] [--platform claude|generic] [--skills-dir DIR] [--agents-dir DIR]
 #               [--skills] [--agents] [--force] [--link] [NAME ...]
-#   aistack update [--to DIR] [--pull]
-#   aistack self-update
+#   aistack update [--to DIR]
 #   aistack root | help | version        (also: -h/--help, -v/--version)
 #
 # Environment:
@@ -19,7 +18,7 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.1.1"
+readonly ARMAZE_VERSION="0.1.2"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
 
@@ -137,15 +136,18 @@ ui_rule() { print -r -- "${C_SHADOW}$(ui_fill $UI_COLS "$G_DASH")${C_RESET}" }
 
 # Wordmark plus the command bar, current command highlighted.
 ui_banner() {  # <current command>
-  local cur=$1 word=AISTACK
+  local cur=$1 word='ARMAZE AI STACK'
   local -a rows=('' '' '') g
-  local c; local -i j r
+  local c; local -i j r art=0
   print
   if ui_unicode; then
     for (( j = 1; j <= ${#word}; j++ )); do
       c=$word[j]; g=( "${(@f)UI_FONT[$c]}" )
       for (( r = 1; r <= 3; r++ )); do rows[r]+=$g[r]; done
     done
+    (( ${(m)#rows[1]} <= UI_COLS )) && art=1   # too narrow for the art? plain text instead of wrapped box-drawing
+  fi
+  if (( art )); then
     for (( r = 1; r <= 3; r++ )); do
       (( r == 3 )) && ui_center "${C_SHADOW}${rows[r]}${C_RESET}" || ui_center "${C_ACCENT}${rows[r]}${C_RESET}"
     done
@@ -153,7 +155,7 @@ ui_banner() {  # <current command>
     ui_center "${C_ACCENT}${C_BOLD}${word}${C_RESET}"
   fi
   local bar='' name
-  for name in list add update self-update help; do
+  for name in list add update help; do
     if [[ $name == $cur ]]; then bar+="${C_TAB} ${name} ${C_RESET}  "
     else bar+="${C_MUTED} ${name} ${C_RESET}  "
     fi
@@ -208,8 +210,7 @@ ${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to
 ${C_BOLD}Usage${C_RESET}
   aistack list [skills|agents] [--names]   List what the stack offers
   aistack add [options] [NAME ...]         Add components to a repo (interactive picker if no NAME)
-  aistack update [--to DIR] [--pull]       Re-copy everything recorded in ${MANIFEST_NAME}
-  aistack self-update                      Pull the latest stack and show what changed
+  aistack update [--to DIR]                Pull the latest stack, then re-copy everything in ${MANIFEST_NAME}
   aistack root                             Print the stack checkout path
   aistack help | -h | --help               Show this help
   aistack version | -v | --version         Print the CLI version
@@ -230,7 +231,7 @@ ${C_BOLD}add options${C_RESET}
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
-      --pull              Run 'aistack self-update' first
+  Run it anywhere to just pull the stack; inside a project it also refreshes that project's copies.
 
 ${C_BOLD}Layouts${C_RESET}
   claude    .claude/skills/<name>/    .claude/agents/<name>.md
@@ -252,16 +253,22 @@ stack_rev() {
   git -C "$ARMAZE_STACK_DIR" rev-parse --short HEAD 2>/dev/null || print -r -- "unknown"
 }
 
-# Fast-forward the stack checkout and report which components changed. Dies if
-# the checkout is not a git repo or the pull fails (local edits, diverged branch).
+# Fast-forward the stack checkout and report which components changed. When it
+# can't (not a git checkout, no upstream, local edits, diverged branch) it warns
+# and returns 1; the caller carries on with the checkout as it is.
 stack_pull() {
   local dir=$ARMAZE_STACK_DIR before after
-  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-    || die "$(pretty_path "$dir") is not a git checkout — update the stack by hand"
-  before=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || die "cannot read the stack's current revision"
   info "stack   $(pretty_path "$dir") ${C_DIM}($(stack_rev))${C_RESET}"
-  git -C "$dir" pull --ff-only --quiet \
-    || die "git pull failed in $(pretty_path "$dir") — local changes or a diverged branch? fix it there and retry"
+  if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    warn "not a git checkout — can't pull, using it as it is"
+    return 1
+  fi
+  before=$(git -C "$dir" rev-parse HEAD 2>/dev/null) \
+    || { warn "cannot read the stack's revision — using it as it is"; return 1 }
+  if ! git -C "$dir" pull --ff-only --quiet; then
+    warn "git pull failed — local changes or a diverged branch in $(pretty_path "$dir")? using it as it is"
+    return 1
+  fi
   after=$(git -C "$dir" rev-parse HEAD)
   if [[ $before == $after ]]; then
     ok "stack already up to date"
@@ -757,7 +764,7 @@ cmd_list() {
     done
     print
   done
-  ui_footer 'add NAME' Install 'add' Pick 'add --link NAME' Develop 'self-update' 'Pull stack' 'help' Options
+  ui_footer 'add NAME' Install 'add' Pick 'add --link NAME' Develop 'update' 'Pull & refresh' 'help' Options
 }
 
 cmd_add() {
@@ -849,25 +856,27 @@ cmd_add() {
 
 cmd_update() {
   require_stack
-  local target="" pull=0
+  local target=""
   while (( $# )); do
     case $1 in
       -t|--to)   [[ -n ${2:-} ]] || die "$1 needs a value"; target=$2; shift 2 ;;
-      --pull)    pull=1; shift ;;
       -h|--help) usage; return 0 ;;
       *)         die "unknown option '$1' (run: aistack help)" ;;
     esac
   done
 
   target=$(resolve_target "$target") || exit 1
-  local manifest="$target/$MANIFEST_NAME"
-  [[ -f $manifest ]] || die "no $MANIFEST_NAME in $target — nothing to update (run: aistack add)"
 
-  if (( pull )); then
-    stack_pull
-    print
+  # 1. The stack: pull whatever is new (warns and carries on if it can't).
+  stack_pull
+  print
+
+  # 2. This project: re-copy what its manifest records.
+  local manifest="$target/$MANIFEST_NAME"
+  if [[ ! -f $manifest ]]; then
+    info "no $MANIFEST_NAME in $(pretty_path "$target") — nothing to re-copy here ${C_DIM}(aistack add installs something first)${C_RESET}"
+    return 0
   fi
-  info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
   info "target  $(pretty_path "$target")"
   print
 
@@ -907,19 +916,6 @@ cmd_update() {
   (( failed == 0 ))
 }
 
-cmd_self_update() {
-  require_stack
-  while (( $# )); do
-    case $1 in
-      -h|--help) usage; return 0 ;;
-      *)         die "unknown option '$1' (run: aistack help)" ;;
-    esac
-  done
-  stack_pull
-  print
-  print -r -- "Projects keep their own copies — run ${C_BOLD}aistack update${C_RESET} inside one to refresh them."
-}
-
 main() {
   local cmd=${1:-help}
   (( $# )) && shift
@@ -927,7 +923,6 @@ main() {
     list|ls)               cmd_list "$@" ;;
     add|install)           cmd_add "$@" ;;
     update|upgrade)        cmd_update "$@" ;;
-    self-update|selfupdate) cmd_self_update "$@" ;;
     root|path)             print -r -- "$ARMAZE_STACK_DIR" ;;
     help|-h|--help)        usage ;;
     version|-v|--version)  print -r -- "aistack $ARMAZE_VERSION" ;;

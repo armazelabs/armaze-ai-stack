@@ -2,6 +2,15 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.2 - 2026-09-01
+
+### Changed
+
+- The wordmark now reads `ARMAZE AI STACK`; terminals too narrow for it get a plain-text heading instead.
+- **`aistack update` now does everything:** it pulls the latest stack, shows what was added, changed or removed, then re-copies what the project previously added. `self-update` and `update --pull` are gone. If the stack can't be pulled it says so and carries on; outside a project it just pulls.
+- The setup one-liner in the README now ends with `&& exec zsh`, so the shell is reloaded as part of the command.
+- `install.zsh` no longer reloads the shell itself (`--no-exec` is gone); the `exec zsh` in the setup command does that, without a nested shell.
+
 ## 0.1.1 - 2026-09-01
 
 ### Added
