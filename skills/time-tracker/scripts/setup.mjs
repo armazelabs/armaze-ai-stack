@@ -8,10 +8,19 @@
 // goes in tracking/engine/ and is always re-synced, since it is generated code
 // nobody is meant to hand-edit. Project-owned files - config.json and the
 // readme - are written only if absent, so a project's own choices are never
-// clobbered. Tracking is installed OFF; nothing is measured until the user
-// starts it.
+// clobbered. There is no on/off switch: setup writes today's date into
+// config.json as `trackFrom`, and every day from then on counts.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -138,7 +147,32 @@ function slugify(name) {
  * reused as-is - renaming a folder a project already uses is not this script's
  * business.
  */
-function resolveProjectManagementDir() {
+/**
+ * An existing install always wins over the naming convention.
+ *
+ * A project may keep its tracking folder under a name this script would never
+ * have chosen - `project-management-log`, say. Matching on the name alone would
+ * miss it and build a second, empty tracker beside the real one, so look for
+ * the install itself first and only fall back to the name.
+ */
+function findInstalledTrackingDir() {
+  for (const entry of entries(TARGET_ROOT)) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const parent = path.join(TARGET_ROOT, entry.name);
+    for (const child of entries(parent)) {
+      if (!child.isDirectory() || !TRACKING_NAME.test(child.name)) continue;
+      const dir = path.join(parent, child.name);
+      if (existsSync(path.join(dir, "config.json")) || existsSync(path.join(dir, "engine"))) {
+        return { pmDir: parent, dir };
+      }
+    }
+  }
+  return null;
+}
+
+function resolveProjectManagementDir(installed) {
+  if (installed) return { dir: installed.pmDir, created: false };
+
   const found = entries(TARGET_ROOT).find((entry) => entry.isDirectory() && PM_NAME.test(entry.name));
   if (found) return { dir: path.join(TARGET_ROOT, found.name), created: false };
 
@@ -147,7 +181,9 @@ function resolveProjectManagementDir() {
   return { dir, created: true };
 }
 
-function resolveTrackingDir(pmDir) {
+function resolveTrackingDir(pmDir, installed) {
+  if (installed) return { dir: installed.dir, created: false };
+
   const found = entries(pmDir).find((entry) => entry.isDirectory() && TRACKING_NAME.test(entry.name));
   if (found) return { dir: path.join(pmDir, found.name), created: false };
 
@@ -161,7 +197,16 @@ function resolveTrackingDir(pmDir) {
 function syncEngine(trackingDir) {
   const dest = path.join(trackingDir, "engine");
   mkdirSync(dest, { recursive: true });
-  cpSync(path.join(TEMPLATES_DIR, "tracking", "engine"), dest, { recursive: true });
+  const source = path.join(TEMPLATES_DIR, "tracking", "engine");
+  cpSync(source, dest, { recursive: true });
+
+  // Prune what the templates no longer ship. An engine file left behind from an
+  // older install is not inert - `track.mjs start` would still appear to work
+  // while writing to a switch nothing reads any more.
+  const shipped = new Set(readdirSync(source));
+  for (const name of readdirSync(dest)) {
+    if (!shipped.has(name)) rmSync(path.join(dest, name), { recursive: true, force: true });
+  }
   return readdirSync(dest).filter((name) => name.endsWith(".mjs")).length;
 }
 
@@ -206,7 +251,6 @@ function mergePackageScripts(engineRel) {
   pkg.scripts ??= {};
 
   const wanted = {
-    "time": `node ${shellPath(`${engineRel}/track.mjs`)}`,
     "time:collect": `node ${shellPath(`${engineRel}/collect.mjs`)}`,
     "time:report": `node ${shellPath(`${engineRel}/report.mjs`)}`,
   };
@@ -225,46 +269,109 @@ function mergePackageScripts(engineRel) {
   return { applicable: true, added, skipped };
 }
 
-function mergeSettingsHook(engineRel) {
+/**
+ * Remove the SessionStart hook a previous version of this skill installed.
+ *
+ * The tracker no longer runs in the background: it measures and labels only
+ * when the user asks for it. A leftover hook would keep collecting on every
+ * session start, so an upgrade has to take it out rather than merely stop
+ * shipping it.
+ */
+function removeSettingsHook() {
   const file = path.join(TARGET_ROOT, ".claude", "settings.json");
-  // $CLAUDE_PROJECT_DIR keeps the hook working from a subdirectory, and the
-  // quotes keep it working when the folder name has a space in it.
-  const command = `node "$CLAUDE_PROJECT_DIR/${engineRel}/session-start.mjs"`;
-  const hookEntry = {
-    type: "command",
-    command,
-    timeout: 30,
-    statusMessage: "Updating time tracking...",
-  };
+  if (!existsSync(file)) return { removed: false };
 
-  let settings = {};
-  if (existsSync(file)) {
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return { removed: false, error: ".claude/settings.json is not valid JSON - fix it and re-run." };
+  }
+
+  const groups = settings?.hooks?.SessionStart;
+  if (!Array.isArray(groups)) return { removed: false };
+
+  let removed = false;
+  const kept = [];
+  for (const group of groups) {
+    const hooks = (group?.hooks ?? []).filter((hook) => {
+      const ours = /session-start\.m[jt]s/.test(hook?.command ?? "");
+      if (ours) removed = true;
+      return !ours;
+    });
+    // A group emptied by the removal goes too; a group that held other hooks
+    // as well keeps them.
+    if (hooks.length > 0) kept.push({ ...group, hooks });
+  }
+  if (!removed) return { removed: false };
+
+  if (kept.length > 0) settings.hooks.SessionStart = kept;
+  else delete settings.hooks.SessionStart;
+  if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+
+  writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
+  return { removed: true };
+}
+
+/**
+ * The first day that counts.
+ *
+ * Three answers, in order of authority:
+ *
+ * 1. The earliest day the old start/stop switch tracked, if there is a
+ *    state.json to read it from.
+ * 2. Otherwise the earliest day already written to a month file. An install
+ *    predating the switch entirely has no state.json but may hold months of
+ *    recorded work, and the collector drops every day before the boundary - so
+ *    defaulting to today here would silently delete that history on the very
+ *    next run.
+ * 3. Otherwise today: a fresh install, where the user asked for tracking now.
+ */
+function resolveTrackFrom(trackingDir, todayDay) {
+  try {
+    const ranges = JSON.parse(readFileSync(path.join(trackingDir, "state.json"), "utf8"))?.ranges ?? [];
+    const days = ranges.map((range) => range?.from).filter((from) => typeof from === "string");
+    if (days.length > 0) return { day: days.sort()[0], migrated: true, source: "the old start/stop switch" };
+  } catch {
+    // No state.json, or unreadable - the month files are the next authority.
+  }
+
+  const recorded = [];
+  for (const name of entries(trackingDir)) {
+    if (!/^\d{4}-\d{2}\.md$/.test(name.name)) continue;
     try {
-      settings = JSON.parse(readFileSync(file, "utf8"));
+      const text = readFileSync(path.join(trackingDir, name.name), "utf8");
+      for (const [, day] of text.matchAll(/^##\s+(\d{4}-\d{2}-\d{2})/gm)) recorded.push(day);
     } catch {
-      return { wired: false, error: ".claude/settings.json is not valid JSON - fix it and re-run." };
+      // An unreadable month file simply does not vote.
     }
   }
-
-  settings.hooks ??= {};
-  settings.hooks.SessionStart ??= [];
-
-  const existing = settings.hooks.SessionStart.flatMap((group) => group?.hooks ?? []);
-  const previous = existing.find((hook) => /session-start\.m[jt]s/.test(hook?.command ?? ""));
-
-  if (previous) {
-    // A re-run after the folder moved or was renamed: point the old hook at
-    // where the engine actually lives now rather than leaving a dead command.
-    if (previous.command === command) return { wired: false, updated: false };
-    previous.command = command;
-    writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
-    return { wired: false, updated: true };
+  if (recorded.length > 0) {
+    return { day: recorded.sort()[0], migrated: true, source: "the earliest day already on the timesheet" };
   }
 
-  settings.hooks.SessionStart.push({ hooks: [hookEntry] });
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
-  return { wired: true, updated: false };
+  return { day: todayDay, migrated: false };
+}
+
+/**
+ * Add `trackFrom` to a config.json written by the start/stop version.
+ *
+ * config.json is project-owned and otherwise never rewritten, but a config with
+ * no boundary makes the collector refuse to run - so this one key is backfilled
+ * rather than left for the user to discover.
+ */
+function backfillTrackFrom(configPath, day) {
+  if (!existsSync(configPath)) return { backfilled: false };
+  let config;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return { backfilled: false, error: "config.json will not parse - add trackFrom by hand." };
+  }
+  if (typeof config.trackFrom === "string" && config.trackFrom) return { backfilled: false };
+  config.trackFrom = day;
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  return { backfilled: true };
 }
 
 // --- main ----------------------------------------------------------------
@@ -273,21 +380,27 @@ function main() {
   const project = detectProjectName();
   const timeZone = detectTimeZone();
   const multiplier = parseMultiplier();
+  const todayDay = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
-  const pm = resolveProjectManagementDir();
-  const tracking = resolveTrackingDir(pm.dir);
+  const installed = findInstalledTrackingDir();
+  const pm = resolveProjectManagementDir(installed);
+  const tracking = resolveTrackingDir(pm.dir, installed);
   const trackingRel = path.relative(TARGET_ROOT, tracking.dir);
   const engineRel = path.join(trackingRel, "engine");
   const cacheRel = path.join(trackingRel, "cache");
+  const trackFrom = resolveTrackFrom(tracking.dir, todayDay);
 
   const values = {
     PROJECT_NAME: project.name,
     TIMEZONE: timeZone,
     HOURS_MULTIPLIER: multiplier.value,
+    TRACK_FROM: trackFrom.day,
     ENGINE_REL: engineRel,
-    CMD_START: `node ${shellPath(`${engineRel}/track.mjs`)} start`,
-    CMD_STOP: `node ${shellPath(`${engineRel}/track.mjs`)} stop`,
-    CMD_STATUS: `node ${shellPath(`${engineRel}/track.mjs`)} status`,
     CMD_COLLECT: `node ${shellPath(`${engineRel}/collect.mjs`)}`,
     CMD_REPORT: `node ${shellPath(`${engineRel}/report.mjs`)}`,
     CMD_REPORT_LAST: `node ${shellPath(`${engineRel}/report.mjs`)} --last-month`,
@@ -305,13 +418,35 @@ function main() {
     path.join(tracking.dir, "config.json"),
     fill(readTemplate("config.json"), values),
   );
-  const readmeCreated = ensureFile(
-    path.join(tracking.dir, "readme.md"),
-    fill(readTemplate("tracking-readme.md"), values),
-  );
+  // The readme is project-owned and normally written only if absent - but a
+  // readme from the start/stop version documents commands that no longer
+  // exist, which is worse than no readme at all. Staleness is decided by what
+  // the file actually says, not by whether there was history to migrate: a
+  // project that installed the old version and never tracked a day still has
+  // the old readme.
+  const readmePath = path.join(tracking.dir, "readme.md");
+  const readmeContent = fill(readTemplate("tracking-readme.md"), values);
+  const readmeStale = (() => {
+    try {
+      return /track\.mjs|state\.json/.test(readFileSync(readmePath, "utf8"));
+    } catch {
+      return false;
+    }
+  })();
+  const readmeRewritten = readmeStale;
+  if (readmeRewritten) writeFileSync(readmePath, readmeContent);
+  const readmeCreated = ensureFile(readmePath, readmeContent);
   const gitignoreUpdated = ensureGitignore(cacheRel);
   const scripts = mergePackageScripts(engineRel);
-  const hook = mergeSettingsHook(engineRel);
+  const backfilled = configCreated
+    ? { backfilled: false }
+    : backfillTrackFrom(path.join(tracking.dir, "config.json"), trackFrom.day);
+  const hook = removeSettingsHook();
+  // The start/stop switch is gone, and a stale state.json is only there to be
+  // misread as one.
+  const legacyState = path.join(tracking.dir, "state.json");
+  const stateRemoved = existsSync(legacyState);
+  if (stateRemoved) rmSync(legacyState);
 
   console.log(
     `- ${path.relative(TARGET_ROOT, pm.dir)}/: ${pm.created ? "created" : "found, reused"}`,
@@ -321,13 +456,23 @@ function main() {
   console.log(
     `- ${trackingRel}/config.json: ${
       configCreated
-        ? `created (timeZone ${timeZone}, hoursMultiplier ${multiplier.value})`
-        : "already existed, left untouched" +
+        ? `created (timeZone ${timeZone}, trackFrom ${trackFrom.day}, hoursMultiplier ${multiplier.value})`
+        : (backfilled.error
+            ? `left untouched - ${backfilled.error}`
+            : backfilled.backfilled
+              ? `already existed - added trackFrom ${trackFrom.day}`
+              : "already existed, left untouched") +
           (multiplier.given ? ` - --multiplier ignored, edit ${trackingRel}/config.json to change it` : "")
     }`,
   );
   console.log(
-    `- ${trackingRel}/readme.md: ${readmeCreated ? "created" : "already existed, left untouched"}`,
+    `- ${trackingRel}/readme.md: ${
+      readmeCreated
+        ? "created"
+        : readmeRewritten
+          ? "rewritten - the old one documented start/stop"
+          : "already existed, left untouched"
+    }`,
   );
   console.log(`- .gitignore: ${gitignoreUpdated ? `added ${cacheRel}/` : "already ignored"}`);
   if (!scripts.applicable) {
@@ -343,23 +488,29 @@ function main() {
     );
   }
   if (hook.error) {
-    console.log(`- .claude/settings.json SessionStart hook: NOT wired - ${hook.error}`);
+    console.log(`- .claude/settings.json: left alone - ${hook.error}`);
   } else {
     console.log(
       `- .claude/settings.json SessionStart hook: ${
-        hook.wired ? "wired" : hook.updated ? "repointed at the current engine path" : "already wired"
+        hook.removed ? "removed - the tracker no longer runs in the background" : "none to remove"
       }`,
     );
   }
+  if (stateRemoved) {
+    console.log(`- ${trackingRel}/state.json: removed - start/stop is gone, trackFrom replaces it`);
+  }
 
   console.log("");
-  console.log("Tracking is OFF. Nothing is measured until it is started:");
+  if (trackFrom.migrated) {
+    console.log(`Migrated an existing install. trackFrom is ${trackFrom.day}, from`);
+    console.log(`${trackFrom.source}, so nothing already recorded is dropped.`);
+  } else {
+    console.log(`Tracking counts every day from ${trackFrom.day} onward. There is no switch to`);
+    console.log(`forget - to count earlier work, back-date trackFrom in ${trackingRel}/config.json.`);
+  }
   console.log("");
-  console.log(`  node ${shellPath(`${engineRel}/track.mjs`)} start`);
-  console.log(`  node ${shellPath(`${engineRel}/track.mjs`)} stop`);
-  console.log(`  node ${shellPath(`${engineRel}/track.mjs`)} status`);
-  console.log("");
-  console.log("Start and stop deal in whole dates - starting today counts today in full.");
+  console.log('Say "update tracker" to Claude to bring the timesheet fully up to date:');
+  console.log("remeasure the hours, name every unnamed day, re-render the PDF.");
 
   console.log("");
   console.log("Optional, per machine, and only if the `orca` CLI is installed - a nightly");
@@ -369,7 +520,7 @@ function main() {
     `orca automations create --name "${values.AUTOMATION_SLUG}-time-daily" \\\n` +
       `  --trigger daily --time 23:30 --timezone ${timeZone} \\\n` +
       `  --provider claude --workspace path:${TARGET_ROOT} \\\n` +
-      `  --prompt "TIME-TRACKER-AUTOMATION - use the time-tracker skill to label this month's unlabelled days"`,
+      `  --prompt "TIME-TRACKER-AUTOMATION - use the time-tracker skill to update the tracker"`,
   );
   console.log("");
   console.log(

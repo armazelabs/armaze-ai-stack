@@ -9,7 +9,6 @@
 // Layout, from this file outwards:
 //   <repo>/<project-management>/<tracking>/engine/config.mjs   <- here
 //   <repo>/<project-management>/<tracking>/config.json
-//   <repo>/<project-management>/<tracking>/state.json
 //   <repo>/<project-management>/<tracking>/<YYYY-MM>.md
 //   <repo>/<project-management>/<tracking>/cache/
 
@@ -29,10 +28,14 @@ export const REPO_ROOT = path.resolve(PM_DIR, "..");
 
 export const CACHE_DIR = path.join(TRACKING_DIR, "cache");
 export const CONFIG_PATH = path.join(TRACKING_DIR, "config.json");
-export const STATE_PATH = path.join(TRACKING_DIR, "state.json");
 
 const DEFAULT_CONFIG = {
   timeZone: "UTC",
+  // The first day that counts, `YYYY-MM-DD`. Written at setup, and the only
+  // boundary there is - there is no on/off switch. Null means not set up here,
+  // and the collector refuses to run rather than sweeping in every transcript
+  // the project has ever produced.
+  trackFrom: null,
   idleGapMinutes: 20,
   hoursMultiplier: 1,
   workdays: [0, 1, 2, 3, 4, 5, 6],

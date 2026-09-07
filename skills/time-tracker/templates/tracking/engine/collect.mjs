@@ -3,8 +3,9 @@
 // Run with `node <tracking>/engine/collect.mjs`. It writes the month markdown
 // next to itself, plus an evidence file in cache/ for labelling.
 //
-// Only days inside a tracked range are counted - see state.mjs. Days outside
-// one are ignored entirely, even though the transcripts for them exist.
+// Only days from `trackFrom` onward are counted - the date written into
+// config.json when the tracker was installed. Days before it are ignored
+// entirely, even though the transcripts for them exist.
 //
 // The whole history is recomputed on every run rather than appended to. Scanning
 // all transcripts costs well under a second, and a stateless recompute means a
@@ -44,7 +45,6 @@ import {
   rebuild,
   renderMonthFile,
 } from "./month-file.mjs";
-import { earliestTrackedDay, isTracked, loadState } from "./state.mjs";
 
 const TIMESTAMP = /"timestamp":"([^"]+)"/g;
 /**
@@ -219,17 +219,19 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
 
 function main() {
   const config = loadConfig();
-  const state = loadState();
+  const todayDay = toLocalDay(Date.now(), config.timeZone);
 
-  if (state.ranges.length === 0) {
-    console.log("Tracking has never been started here - nothing is counted.");
-    console.log("Start it with `node " + path.join(TRACKING_DIR, "engine", "track.mjs") + " start`.");
+  // The boundary. Absent means the tracker was never set up here, and a run
+  // with no boundary would sweep in every transcript this project has ever
+  // had - so it stops rather than guessing.
+  const trackedFrom = config.trackFrom;
+  if (!trackedFrom) {
+    console.log("No trackFrom date in config.json - the tracker is not set up here.");
+    console.log(`Set one (a YYYY-MM-DD day) in ${path.join(TRACKING_DIR, "config.json")}.`);
     return;
   }
 
   mkdirSync(CACHE_DIR, { recursive: true });
-  const todayDay = toLocalDay(Date.now(), config.timeZone);
-  const trackedFrom = earliestTrackedDay(state);
 
   const instants = readTimestamps(transcriptDir(), config.sentinel);
   if (instants.length === 0) {
@@ -242,9 +244,10 @@ function main() {
     timeZone: config.timeZone,
   })
     .filter((block) => isWorkday(block.day, config.workdays))
-    // The on/off switch. A day outside every tracked range is not part of the
-    // record, even though its transcripts still exist.
-    .filter((block) => isTracked(block.day, state, todayDay));
+    // The boundary. Work predating the install is not part of the record, and
+    // nothing in the future is counted, even though transcripts may exist for
+    // either.
+    .filter((block) => block.day >= trackedFrom && block.day <= todayDay);
 
   const prompts = readPrompts();
   const commits = readCommits(Math.min(...instants));
@@ -280,9 +283,9 @@ function main() {
 
     const file = monthFilePath(month);
     const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
-    // Days recorded before tracking ever began are dropped; days inside a gap
-    // between two ranges are left alone, since they were recorded deliberately
-    // at the time and this machine may simply not hold their evidence.
+    // Days recorded before the boundary are dropped. Days after it that this
+    // machine holds no evidence for are left alone - a second computer's work
+    // is still the user's work, and dropping it here would delete it.
     const existing = parsed
       ? { ...parsed, days: parsed.days.filter((day) => day.date >= trackedFrom) }
       : null;

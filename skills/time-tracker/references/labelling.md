@@ -14,28 +14,39 @@ to say **what the work was**, using only evidence.
 ## Procedure
 
 1. Run `node <engine>/collect.mjs`. It rescans the transcripts and rebuilds the
-   month markdown. Safe to run repeatedly. If it says tracking has never been
-   started, stop and tell the user - there is nothing to label.
+   month markdown. Safe to run repeatedly. If it says there is no `trackFrom`
+   in config.json, stop and tell the user - the tracker is not set up here and
+   there is nothing to label.
 
 2. Read `cache/<month>.raw.json` for the month you are labelling (the current
    month unless told otherwise). Days are marked `"labelled": false` when they
    still need you.
 
-   Two placeholder rows mean "not named yet", and they are not equivalent:
+   Two placeholder rows mean "not named yet". They read differently but they
+   are named the same way, now:
 
    - `Unlabelled` - a **finished** day. Its evidence is complete and will not
-     change, so it is named whenever you notice it, asked or not.
-   - `In progress` - **today**, still growing. Named only when the user stops
-     tracking, runs Update tracking, or asks. If it is only a few minutes of
-     the session you are running in, leaving it is fine.
+     change.
+   - `In progress` - **today**, still growing. Nothing runs in the background
+     to name it later, so it is named on this pass like any other day. Work
+     that arrives after you name it becomes a new `In progress` row underneath
+     yours, which the next update names in turn. That is expected.
 
    No PDF renders while either one is still standing, so a day left unnamed
    blocks the report until someone names it.
 
-3. For each such day, read that day's blocks - their `prompts` and `commits` -
-   and decide what was worked on. **Read every prompt in the block, not just the
-   first screenful.** A long block can hold two hundred prompts covering several
-   unrelated areas, and naming it from its opening minutes silently drops the
+3. For each such day, read that day's blocks - their `commits` and `prompts` -
+   and decide what was worked on.
+
+   **Commits lead.** A commit subject is the user's own summary of finished
+   work, written deliberately, and it is the best name a block can have. Where a
+   block contains commits, name it from them - one row per commit, or one row
+   per group of commits that clearly belong to the same piece of work.
+
+   **Prompts fill the gaps.** Most of a day has no commit in it: work in
+   progress, work abandoned, work discussed. For those blocks, name from the
+   prompts. **Read every prompt in the block, not just the first screenful.**
+   A long block can hold two hundred prompts covering several unrelated areas, and naming it from its opening minutes silently drops the
    rest of the day. Each prompt and commit carries an `at` local time: use those
    to find where topics actually change, and derive each task's minutes from the
    time span it covers rather than splitting the day proportionally.
@@ -53,8 +64,15 @@ to say **what the work was**, using only evidence.
    | Design-system rail documentation | 2h 46m |
    ```
 
-4. Re-run `node <engine>/collect.mjs` to confirm the file reconciles cleanly,
-   then tell the user which days you named and what the month now totals.
+4. **Do not re-run the collector to check your work.** Today is still running,
+   so a collect after naming will nearly always find another minute or two and
+   open a fresh `In progress` row for it - which then blocks the PDF you were
+   about to render. The collector already ran in step 1; the arithmetic it
+   produced is what you named against, and the month file warns on its own if
+   your rows do not add up. Go straight to the report.
+
+   The exception is a month with no today in it - last month, an old month -
+   where nothing can grow and a verifying collect is free.
 
 ## Rules for the labels
 

@@ -4,26 +4,21 @@ Hours worked on {{PROJECT_NAME}}, measured from Claude Code session activity.
 There is no timer to remember - the record is built from the session
 transcripts this machine already keeps.
 
-## The switch
+## The boundary
 
-Tracking is **off until you turn it on**, and it deals in whole dates.
+There is no on/off switch. `trackFrom` in `config.json` is the first day that
+counts - the day this was installed - and every day from then on is counted.
+Days before it are ignored even though their transcripts exist. To count earlier
+work, back-date that one line.
 
-```
-{{CMD_START}}     # today counts, all of it
-{{CMD_STOP}}      # today is the last counted day
-{{CMD_STATUS}}    # on or off, ranges, this month's total
-```
-
-Starting at three in the afternoon still counts that whole day, morning
-included. Days outside every started-and-stopped range are never counted, even
-though their transcripts exist.
+Nothing runs in the background: no hook, no scheduled collection. The timesheet
+moves only when you ask for it.
 
 ## The files
 
 | File | What it is |
 | --- | --- |
-| `state.json` | The tracked date ranges. This is the on/off switch. |
-| `config.json` | Timezone, idle gap, hours multiplier, which days count. |
+| `config.json` | First day counted, timezone, idle gap, hours multiplier. |
 | `<YYYY-MM>.md` | The month's record: a total per day, and the tasks it split into. |
 | `<YYYY-MM>.pdf` | The printable version, rendered from the markdown. |
 | `cache/` | Evidence for labelling - prompts and commits per block. Gitignored. |
@@ -50,9 +45,10 @@ names are not: anything you or the labelling pass writes in place of
 ## Naming the work
 
 A finished day with no name shows as `Unlabelled`; today's running tail shows as
-`In progress`. Ask for the time-tracker skill's labelling pass and it reads
-`cache/<month>.raw.json` - the prompts typed and commits landed in each block -
-and replaces those rows with what was actually worked on.
+`In progress`. The time-tracker skill reads `cache/<month>.raw.json` - the
+commits landed and prompts typed in each block - and replaces those rows with
+what was actually worked on. Commit subjects lead, because they are your own
+summary of the work; prompts name the blocks that hold no commit.
 
 ## Commands
 
@@ -62,8 +58,12 @@ and replaces those rows with what was actually worked on.
 {{CMD_REPORT_LAST}}  # PDF for last month
 ```
 
-Say **"updatetracking"** to Claude to do all of it at once: remeasure, name
-every unnamed day, and render the PDF. Stopping does the same for today.
+Say **"update tracker"** to Claude to do all of it at once: remeasure the hours,
+name every unnamed day including today, and render the PDF. That is the whole
+interface - there is nothing else to remember.
+
+Work that arrives after today has been named becomes a new `In progress` row
+below the names. The next update names it too.
 
 **The PDF will not render while any day is still unnamed**, and there is no
 override - it is the document a client sees, so `In progress` must never appear

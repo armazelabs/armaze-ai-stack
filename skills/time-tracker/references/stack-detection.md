@@ -29,9 +29,8 @@ outcome, not a failure, and setup must never stop over it.
 | Absent | What happens |
 | --- | --- |
 | `package.json` | No npm scripts. The `node <engine>/…` commands are what the readme documents anyway. |
-| git | No commit evidence for labelling; prompts alone carry it. |
+| git | No commit evidence for labelling. Commits normally lead the naming, so prompts have to carry it alone - the labels get vaguer, not wrong. |
 | Chrome / Chromium | No PDF. The month markdown is still complete. |
-| `.claude/settings.json` | Created, with only the SessionStart hook in it. |
 | `.gitignore` | Created, holding only the cache entry. |
 | `project-management/` | Created, lowercase. An existing one in any casing is reused. |
 
@@ -39,8 +38,7 @@ outcome, not a failure, and setup must never stop over it.
 
 ```
 <repo>/<project-management>/tracking/
-  config.json          timezone, idle gap, multiplier, which weekdays count
-  state.json           the tracked date ranges - the on/off switch
+  config.json          trackFrom, timezone, idle gap, multiplier, weekdays
   <YYYY-MM>.md         the record
   <YYYY-MM>.pdf        rendered from the markdown
   cache/               labelling evidence, gitignored
@@ -48,8 +46,11 @@ outcome, not a failure, and setup must never stop over it.
 ```
 
 The engine derives every path from its own location, so the whole folder can be
-renamed or moved and it keeps working. Re-running setup repoints the
-SessionStart hook if it has moved.
+renamed or moved and it keeps working.
+
+There is no hook and no state file. Re-running setup in a project installed by
+the older start/stop version removes both, and carries that version's earliest
+tracked day over into `trackFrom` so the existing timesheet still reconciles.
 
 ## Monorepos
 
