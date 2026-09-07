@@ -21,6 +21,7 @@ moves only when you ask for it.
 | `config.json` | First day counted, timezone, idle gap, hours multiplier. |
 | `<YYYY-MM>.md` | The month's record: a total per day, and the tasks it split into. |
 | `<YYYY-MM>.pdf` | The printable version, rendered from the markdown. |
+| `log.jsonl` | One line per update: days named, commits used, month total. |
 | `cache/` | Evidence for labelling - prompts and commits per block. Gitignored. |
 | `engine/` | The measurement code. Generated; re-synced by the skill. |
 
@@ -64,6 +65,23 @@ interface - there is nothing else to remember.
 
 Work that arrives after today has been named becomes a new `In progress` row
 below the names. The next update names it too.
+
+## The log
+
+Every update appends a line to `log.jsonl`:
+
+```
+7 Sept 18:02 - named 2026-09-07 - commits 79e9f55 - 6h 6m
+8 Sept 17:40 - named 2026-09-08 - commits 7718184, cfefa0d - 14h 20m
+```
+
+It is a receipt, not a source of hours - the month markdown stays the record.
+Months later it answers "why is that day called that?".
+
+It is also how an update stays quick: the last line remembers which commit was
+reached, so the next run reads forward from there instead of re-reading the
+month. Days are still chosen by which ones lack a name, never by the commits -
+so a morning of uncommitted work is never skipped.
 
 **The PDF will not render while any day is still unnamed**, and there is no
 override - it is the document a client sees, so `In progress` must never appear

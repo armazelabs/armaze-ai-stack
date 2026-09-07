@@ -90,15 +90,31 @@ Tell the user tracking counts from today onward, and give them the phrase
 The one command. Triggered by "update tracker", "update tracking",
 "updatetracking", "update my timesheet". Three steps, in order, all of them:
 
-1. **Measure.** `node <engine>/collect.mjs` - rescan the transcripts and rewrite
-   the month markdown.
+1. **Measure.** `node <engine>/collect.mjs` - rescan the transcripts, rewrite
+   the month markdown, and build the work list.
 2. **Name.** Read `references/labelling.md` and name **every** unnamed day,
    today included. Commits lead; prompts fill in the blocks that have none.
+   Read `cache/<month>.pending.json` for this - it holds only the days that
+   still need a name. Never read `raw.json` for a routine update: it is the
+   whole month, and reading twenty settled days to name one is the cost this
+   is here to avoid.
 3. **Render.** `node <engine>/report.mjs` - write the PDF. Go straight here
    from step 2; **do not collect again to check the naming**. Today is still
    running, so a second collect finds the minutes that passed while you were
    labelling and opens a fresh `In progress` row for them - which blocks the
    render you are about to do.
+4. **Record the run.**
+
+   ```
+   node <engine>/log.mjs record --named <the days you named> --session <session id>
+   ```
+
+   Comma-separate the days. This appends one line to `<tracking>/log.jsonl`
+   saying what was named, which commits were consumed, and the month total -
+   and moves the commit watermark that step 1 reads next time. Do it last, once
+   the naming is actually on disk, so the log never claims work that was not
+   done. Pass the session id from this session's transcript path if you have
+   it; omit `--session` rather than inventing one.
 
 Then report the days you named, the month total, and where the PDF landed. If no
 Chromium-based browser is found the hours are still recorded and the markdown is
@@ -109,6 +125,22 @@ there is no later pass to defer to, so a day left as `In progress` would just
 stay that way and block the PDF. Later work on the same day arrives as a fresh
 `In progress` row beneath the names you wrote; the next update names that too.
 That is the design, not a mistake to chase.
+
+## The log and the watermark
+
+`<tracking>/log.jsonl` is one line per update: days named, commits consumed,
+session, month total. It is an audit trail for a client-facing timesheet - and
+the last line's `throughCommit` is the watermark the next run reads, so there is
+no separate state file.
+
+**The watermark narrows reading, never naming.** `pending.json` is built from
+which days still carry a placeholder, not from which commits are new, because a
+day can hold six hours and no commits at all - most work is uncommitted at the
+moment it is measured. A commit-driven work list would silently drop those days
+and then block the PDF. Never reach for the log to decide what to skip.
+
+Nothing in the log ever feeds a number back into the timesheet. The month
+markdown is the record; the log only says what happened.
 
 ## Status
 
@@ -149,6 +181,9 @@ then renders, so reach for this mode on its own for a *different* month.
 - **Never hand-write a day's hours.** They are recomputed from the transcripts
   on the next collect, so an edit to a total is lost work. Task names are the
   opposite: once a row is named, the engine keeps it.
+- **The log is append-only.** Never rewrite or prune `log.jsonl` to tidy it,
+  and never add a line for a run that did not happen. An audit trail that is
+  edited is not one.
 - **The engine is generated.** Do not hand-edit `<engine>/*.mjs`; change the
   skill's templates and re-run setup instead.
 - **Never wire this to a hook or an automation on your own.** It runs when

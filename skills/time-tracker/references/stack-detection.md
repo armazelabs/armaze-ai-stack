@@ -29,7 +29,7 @@ outcome, not a failure, and setup must never stop over it.
 | Absent | What happens |
 | --- | --- |
 | `package.json` | No npm scripts. The `node <engine>/…` commands are what the readme documents anyway. |
-| git | No commit evidence for labelling. Commits normally lead the naming, so prompts have to carry it alone - the labels get vaguer, not wrong. |
+| git | No commit evidence for labelling. Commits normally lead the naming, so prompts have to carry it alone - the labels get vaguer, not wrong. The log still records each run, with `throughCommit: null`. |
 | Chrome / Chromium | No PDF. The month markdown is still complete. |
 | `.gitignore` | Created, holding only the cache entry. |
 | `project-management/` | Created, lowercase. An existing one in any casing is reused. |
@@ -39,9 +39,12 @@ outcome, not a failure, and setup must never stop over it.
 ```
 <repo>/<project-management>/tracking/
   config.json          trackFrom, timezone, idle gap, multiplier, weekdays
+  log.jsonl            one line per update - audit trail and commit watermark
   <YYYY-MM>.md         the record
   <YYYY-MM>.pdf        rendered from the markdown
   cache/               labelling evidence, gitignored
+    <YYYY-MM>.pending.json   only the days needing a name - read this one
+    <YYYY-MM>.raw.json       the whole month, for re-checking a settled day
   engine/*.mjs         the code
 ```
 

@@ -45,6 +45,7 @@ import {
   rebuild,
   renderMonthFile,
 } from "./month-file.mjs";
+import { lastCommit } from "./log.mjs";
 
 const TIMESTAMP = /"timestamp":"([^"]+)"/g;
 /**
@@ -141,15 +142,15 @@ function readCommits(sinceMs) {
   try {
     const out = execFileSync(
       "git",
-      ["log", `--since=${new Date(sinceMs).toISOString()}`, "--format=%ct%x09%s"],
+      ["log", `--since=${new Date(sinceMs).toISOString()}`, "--format=%ct%x09%h%x09%s"],
       { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     );
     return out
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [seconds, ...rest] = line.split("\t");
-        return { at: Number(seconds) * 1000, subject: rest.join("\t") };
+        const [seconds, sha, ...rest] = line.split("\t");
+        return { at: Number(seconds) * 1000, sha, subject: rest.join("\t") };
       });
   } catch {
     return [];
@@ -193,7 +194,11 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
           })),
         commits: commits
           .filter((commit) => commit.at >= block.start && commit.at <= block.end)
-          .map((commit) => ({ at: toLocalTime(commit.at, timeZone), subject: commit.subject })),
+          .map((commit) => ({
+            at: toLocalTime(commit.at, timeZone),
+            sha: commit.sha,
+            subject: commit.subject,
+          })),
       })),
     };
   });
@@ -215,6 +220,56 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
     path.join(CACHE_DIR, `${month}.raw.json`),
     `${JSON.stringify({ month, days }, null, 2)}\n`,
   );
+
+  // The labelling pass reads this one, not the whole-month file above.
+  //
+  // Same evidence, filtered to the days that actually need a name. A month
+  // fills up but the work list does not, so naming one day costs one day of
+  // reading rather than twenty - which is the whole point, since reading the
+  // evidence is the slow part of an update, not measuring it.
+  //
+  // Built from placeholders, deliberately, and never from the commit
+  // watermark: a day can hold six hours and no commits at all, and a work list
+  // derived from commits would drop it.
+  const since = lastCommit();
+  const pending = days
+    .filter((day) => !day.labelled)
+    .map((day) => ({
+      ...day,
+      blocks: day.blocks.map((block) => ({
+        ...block,
+        // `new` marks a commit as unseen by any previous run. It is a reading
+        // aid - start here - not a filter; the older commits in a block stay
+        // because they are still the evidence for the hours around them.
+        commits: block.commits.map((commit) => ({ ...commit, new: isNewCommit(commit.sha, since) })),
+      })),
+    }));
+
+  writeIfChanged(
+    path.join(CACHE_DIR, `${month}.pending.json`),
+    `${JSON.stringify({ month, sinceCommit: since, days: pending }, null, 2)}\n`,
+  );
+}
+
+/**
+ * Whether a commit landed after the watermark.
+ *
+ * Answered with git rather than by comparing dates, because a merge or a
+ * rebase can put an older-dated commit after the watermark in history. No
+ * watermark, no git, or a watermark that no longer exists all mean "cannot
+ * tell" - and that answers false, so nothing is wrongly flagged as new.
+ */
+function isNewCommit(sha, since) {
+  if (!sha || !since) return false;
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", sha, since], {
+      cwd: REPO_ROOT,
+      stdio: "ignore",
+    });
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function main() {
