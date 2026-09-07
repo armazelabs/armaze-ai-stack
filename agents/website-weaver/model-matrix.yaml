@@ -1,0 +1,91 @@
+# WebsiteWeaver Model Assignment Matrix
+# Maps task domains to Claude model + effort level.
+# Editable without touching orchestration logic.
+#
+# `model` values map to Orca's `orca orchestration worker-start --model <id>` flag.
+# `effort` values map to Orca's `--effort <level>` flag (requires --model).
+# Adjust these ids if your Orca/Claude account uses different model aliases.
+
+version: 1
+updated: 2026-09-03
+
+domains:
+  strategy:
+    description: "Vision, positioning, success criteria, high-ambiguity planning"
+    model: fable-5.1
+    effort: high
+    agent: claude
+    examples:
+      - "Define site vision and positioning statement"
+      - "Resolve ambiguous scope questions from client brief"
+
+  architecture:
+    description: "Information architecture, user flows, sitemaps"
+    model: sonnet
+    effort: high
+    agent: claude
+    examples:
+      - "Build sitemap and navigation structure"
+      - "Define user flows for key journeys"
+
+  design_system:
+    description: "Design tokens, component primitives, visual rules"
+    model: sonnet
+    effort: medium
+    agent: claude
+    examples:
+      - "Generate design tokens (color, type, spacing)"
+      - "Define component API and states"
+
+  frontend:
+    description: "React/Shadcn component implementation, interaction logic"
+    model: opus
+    effort: medium
+    agent: claude
+    examples:
+      - "Build React components from design system"
+      - "Implement responsive layout and interactions"
+
+  content:
+    description: "Copywriting, metadata, SEO, structured content"
+    model: haiku
+    effort: medium
+    agent: claude
+    examples:
+      - "Write page copy from content strategy"
+      - "Generate SEO metadata and sitemap.xml"
+
+  devops:
+    description: "Hosting, CI/CD, domain setup, deployment config"
+    model: sonnet
+    effort: medium
+    agent: claude
+    examples:
+      - "Configure Vercel/Netlify deployment"
+      - "Set up CI pipeline and env vars"
+
+  qa:
+    description: "Cross-browser testing, accessibility, performance checks"
+    model: haiku
+    effort: low
+    agent: claude
+    examples:
+      - "Run accessibility audit against WCAG AA"
+      - "Verify responsive breakpoints"
+
+  verification:
+    description: "Cross-stage quality gates, 'is it actually done' judgment"
+    model: fable-5.1
+    effort: medium
+    agent: claude
+    examples:
+      - "Verify frontend output matches design system spec"
+      - "Confirm all subtasks meet their done-criteria"
+
+# Fallback for unclassified/ambiguous tasks — routes to review stage
+# rather than guessing a model assignment.
+fallback:
+  model: fable-5.1
+  effort: medium
+  agent: claude
+  action: "flag_for_human_review"

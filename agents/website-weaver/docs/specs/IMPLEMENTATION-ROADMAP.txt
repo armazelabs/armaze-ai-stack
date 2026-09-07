@@ -1,0 +1,152 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    WEBSITEWEAVER IMPLEMENTATION ROADMAP                     ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+PHASE 1: DECOMPOSITION & REVIEW PIPELINE (6-8 hours)
+──────────────────────────────────────────────────────────────────────────────
+Goal: Sonnet drafts → Fable refines → approved DAG (no execution yet)
+
+Build Order:
+  1. skill.md                          [Orca manifest, invocation config]
+  2. model-matrix.yaml                 [Task → model/effort mappings]
+  3. prompts/task-dag-schema.md        [Output format specification]
+  4. prompts/draft-decomposition.md    [Sonnet Stage 1 prompt]
+  5. prompts/review-refine.md          [Fable Stage 2 prompt]
+
+Deliverable:
+  ~/.orca/skills/website-weaver/
+  ├── skill.md
+  ├── model-matrix.yaml
+  └── prompts/
+      ├── task-dag-schema.md
+      ├── draft-decomposition.md
+      └── review-refine.md
+
+Test: "Build a portfolio website" → Sonnet decomposition → Fable review → DAG
+
+
+PHASE 1→2: SPIKE: Context-Passing Mechanism (1-2 hours)
+──────────────────────────────────────────────────────────────────────────────
+Question: How do sub-agents receive context from upstream nodes?
+  → File-based (JSON/YAML in shared dir)?
+  → Orca artifact API?
+  → Environment variables?
+
+Deliverable: Design doc + proof-of-concept test
+
+
+PHASE 2: EXECUTION ENGINE (10-12 hours)
+──────────────────────────────────────────────────────────────────────────────
+Goal: Spawn sub-agent worktrees, execute DAG, parallelization
+
+Build Order:
+  1. orchestration/dag-executor.sh         [Spawns worktrees per DAG node]
+  2. orchestration/context-passer.sh       [Passes artifacts between agents]
+  3. sub-agents/strategy-agent.md          [System prompt]
+  4. sub-agents/ia-agent.md
+  5. sub-agents/design-system-agent.md
+  6. sub-agents/frontend-agent.md
+  7. sub-agents/content-agent.md
+  8. sub-agents/devops-agent.md
+  9. sub-agents/qa-agent.md
+
+Deliverable:
+  ~/.orca/skills/website-weaver/
+  ├── orchestration/
+  │   ├── dag-executor.sh
+  │   └── context-passer.sh
+  └── sub-agents/
+      ├── strategy-agent.md
+      ├── ia-agent.md
+      ├── design-system-agent.md
+      ├── frontend-agent.md
+      ├── content-agent.md
+      ├── devops-agent.md
+      └── qa-agent.md
+
+Test: Full DAG execution for "Portfolio website" → all 7 agents run → artifacts produced
+
+
+PHASE 3: VERIFICATION, ERROR HANDLING, POLISH (6-8 hours)
+──────────────────────────────────────────────────────────────────────────────
+Goal: Quality gates, verification, user-friendly CLI, documentation
+
+Build Order:
+  1. prompts/verify.md                   [Fable Stage 5 verification]
+  2. orchestration/verification-gate.sh  [Pass/fail/escalate logic]
+  3. orchestration/error-handler.sh      [Retry, human escalation]
+  4. cli/weave.sh                        [User-facing CLI wrapper]
+  5. docs/usage.md                       [End-to-end walkthrough]
+
+Deliverable:
+  ~/.orca/skills/website-weaver/
+  ├── prompts/verify.md
+  ├── orchestration/
+  │   ├── verification-gate.sh
+  │   └── error-handler.sh
+  ├── cli/weave.sh
+  └── docs/usage.md
+
+Test: Full end-to-end with intentional defects → gates catch them → escalation works
+
+
+FINAL TREE (after Phase 3)
+──────────────────────────────────────────────────────────────────────────────
+~/.orca/skills/website-weaver/
+├── skill.md                              [Orca invocation manifest]
+├── model-matrix.yaml                     [Config: task → model/effort]
+├── cli/
+│   └── weave.sh                          [User CLI entry point]
+├── prompts/
+│   ├── draft-decomposition.md            [Sonnet Stage 1]
+│   ├── review-refine.md                  [Fable Stage 2]
+│   ├── task-dag-schema.md                [DAG output spec]
+│   └── verify.md                         [Fable Stage 5]
+├── orchestration/
+│   ├── dag-executor.sh                   [Spawns worktrees]
+│   ├── context-passer.sh                 [Context passing]
+│   ├── verification-gate.sh              [Quality gates]
+│   └── error-handler.sh                  [Error handling]
+├── sub-agents/
+│   ├── strategy-agent.md
+│   ├── ia-agent.md
+│   ├── design-system-agent.md
+│   ├── frontend-agent.md
+│   ├── content-agent.md
+│   ├── devops-agent.md
+│   └── qa-agent.md
+└── docs/
+    ├── specs/
+    │   ├── 2026-09-03-website-weaver-design.md
+    │   ├── 2026-09-03-website-weaver-implementation-plan.md
+    │   └── IMPLEMENTATION-ROADMAP.txt (this file)
+    └── usage.md
+
+
+TIMELINE ESTIMATE
+──────────────────────────────────────────────────────────────────────────────
+Phase 1:         2026-09-05 (6-8 hours) [Tue]
+Phase 2 Spike:   2026-09-05 (1-2 hours) [Tue afternoon]
+Phase 2 Build:   2026-09-08 (10-12 hours) [Wed-Fri]
+Phase 3:         2026-09-10 (6-8 hours) [Sat-Sun]
+─────────────────────────────────────────────────────────
+Total:           ~23-30 hours
+MVP Ready:       2026-09-10
+
+RISKS & BLOCKERS
+──────────────────────────────────────────────────────────────────────────────
+[ ] Orca worktree API stability (spike early if shaky)
+[ ] Context-passing mechanism (Phase 2 spike → design before build)
+[ ] Sub-agent prompt tuning (plan 2-3 iterations)
+[ ] Fable cost creep on verification loops (add cost limits)
+[ ] Model assignment accuracy (track real effort, iterate matrix)
+
+NEXT STEPS
+──────────────────────────────────────────────────────────────────────────────
+1. Review this roadmap with the team
+2. Approve Phase 1 scope
+3. Build Phase 1 files
+4. Test Phase 1 (Sonnet decomposition + Fable review)
+5. Spike context-passing mechanism
+6. Proceed to Phase 2
+

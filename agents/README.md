@@ -1,10 +1,13 @@
 # Agents
 
-One Markdown file per agent. An agent is a role definition — who it is, what it is for, which tools it may use, and how it should approach its class of problems.
+One Markdown file per agent — or, when an agent needs supporting files, one directory. An agent is a role definition — who it is, what it is for, which tools it may use, and how it should approach its class of problems.
 
 ```
-agents/<name>.md
+agents/<name>.md            # single-file agent
+agents/<name>/AGENT.md      # directory agent — entry document, plus whatever it needs alongside
 ```
+
+A directory agent is discovered by its `AGENT.md` (a `SKILL.md` is accepted too, for packages that arrive written that way) and is copied as a whole folder into the target's agents directory.
 
 Each file starts with YAML front matter. `name` must match the file name; `description` is one line and doubles as the "when to use me" hint that assistants read.
 
@@ -22,6 +25,6 @@ You are a meticulous code reviewer for Armaze projects. ...
 Conventions:
 
 - Names are lowercase kebab-case.
-- Files starting with `.` or `_`, and this `README.md`, are ignored by `aistack`.
+- Files and directories starting with `.` or `_`, and this `README.md`, are ignored by `aistack`.
 - `tools` and `model` follow the Claude Code sub-agent format; other platforms ignore keys they don't know, so it's safe to keep them.
-- Keep the body self-contained — the file is copied on its own into other repos.
+- Keep the agent self-contained — it is copied as a unit into other repos, so a directory agent must not reference anything outside its own folder.

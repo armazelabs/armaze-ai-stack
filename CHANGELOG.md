@@ -2,6 +2,13 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.4.0 - 2026-09-07
+
+### Changed
+
+- **An agent can now be a directory.** Alongside `agents/<name>.md`, `agents/<name>/` with an `AGENT.md` entry document (a `SKILL.md` is accepted too) is discovered, listed and installed — copied as a whole folder into the target's agents directory — so an agent that carries prompts, config or reference docs no longer has to be flattened into one file.
+- **website-weaver** ships as its own directory: `SKILL.md`, the `model-matrix.yaml` routing table, the `prompts/` for the draft-decomposition and review stages, and the design docs under `docs/specs/`.
+
 ## 0.3.0 - 2026-09-07
 
 ### Added

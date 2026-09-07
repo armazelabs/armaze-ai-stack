@@ -20,7 +20,7 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.3.0"
+readonly ARMAZE_VERSION="0.4.0"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
 
@@ -433,7 +433,7 @@ dest_dir() {  # <platform> <type>
 dest_leaf() {  # <type> <name>
   case $1 in
     skills) print -r -- "$2" ;;
-    agents) print -r -- "$2.md" ;;
+    agents) if [[ -d "$ARMAZE_STACK_DIR/agents/$2" ]]; then print -r -- "$2"; else print -r -- "$2.md"; fi ;;
   esac
 }
 
@@ -441,15 +441,27 @@ dest_leaf() {  # <type> <name>
 component_src() {  # <type> <name>
   case $1 in
     skills) print -r -- "$ARMAZE_STACK_DIR/skills/$2" ;;
-    agents) print -r -- "$ARMAZE_STACK_DIR/agents/$2.md" ;;
+    agents)
+      if [[ -d "$ARMAZE_STACK_DIR/agents/$2" ]]; then print -r -- "$ARMAZE_STACK_DIR/agents/$2"
+      else print -r -- "$ARMAZE_STACK_DIR/agents/$2.md"; fi ;;
   esac
 }
 
 # The Markdown file carrying a component's front matter, relative to the stack root.
 component_doc_rel() {  # <type> <name>
+  local name=$2 d
   case $1 in
-    skills) print -r -- "skills/$2/SKILL.md" ;;
-    agents) print -r -- "agents/$2.md" ;;
+    skills) print -r -- "skills/$name/SKILL.md" ;;
+    agents)
+      # An agent is either a single file or a directory with an entry document.
+      d="$ARMAZE_STACK_DIR/agents/$name"
+      if [[ -d $d ]]; then
+        if   [[ -f "$d/AGENT.md" ]]; then print -r -- "agents/$name/AGENT.md"
+        elif [[ -f "$d/SKILL.md" ]]; then print -r -- "agents/$name/SKILL.md"
+        else return 1; fi
+      else
+        print -r -- "agents/$name.md"
+      fi ;;
   esac
 }
 
@@ -461,7 +473,11 @@ component_doc() {  # <type> <name>
 component_exists() {  # <type> <name>
   case $1 in
     skills) [[ -f "$ARMAZE_STACK_DIR/skills/$2/SKILL.md" ]] ;;
-    agents) [[ $2 != README && -f "$ARMAZE_STACK_DIR/agents/$2.md" ]] ;;
+    agents)
+      [[ $2 == README ]] && return 1
+      local rel
+      rel=$(component_doc_rel agents "$2") || return 1
+      [[ -f "$ARMAZE_STACK_DIR/$rel" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -477,10 +493,15 @@ list_names() {  # <type>
         [[ -f "$p/SKILL.md" ]] && print -r -- "${p:t}"
       done ;;
     agents)
+      local -a names
       for p in "$src"/[^._]*.md(N.); do
         [[ ${p:t} == README.md ]] && continue
-        print -r -- "${p:t:r}"
-      done ;;
+        names+=("${p:t:r}")
+      done
+      for p in "$src"/[^._]*(N/); do
+        [[ -f "$p/AGENT.md" || -f "$p/SKILL.md" ]] && names+=("${p:t}")
+      done
+      print -rl -- ${(ou)names} ;;
   esac
 }
 
