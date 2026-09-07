@@ -2,6 +2,17 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.3.0 - 2026-09-07
+
+### Added
+
+- **whats-new-generator** skill — builds and maintains a project's changelog. Scaffolds a whole "what's new" system into a project that has none (typed data layer, root `CHANGELOG.md`, changelog page, last-seen-version modal, nav or footer entry), seeds entries from git history and proposes a semver bump; also updates an existing changelog with recent work and drafts reader-facing update posts. Adapts to the target's actual language, framework and router.
+- **website-weaver** agent — orchestrates website and digital product delivery. Turns a project brief into a dependency-ordered task DAG, assigns each task the Claude model and effort level suited to it, and flags the decisions that need human sign-off. Carries the model matrix, the DAG schema and both planning stages (draft decomposition, review and refinement) in one file. The first agent on the shelf.
+
+### Changed
+
+- **time-tracker** is now language-agnostic and switchable. It sets itself up in any project — no `package.json`, no build tooling — under `<project-management>/tracking/`, and tracking is something you turn on and off rather than a system that is simply present. Labelling and stack detection moved into `references/`.
+
 ## 0.2.0 - 2026-09-01
 
 ### Added

@@ -1,8 +1,10 @@
 // Turn this machine's Claude Code transcripts into timesheet data.
 //
-// Run with `node lib/time-tracking/collect.mts` (or the `time:collect`
-// package.json script, if one was set up). It writes the month markdown in
-// project-management/, plus an evidence file in cache/ for the labelling agent.
+// Run with `node <tracking>/engine/collect.mjs`. It writes the month markdown
+// next to itself, plus an evidence file in cache/ for labelling.
+//
+// Only days inside a tracked range are counted - see state.mjs. Days outside
+// one are ignored entirely, even though the transcripts for them exist.
 //
 // The whole history is recomputed on every run rather than appended to. Scanning
 // all transcripts costs well under a second, and a stateless recompute means a
@@ -20,31 +22,29 @@ import {
 import path from "node:path";
 
 import {
-  type Block,
   buildBlocks,
   formatDuration,
   isWorkday,
   toLocalDay,
   toLocalTime,
-} from "./blocks.mts";
+} from "./blocks.mjs";
 import {
   CACHE_DIR,
-  PM_DIR,
   REPO_ROOT,
+  TRACKING_DIR,
   historyPath,
   loadConfig,
   monthFilePath,
   monthOf,
   transcriptDir,
-} from "./config.mts";
+} from "./config.mjs";
 import {
-  type MeasuredDay,
-  type MonthFile,
   isPlaceholder,
   parseMonthFile,
   rebuild,
   renderMonthFile,
-} from "./month-file.mts";
+} from "./month-file.mjs";
+import { earliestTrackedDay, isTracked, loadState } from "./state.mjs";
 
 const TIMESTAMP = /"timestamp":"([^"]+)"/g;
 /**
@@ -64,13 +64,10 @@ const MAX_PROMPT_LENGTH = 200;
  * are backslash-escaped, so anchoring to an unescaped `"field":"` prefix matches
  * the automation's own prompt and nothing else.
  */
-function sentinelPattern(sentinel: string): RegExp {
+function sentinelPattern(sentinel) {
   const escaped = sentinel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`"(?:display|content|text|prompt)":"${escaped}`);
 }
-
-type Prompt = { at: number; text: string };
-type Commit = { at: number; subject: string };
 
 /**
  * Collect every event instant from this project's transcripts.
@@ -79,19 +76,19 @@ type Commit = { at: number; subject: string };
  * per-session subdirectories and reuse the parent's wall-clock window, so
  * including them would add no time while multiplying the work.
  */
-function readTimestamps(dir: string, sentinel: string): number[] {
+function readTimestamps(dir, sentinel) {
   if (!existsSync(dir)) return [];
 
   const pattern = sentinelPattern(sentinel);
-  const instants: number[] = [];
+  const instants = [];
   let skipped = 0;
 
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
 
     const content = readFileSync(path.join(dir, entry.name), "utf8");
-    // The scheduled run is itself a Claude session in this repo. Without this
-    // it would bill its own runtime as work every night.
+    // A scheduled tracker run is itself a Claude session in this repo. Without
+    // this it would bill its own runtime as work.
     if (pattern.test(content)) {
       skipped += 1;
       continue;
@@ -109,17 +106,17 @@ function readTimestamps(dir: string, sentinel: string): number[] {
   return instants;
 }
 
-function readPrompts(): Prompt[] {
+function readPrompts() {
   const file = historyPath();
   if (!existsSync(file)) return [];
 
-  const prompts: Prompt[] = [];
+  const prompts = [];
   for (const line of readFileSync(file, "utf8").split("\n")) {
     if (!line.trim()) continue;
     try {
-      const row: unknown = JSON.parse(line);
+      const row = JSON.parse(line);
       if (typeof row !== "object" || row === null) continue;
-      const { project, timestamp, display } = row as Record<string, unknown>;
+      const { project, timestamp, display } = row;
       if (project !== REPO_ROOT) continue;
       if (typeof timestamp !== "number" || typeof display !== "string") continue;
       prompts.push({ at: timestamp, text: display });
@@ -130,7 +127,17 @@ function readPrompts(): Prompt[] {
   return prompts;
 }
 
-function readCommits(sinceMs: number): Commit[] {
+/**
+ * Commit subjects, for labelling evidence. A project with no git history, or
+ * no git at all, simply contributes none.
+ */
+/**
+ * Commit subjects for the labelling evidence. Read-only, and the only git this
+ * tracker ever runs - nothing here stages, commits or pushes anything. The
+ * timesheet is left in the working tree for its owner to commit when they
+ * choose.
+ */
+function readCommits(sinceMs) {
   try {
     const out = execFileSync(
       "git",
@@ -156,7 +163,7 @@ function readCommits(sinceMs: number): Commit[] {
  * sessions can share this worktree and start at the same moment, and rename is
  * atomic - so a concurrent run can never leave a half-written timesheet behind.
  */
-function writeIfChanged(file: string, content: string): boolean {
+function writeIfChanged(file, content) {
   if (existsSync(file) && readFileSync(file, "utf8") === content) return false;
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
@@ -165,14 +172,7 @@ function writeIfChanged(file: string, content: string): boolean {
   return true;
 }
 
-function writeEvidence(
-  month: string,
-  file: MonthFile,
-  blocks: readonly Block[],
-  prompts: readonly Prompt[],
-  commits: readonly Commit[],
-  timeZone: string,
-): void {
+function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
   const days = file.days.map((day) => {
     const dayBlocks = blocks.filter((block) => block.day === day.date);
     return {
@@ -217,11 +217,19 @@ function writeEvidence(
   );
 }
 
-function main(): void {
+function main() {
   const config = loadConfig();
-  mkdirSync(CACHE_DIR, { recursive: true });
+  const state = loadState();
 
-  const today = toLocalDay(Date.now(), config.timeZone);
+  if (state.ranges.length === 0) {
+    console.log("Tracking has never been started here - nothing is counted.");
+    console.log("Start it with `node " + path.join(TRACKING_DIR, "engine", "track.mjs") + " start`.");
+    return;
+  }
+
+  mkdirSync(CACHE_DIR, { recursive: true });
+  const todayDay = toLocalDay(Date.now(), config.timeZone);
+  const trackedFrom = earliestTrackedDay(state);
 
   const instants = readTimestamps(transcriptDir(), config.sentinel);
   if (instants.length === 0) {
@@ -234,14 +242,14 @@ function main(): void {
     timeZone: config.timeZone,
   })
     .filter((block) => isWorkday(block.day, config.workdays))
-    // Tracking begins on a chosen date; anything before it is deliberately not
-    // part of the record, even though the transcripts still exist.
-    .filter((block) => block.day >= config.startDate);
+    // The on/off switch. A day outside every tracked range is not part of the
+    // record, even though its transcripts still exist.
+    .filter((block) => isTracked(block.day, state, todayDay));
 
   const prompts = readPrompts();
   const commits = readCommits(Math.min(...instants));
 
-  const byMonth = new Map<string, Block[]>();
+  const byMonth = new Map();
   for (const block of blocks) {
     const month = monthOf(block.day);
     const bucket = byMonth.get(month);
@@ -252,37 +260,38 @@ function main(): void {
   // Rebuild any month with fresh data, plus any month already on disk, so days
   // recorded on another machine keep rendering here.
   const months = new Set(byMonth.keys());
-  if (existsSync(PM_DIR)) {
-    for (const name of readdirSync(PM_DIR)) {
-      if (/^\d{4}-\d{2}\.md$/.test(name)) months.add(name.slice(0, 7));
-    }
+  for (const name of readdirSync(TRACKING_DIR)) {
+    if (/^\d{4}-\d{2}\.md$/.test(name)) months.add(name.slice(0, 7));
   }
 
   for (const month of [...months].sort()) {
     const monthBlocks = byMonth.get(month) ?? [];
 
-    const byDate = new Map<string, Block[]>();
+    const byDate = new Map();
     for (const block of monthBlocks) {
       const bucket = byDate.get(block.day);
       if (bucket) bucket.push(block);
       else byDate.set(block.day, [block]);
     }
-    const measured: MeasuredDay[] = [...byDate.entries()].map(([date, dayBlocks]) => ({
+    const measured = [...byDate.entries()].map(([date, dayBlocks]) => ({
       date,
       blocks: dayBlocks,
     }));
 
     const file = monthFilePath(month);
     const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
+    // Days recorded before tracking ever began are dropped; days inside a gap
+    // between two ranges are left alone, since they were recorded deliberately
+    // at the time and this machine may simply not hold their evidence.
     const existing = parsed
-      ? { ...parsed, days: parsed.days.filter((day) => day.date >= config.startDate) }
+      ? { ...parsed, days: parsed.days.filter((day) => day.date >= trackedFrom) }
       : null;
 
     const rebuilt = rebuild(
       existing,
       month,
       measured,
-      today,
+      todayDay,
       config.idleGapMinutes,
       config.hoursMultiplier,
     );
@@ -295,7 +304,7 @@ function main(): void {
     const total = rebuilt.days.reduce((sum, day) => sum + Math.round(day.seconds / 60) * 60, 0);
     const count = rebuilt.days.length;
     console.log(
-      `${month}: ${formatDuration(total)} across ${count} ${count === 1 ? "workday" : "workdays"}` +
+      `${month}: ${formatDuration(total)} across ${count} tracked ${count === 1 ? "day" : "days"}` +
         `${changed ? "" : " (unchanged)"}`,
     );
   }

@@ -1,8 +1,7 @@
 // Render a month's timesheet to PDF.
 //
-// Run with `node lib/time-tracking/report.mts` (current month), or the
-// `time:report` package.json script if one was set up
-// (`--month 2026-08` / `--last-month` for a specific month).
+// Run with `node <tracking>/engine/report.mjs` (current month), or
+// `--month 2026-08` / `--last-month` for a specific one.
 //
 // The markdown file is the input, so the PDF can never disagree with the ledger
 // you read and correct. Printing goes through headless Chrome rather than a PDF
@@ -13,9 +12,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { formatDuration, weekdayOf } from "./blocks.mts";
-import { CACHE_DIR, PM_DIR, loadConfig, monthFilePath, projectName } from "./config.mts";
-import { type DayEntry, isPlaceholder, parseMonthFile } from "./month-file.mts";
+import { formatDuration, weekdayOf } from "./blocks.mjs";
+import {
+  CACHE_DIR,
+  TRACKING_DIR,
+  loadConfig,
+  monthFilePath,
+  projectName,
+} from "./config.mjs";
+import { isPlaceholder, parseMonthFile } from "./month-file.mjs";
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -25,19 +30,22 @@ const CHROME_CANDIDATES = [
   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   "/usr/bin/google-chrome",
   "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/microsoft-edge",
 ];
 
-function findChrome(): string {
+function findChrome() {
   for (const candidate of CHROME_CANDIDATES) {
     if (candidate && existsSync(candidate)) return candidate;
   }
   throw new Error(
     "No Chrome or Chromium found for PDF printing. Install Google Chrome, or set " +
-      "CHROME_PATH to a Chromium-based browser binary.",
+      "CHROME_PATH to a Chromium-based browser binary. The month markdown is already " +
+      "written either way - only the PDF needs a browser.",
   );
 }
 
-function escapeHtml(value: string): string {
+function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -45,7 +53,7 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function monthLabel(month: string): string {
+function monthLabel(month) {
   const [year, index] = month.split("-").map(Number);
   const name = new Date(Date.UTC(year, index - 1, 1)).toLocaleString("en-GB", {
     month: "long",
@@ -55,7 +63,7 @@ function monthLabel(month: string): string {
 }
 
 /** `Wed 26 Aug` - short enough to never wrap in a day heading. */
-function dayLabel(date: string): string {
+function dayLabel(date) {
   const [year, month, day] = date.split("-").map(Number);
   const name = new Date(Date.UTC(year, month - 1, day)).toLocaleString("en-GB", {
     month: "short",
@@ -65,8 +73,8 @@ function dayLabel(date: string): string {
 }
 
 /** Month-wide time per task name, largest first. */
-function taskRollup(days: readonly DayEntry[]): { name: string; seconds: number }[] {
-  const totals = new Map<string, number>();
+function taskRollup(days) {
+  const totals = new Map();
   for (const day of days) {
     for (const task of day.tasks) {
       totals.set(task.name, (totals.get(task.name) ?? 0) + task.seconds);
@@ -77,7 +85,15 @@ function taskRollup(days: readonly DayEntry[]): { name: string; seconds: number 
     .sort((a, b) => b.seconds - a.seconds);
 }
 
-function renderHtml(month: string, days: readonly DayEntry[], timeZone: string): string {
+/**
+ * The PDF is what a client sees, so it carries the project, the month, the
+ * days, the task names and the hours - and nothing else. No measurement
+ * method, no idle cut-off, no multiplier, no timezone, no which-days-count.
+ * Those are the contractor's own settings, they live in `config.json`, and
+ * they do not belong on a document that gets sent onward. Do not reintroduce
+ * a footer or a subtitle line explaining them.
+ */
+function renderHtml(month, days) {
   const total = days.reduce((sum, day) => sum + day.seconds, 0);
   const rollup = taskRollup(days);
   const average = days.length > 0 ? total / days.length : 0;
@@ -137,7 +153,6 @@ function renderHtml(month: string, days: readonly DayEntry[], timeZone: string):
     font-size: 9pt; font-variant-numeric: tabular-nums; white-space: nowrap;
   }
   .right { text-align: right; }
-  .muted { color: #6b7280; }
 
   header { border-bottom: 1.5px solid #16181d; padding-bottom: 9px; margin-bottom: 16px; }
   h1 { font-size: 16pt; margin: 0 0 2px; letter-spacing: -0.015em; }
@@ -193,22 +208,17 @@ function renderHtml(month: string, days: readonly DayEntry[], timeZone: string):
     border-top: 1.5px solid #16181d; margin-top: 10px; padding-top: 7px;
     font-weight: 600; break-inside: avoid;
   }
-
-  footer {
-    margin-top: 20px; color: #6b7280; font-size: 8pt;
-    border-top: 1px solid #e3e5ea; padding-top: 7px;
-  }
 </style>
 </head>
 <body>
 <header>
   <h1>${name} - time tracking</h1>
-  <div class="subtitle">${monthLabel(month)} &middot; weekdays only &middot; ${escapeHtml(timeZone)}</div>
+  <div class="subtitle">${monthLabel(month)}</div>
 </header>
 
 <div class="summary">
   <div class="stat"><div class="value">${formatDuration(total)}</div><div class="label">Total</div></div>
-  <div class="stat"><div class="value">${days.length}</div><div class="label">Workdays</div></div>
+  <div class="stat"><div class="value">${days.length}</div><div class="label">Tracked days</div></div>
   <div class="stat"><div class="value">${formatDuration(average)}</div><div class="label">Average day</div></div>
 </div>
 
@@ -222,20 +232,12 @@ ${daySections}
   <tbody>${rollupRows}</tbody>
 </table>
 
-<footer>
-  Measured from Claude Code session activity with a ${escapeHtml(String(loadConfig().idleGapMinutes))}-minute
-  idle cut-off; gaps longer than that are not counted.${
-    loadConfig().hoursMultiplier !== 1
-      ? ` Each measured hour is recorded as ${escapeHtml(String(loadConfig().hoursMultiplier))}x.`
-      : ""
-  }
-</footer>
 </body>
 </html>
 `;
 }
 
-function parseArgs(): { month: string } {
+function parseArgs(config) {
   const args = process.argv.slice(2);
   const monthFlag = args.indexOf("--month");
   if (monthFlag !== -1 && args[monthFlag + 1]) {
@@ -244,13 +246,11 @@ function parseArgs(): { month: string } {
     return { month };
   }
 
-  const config = loadConfig();
-  const now = new Date();
   const local = new Intl.DateTimeFormat("en-CA", {
     timeZone: config.timeZone,
     year: "numeric",
     month: "2-digit",
-  }).format(now);
+  }).format(new Date());
 
   if (args.includes("--last-month")) {
     const [year, month] = local.split("-").map(Number);
@@ -262,32 +262,48 @@ function parseArgs(): { month: string } {
   return { month: local };
 }
 
-function main(): void {
-  const { month } = parseArgs();
+function main() {
   const config = loadConfig();
+  const { month } = parseArgs(config);
   const source = monthFilePath(month);
 
   if (!existsSync(source)) {
-    throw new Error(`No timesheet for ${month}. Run \`node lib/time-tracking/collect.mts\` first.`);
+    throw new Error(
+      `No timesheet for ${month}. Run \`node ${path.join(TRACKING_DIR, "engine", "collect.mjs")}\` first.`,
+    );
   }
 
   const { days } = parseMonthFile(readFileSync(source, "utf8"));
-  if (days.length === 0) throw new Error(`${month} has no recorded workdays.`);
+  if (days.length === 0) throw new Error(`${month} has no recorded days.`);
+
+  // The PDF is the client-facing artefact, so a placeholder must never reach
+  // it. There is deliberately no --force: a document that can be sent onward
+  // cannot be allowed to say "In progress" where a task name belongs. Naming
+  // the days is the fix, and it is what the time-tracker skill's labelling
+  // pass does.
+  const unnamed = days.filter((day) => day.tasks.some((task) => isPlaceholder(task.name)));
+  if (unnamed.length > 0) {
+    throw new Error(
+      `No PDF written - ${month} still has unnamed days: ` +
+        `${unnamed.map((day) => day.date).join(", ")}. ` +
+        "Label them first (time-tracker skill, labelling pass), then run this again.",
+    );
+  }
 
   for (const day of days) {
     const tasked = day.tasks.reduce((sum, task) => sum + task.seconds, 0);
     if (Math.abs(tasked - day.seconds) >= 60) {
       console.warn(
         `Warning: ${day.date} task rows total ${formatDuration(tasked)} but the day is ` +
-          `${formatDuration(day.seconds)}. Re-run \`node lib/time-tracking/collect.mts\` to reconcile.`,
+          `${formatDuration(day.seconds)}. Re-run the collector to reconcile.`,
       );
     }
   }
 
   mkdirSync(CACHE_DIR, { recursive: true });
   const html = path.join(CACHE_DIR, `${month}.html`);
-  const pdf = path.join(PM_DIR, `${month}.pdf`);
-  writeFileSync(html, renderHtml(month, days, config.timeZone));
+  const pdf = path.join(TRACKING_DIR, `${month}.pdf`);
+  writeFileSync(html, renderHtml(month, days));
 
   execFileSync(
     findChrome(),
@@ -305,8 +321,16 @@ function main(): void {
   const count = days.length;
   console.log(
     `${path.relative(process.cwd(), pdf)} - ${formatDuration(total)}, ` +
-      `${count} ${count === 1 ? "workday" : "workdays"}.`,
+      `${count} tracked ${count === 1 ? "day" : "days"}.`,
   );
 }
 
-main();
+// Every failure here is an ordinary, actionable condition - an unnamed day, a
+// month with no timesheet, no browser installed - so it prints as a sentence
+// rather than a stack trace. The exit code still marks it as a failure.
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}

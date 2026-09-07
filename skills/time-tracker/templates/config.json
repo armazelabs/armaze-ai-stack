@@ -1,8 +1,7 @@
 {
-  "startDate": "{{START_DATE}}",
   "timeZone": "{{TIMEZONE}}",
   "idleGapMinutes": 20,
-  "hoursMultiplier": 1,
-  "workdays": [1, 2, 3, 4, 5],
+  "hoursMultiplier": {{HOURS_MULTIPLIER}},
+  "workdays": [0, 1, 2, 3, 4, 5, 6],
   "sentinel": "TIME-TRACKER-AUTOMATION"
 }

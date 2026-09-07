@@ -13,13 +13,12 @@
 // and leaves the working tree clean.
 
 import {
-  type Block,
   formatDuration,
   mergeBlocks,
   parseDuration,
   totalSeconds,
   weekdayOf,
-} from "./blocks.mts";
+} from "./blocks.mjs";
 
 /** Placeholder for measured time on a finished day that nobody has named yet. */
 export const UNLABELLED = "Unlabelled";
@@ -34,7 +33,7 @@ export const UNLABELLED = "Unlabelled";
  */
 export const IN_PROGRESS = "In progress";
 
-const PLACEHOLDERS: ReadonlySet<string> = new Set([UNLABELLED, IN_PROGRESS]);
+const PLACEHOLDERS = new Set([UNLABELLED, IN_PROGRESS]);
 
 /**
  * How far a re-measured day may fall below the recorded one before it is read
@@ -54,33 +53,9 @@ const SHRINK_TOLERANCE_SECONDS = 60;
 const ZERO_ROW_SECONDS = 30;
 
 /** Whether a task still needs a real name. */
-export function isPlaceholder(name: string): boolean {
+export function isPlaceholder(name) {
   return PLACEHOLDERS.has(name);
 }
-
-export type Task = {
-  name: string;
-  seconds: number;
-};
-
-export type DayEntry = {
-  /** `YYYY-MM-DD`. */
-  date: string;
-  seconds: number;
-  tasks: Task[];
-};
-
-export type MonthFile = {
-  /** `YYYY-MM`. */
-  month: string;
-  days: DayEntry[];
-};
-
-/** A day this machine has transcript evidence for. */
-export type MeasuredDay = {
-  date: string;
-  blocks: Block[];
-};
 
 const DAY_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s+\([A-Za-z]{3}\)\s+-\s+(.+?)\s*$/;
 const TABLE_ROW = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
@@ -91,11 +66,11 @@ const MONTH_HEADING = /^#\s+Time tracking\s+-\s+(\d{4}-\d{2})\s*$/;
  * hand-written note between days does not break the pipeline - but the day
  * headings and task tables are a contract.
  */
-export function parseMonthFile(markdown: string): MonthFile {
+export function parseMonthFile(markdown) {
   const lines = markdown.split("\n");
   let month = "";
-  const days: DayEntry[] = [];
-  let current: DayEntry | null = null;
+  const days = [];
+  let current = null;
 
   for (const line of lines) {
     const monthMatch = MONTH_HEADING.exec(line);
@@ -133,24 +108,21 @@ export function parseMonthFile(markdown: string): MonthFile {
  * Render a month file. Deterministic: same data in, same bytes out.
  *
  * `workdays` is the config's own list, so the header only claims weekends are
- * excluded while they actually are. Defaults to weekdays, which is what every
- * caller meant before the list could cover all seven days (2026-08-31).
+ * excluded while they actually are.
  */
-export function renderMonthFile(
-  file: MonthFile,
-  workdays: readonly number[] = [1, 2, 3, 4, 5],
-): string {
+export function renderMonthFile(file, workdays = [0, 1, 2, 3, 4, 5, 6]) {
   const everyDay = [0, 1, 2, 3, 4, 5, 6].every((day) => workdays.includes(day));
   const count = file.days.length;
   // Sum the *displayed* per-day minutes, not raw seconds, so the header total
   // always equals the column beneath it - and matches the PDF, which can only
   // read the rounded values back out of this file.
   const total = file.days.reduce((sum, day) => sum + Math.round(day.seconds / 60) * 60, 0);
+  const noun = count === 1 ? "day" : "days";
 
-  const out: string[] = [
+  const out = [
     `# Time tracking - ${file.month}`,
     "",
-    `Total: ${formatDuration(total)} across ${count} ${count === 1 ? "workday" : "workdays"}.` +
+    `Total: ${formatDuration(total)} across ${count} tracked ${noun}.` +
       (everyDay ? "" : " Weekends excluded."),
     "",
   ];
@@ -174,18 +146,12 @@ export function renderMonthFile(
  *
  * Labels are preserved by name; only the arithmetic is recomputed. When the
  * measured total has grown since the day was labelled - the normal case when a
- * day is re-collected while still being worked - a short remainder joins the
- * task it continues, and anything longer than the idle gap is parked under a
- * placeholder for the agent to name rather than being credited to work that did
- * not earn it. When it has shrunk (rare; transcripts only
- * grow), the tail is trimmed instead of discarding the labels.
+ * day is re-collected while still being worked - the growth is parked under a
+ * placeholder to be named, rather than being credited to work that did not earn
+ * it. When it has shrunk (rare; transcripts only grow), the tail is trimmed
+ * instead of discarding the labels.
  */
-function reconcileTasks(
-  existing: readonly Task[],
-  seconds: number,
-  pending: string,
-  tailSeconds: number,
-): Task[] {
+function reconcileTasks(existing, seconds, pending, tailSeconds) {
   const labelled = existing.filter((task) => !isPlaceholder(task.name));
   const labelledSeconds = labelled.reduce((sum, task) => sum + task.seconds, 0);
   const difference = seconds - labelledSeconds;
@@ -195,24 +161,21 @@ function reconcileTasks(
   // A positive remainder too small to render as a minute is rounding, not
   // unrecorded work: the rows store whole minutes while a measurement is exact
   // seconds, so a fully named day re-measures a few seconds over its rows'
-  // sum. Opening a placeholder for it used to pin an `Unlabelled 0m` row onto
-  // every finished day at every collect - the agent would dutifully name the
-  // nothing-row, letting the next collect open yet another. Drop it, and any
-  // placeholder already standing for it, so a named finished day re-measures
-  // byte-stable.
+  // sum. Opening a placeholder for it would pin an `Unlabelled 0m` row onto
+  // every finished day at every collect. Drop it, and any placeholder already
+  // standing for it, so a named finished day re-measures byte-stable.
   if (difference >= 0 && difference < ZERO_ROW_SECONDS) {
     return labelled.map((task) => ({ ...task }));
   }
 
   // Growth belongs to a placeholder, never to a task someone named.
   //
-  // This used to fold a remainder shorter than the idle gap into the last named
-  // task, on the grounds that it was the same stretch of work still running.
-  // That holds for one fold and fails for many: collecting every few minutes
-  // makes every increment shorter than the gap, so the last row absorbs the
-  // whole afternoon a few minutes at a time and the work is filed under a name
-  // that has nothing to do with it. A placeholder row that grows is honest and
-  // gets named; a named row that grows silently is a lie.
+  // Folding a short remainder into the last named task holds for one fold and
+  // fails for many: collecting every few minutes makes every increment short,
+  // so the last row absorbs the whole afternoon a few minutes at a time and
+  // the work is filed under a name that has nothing to do with it. A
+  // placeholder row that grows is honest and gets named; a named row that
+  // grows silently is a lie.
   if (difference > 0) {
     const tasks = existing.map((task) => ({ ...task }));
     const tail = tasks[tasks.length - 1];
@@ -254,16 +217,8 @@ function reconcileTasks(
  *
  * `hoursMultiplier` scales measured seconds before they are recorded - 1.5
  * means an hour of measured activity is written down as an hour and a half.
- * Defaults to 1 (no scaling) for callers that do not pass one.
  */
-export function rebuild(
-  existing: MonthFile | null,
-  month: string,
-  measured: readonly MeasuredDay[],
-  today: string,
-  idleGapMinutes: number,
-  hoursMultiplier: number = 1,
-): MonthFile {
+export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hoursMultiplier = 1) {
   const days = new Map((existing?.days ?? []).map((day) => [day.date, day]));
 
   for (const entry of measured) {
@@ -274,30 +229,30 @@ export function rebuild(
     const seconds = totalSeconds(merged) * hoursMultiplier;
     if (seconds <= 0) continue;
 
-    // A rebuild is only as good as the transcripts still on disk, and those
-    // expire. Once a day's evidence is gone it re-measures as a few stray
-    // minutes, which would silently erase hours of named work. Measured time
-    // only ever grows while the evidence survives, so a drop against labelled
-    // work means the evidence went missing, not that the day got shorter -
-    // keep what is on record and say so.
     const previous = days.get(entry.date);
 
     // A finished day whose every row is named is settled. The day has been
-    // measured, the agent has named it, and the number a reader saw when the
-    // day closed must still be there tomorrow - so a tail of transcript that
+    // measured, it has been named, and the number a reader saw when the day
+    // closed must still be there tomorrow - so a tail of transcript that
     // surfaces later (a session outliving the day's final collect, say) stays
     // in the evidence cache but no longer moves the record. A day still
     // carrying a placeholder is still being reconciled and keeps updating,
     // and today always does.
     if (
       previous &&
-      entry.date < today &&
+      entry.date < todayDay &&
       previous.tasks.length > 0 &&
       previous.tasks.every((task) => !isPlaceholder(task.name))
     ) {
       continue;
     }
 
+    // A rebuild is only as good as the transcripts still on disk, and those
+    // expire. Once a day's evidence is gone it re-measures as a few stray
+    // minutes, which would silently erase hours of named work. Measured time
+    // only ever grows while the evidence survives, so a drop against labelled
+    // work means the evidence went missing, not that the day got shorter -
+    // keep what is on record and say so.
     if (
       previous &&
       previous.seconds - seconds > SHRINK_TOLERANCE_SECONDS &&
@@ -317,7 +272,7 @@ export function rebuild(
       tasks: reconcileTasks(
         days.get(entry.date)?.tasks ?? [],
         seconds,
-        entry.date === today ? IN_PROGRESS : UNLABELLED,
+        entry.date === todayDay ? IN_PROGRESS : UNLABELLED,
         idleGapMinutes * 60,
       ),
     });

@@ -1,80 +1,180 @@
 ---
 name: time-tracker
 description: >
-  Sets up automatic time tracking - measured from Claude Code session
-  transcripts, no starting or stopping a timer - on a Node/npm project: the
-  engine library, a time-tracker labelling agent, a SessionStart hook, a
-  project rule, and a project-management/ folder, then runs the first
-  collection so it starts working immediately. Idempotent - re-running syncs
-  the engine and leaves project-owned files alone. Use when asked to "set up
-  time tracking", "add a time tracker to this project", "install time
-  tracking", "track my hours on this project", or the /time-tracker command.
+  Time tracking that you switch on and off, measured from Claude Code session
+  transcripts rather than a timer. Sets itself up in any project, in any
+  language - no package.json or build tooling needed - inside
+  <project-management>/tracking/. Use for "set up time tracking", "add a time
+  tracker", "start tracking time", "stop tracking", "how many hours have I
+  worked", "label my time", "updatetracking", "update tracking", "time tracking
+  report", or the /time-tracker command.
 ---
 
-Sets up a transcript-based time-tracking system - a measurement engine at
-`lib/time-tracking/`, a labelling agent at `.claude/agents/time-tracker.md`, a
-project rule at `rules/time-tracking.md` and a `project-management/` folder -
-in whatever project you're run from.
+Time is measured after the fact, from the session transcripts Claude Code
+already writes. There is no timer to start and no stopwatch running - but
+nothing is counted until the user turns tracking on, and it deals in whole
+dates: starting today counts today in full, morning included.
 
-## Scope
+## Pick the mode from what was asked
 
-This targets Node/npm-family projects: it writes `.mts` source that Node runs
-directly, and needs a `package.json` at the target root. If the current
-directory has no `package.json`, say so and stop rather than guessing at a
-different setup.
+| The user wants | Mode |
+| --- | --- |
+| tracking set up here, installed, added | **Setup** |
+| to start / resume counting | **Start** |
+| to stop / pause counting | **Stop** |
+| hours so far, is it on, what's tracked | **Status** |
+| "updatetracking", the file brought fully up to date | **Update tracking** |
+| the days named, "what did I work on" | **Label** |
+| a PDF, an invoice-ready month | **Report** |
 
-## What it sets up
+Everything lives in one folder. Find it before doing anything but Setup:
+`<project-management>/tracking/`, where the project-management folder may be
+spelled `project-management`, `Project Management` or `project_management`. The
+engine is `<tracking>/engine/*.mjs`; below, `<engine>` means that path.
 
-- `lib/time-tracking/*.mts` - the measurement engine (pure logic, a transcript
-  collector, a PDF reporter, the SessionStart hook script). Copied verbatim;
-  never hand-edited afterwards.
-- `.claude/agents/time-tracker.md` - the agent that names each day's work from
-  transcript evidence and commits `project-management/`.
-- `project-management/config.json` and `readme.md` - per-project settings
-  (timezone, start date, idle-gap, hours multiplier, working days) and docs.
-- `rules/time-tracking.md` - the project rule this system depends on (hours are
-  generated, only task labels are hand-written).
-- A `SessionStart` hook wired into `.claude/settings.json`, merged in without
-  disturbing any hooks already there.
-- `time:collect` / `time:report` scripts added to `package.json` if those keys
-  are free.
-- `project-management/cache/` added to `.gitignore`.
+## Setup
 
-## Procedure
+**Ask about the multiplier first**, before running anything - but only on a
+first install (no `<tracking>/config.json` yet). The multiplier scales measured
+hours before they are recorded: `2` writes an hour of measured activity down as
+two. Ask with AskUserQuestion, offering `1` (record exactly what is measured),
+`1.5`, `2` (an hour of measured activity counts as two), and let them type their
+own. Do not guess it and do not skip the question - it is the one setting nobody
+can infer, and changing it later does not retroactively rescale days already
+recorded.
 
-1. Resolve this skill's own directory (the folder containing this file) and
-   run its setup script from the target project's root:
+Then run, from the project root:
 
-   ```
-   node <skill_dir>/scripts/setup.mjs
-   ```
+```
+node <skill_dir>/scripts/setup.mjs --multiplier <their answer>
+```
 
-   The script is idempotent and does the actual file work - detecting the
-   package manager, project name and timezone; copying and merging every file
-   above; and finally running `node lib/time-tracking/collect.mts` once so
-   today's session is already being measured by the time you report back.
+Omit the flag only if they explicitly want the default of 1. On a re-run, where
+`config.json` already exists, skip the question entirely - the file owns the
+value, and `--multiplier` is ignored. To change it later, edit `hoursMultiplier`
+in `<tracking>/config.json`.
 
-2. Read the script's output. It states, for every file, whether it was
-   created/synced or already existed and was left alone, whether the hook was
-   newly wired, the result of the first collection, and - filled in with the
-   detected project name, path and timezone - the two `orca automations
-   create` commands for daily labelling and the monthly report.
+`<skill_dir>` is the folder holding this file. The script is idempotent and does
+all the file work: finding or creating the project-management folder, creating
+`tracking/` inside it, syncing the engine, writing `config.json` and a readme if
+they are absent, gitignoring the cache, wiring the SessionStart hook, and adding
+npm scripts **only if** the project happens to have a `package.json`.
 
-## Report back
+It never requires a manifest. A docs repo, a design repo, a Python or Go or Rust
+project all set up the same way - the project's name is read from whatever
+manifest exists and falls back to the folder name. Node is the only dependency,
+and Claude Code ships with it. If the script reports something missing, report
+that, but never treat "no package.json" as a reason to stop.
 
-Tell the user, in your own words from the script's output:
+Setup leaves tracking **off**. Say so, and give the start command.
 
-- What was newly created vs. already present (a re-run on an already set-up
-  project is expected to report everything as "already existed" except the
-  always-synced engine files).
-- Whether the `SessionStart` hook was newly wired.
-- The first collection's result - hours found for today's session, if any, or
-  a plain statement that no transcripts were found yet.
-- Any warning the script surfaced (most likely: the local Node version can't
-  run `.mts` files directly, with its suggested fix).
-- The two `orca automations create` commands, verbatim, for the user to run
-  themselves, once per machine this project is worked from - never run these
-  for them.
+## Start
 
-If the script exited early because there's no `package.json`, say that plainly
-and don't attempt a workaround.
+```
+node <engine>/track.mjs start
+```
+
+Opens a range at today's date and runs a first collection. Tell the user
+tracking is on, and that today counts in full.
+
+## Stop
+
+```
+node <engine>/track.mjs stop
+```
+
+Collects one last time and closes the range at today's date. Today still counts.
+
+The engine will report that no PDF was written, because today is still holding
+its `In progress` placeholder. That is expected - **finish the job before
+reporting back**:
+
+1. **Name today.** Read `references/labelling.md` and run the labelling pass
+   over today. Stopping is the moment `In progress` stops being true.
+2. **Render the PDF**: `node <engine>/report.mjs`.
+
+Then tell the user the last counted day, what you named it, and where the PDF
+landed. If no Chromium-based browser is found the hours are still recorded and
+the markdown is still complete - say so rather than treating it as a failed
+stop.
+
+## Status
+
+```
+node <engine>/track.mjs status
+```
+
+Reports on/off, the tracked ranges, this month's total, today's total, and any
+day still needing a name. Relay it plainly - do not go and label things unless
+the user asked.
+
+## Update tracking
+
+The one command that leaves the timesheet fully current, without stopping the
+clock. Triggered by "updatetracking", "update tracking", "update my timesheet".
+
+1. `node <engine>/collect.mjs` - remeasure and rewrite the month.
+2. **Name every unnamed day**, today included, per `references/labelling.md`.
+   Unlike the SessionStart pass, this one does name today: the user asked for a
+   current file, and a placeholder is not that. Later work will arrive as a new
+   `In progress` row, which is correct and not a problem to chase.
+3. `node <engine>/report.mjs` - render the PDF.
+
+Report which days you named and where the PDF landed. Tracking stays **on** -
+this mode never touches the switch.
+
+## Label
+
+Read `references/labelling.md` and follow it.
+
+**A finished day is named without being asked.** Its evidence is complete and
+will not change, the timesheet is client-facing, and leaving it blank is an
+omission rather than a courtesy. The SessionStart hook asks for exactly these
+days by date; do them, say briefly which ones you named, and carry on with what
+the user actually asked for.
+
+**Today is not.** `In progress` is still growing, so naming it now only gets
+rewritten later. Today gets named on **Stop**, on **Update tracking**, or when
+the user asks - never mid-task on a hook message.
+
+## Report
+
+```
+node <engine>/report.mjs                # current month
+node <engine>/report.mjs --last-month
+node <engine>/report.mjs --month 2026-08
+```
+
+Writes a PDF next to the month markdown. It needs a Chromium-based browser; if
+none is found, say so - the markdown record is complete either way.
+
+**The PDF is client-facing.** It shows the project, the month, the days, the
+task names and the hours - and nothing else. No measurement method, no idle
+cut-off, no multiplier, no timezone, no which-days-count. Those are the
+contractor's own settings and they stay in `config.json`. Never add a footer or
+subtitle line explaining them.
+
+**It refuses to render a month that still has an unnamed day**, and there is no
+override. The PDF is what a client sees, so `In progress` must never appear on
+it - the fix is always to name the days first. Stop and Update tracking both do
+that then render, so reach for this mode on its own for a *different* month.
+
+## Rules
+
+- **Never turn tracking on or off on your own.** Start and stop are the user's
+  decisions, in both directions.
+- **Never hand-write a day's hours.** They are recomputed from the transcripts
+  on the next collect, so an edit to a total is lost work. Task names are the
+  opposite: once a row is named, the engine keeps it.
+- **The engine is generated.** Do not hand-edit `<engine>/*.mjs`; change the
+  skill's templates and re-run setup instead.
+- **Never commit anything this skill writes.** No `git add`, no `git commit`,
+  no `git push` - not for the month markdown, the PDF, the state file or the
+  config, and not as a tidy-up at the end of a labelling or stop run. The
+  engine itself only ever reads git (`git log`, for commit subjects as
+  labelling evidence); the skill must hold the same line. Every change lands in
+  the working tree and stays there.
+- **When the user commits, the timesheet is ordinary.** It goes in with
+  whatever else they are committing - no separate commit, no special handling,
+  no reason to keep it out of a commit that touches code. Staging it is their
+  call, made by them, at a moment of their choosing.
