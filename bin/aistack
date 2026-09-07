@@ -20,7 +20,7 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.4.0"
+readonly ARMAZE_VERSION="0.5.0"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
 

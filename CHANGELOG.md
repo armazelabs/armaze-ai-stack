@@ -2,6 +2,16 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.5.0 - 2026-09-07
+
+### Added
+
+- **rooter** skill — builds and maintains a Rooter: one permanent client-facing URL at the root of a deployed project that hands the client on to the right experience (version, product vs design system, persona). One flow every run — analyse, ask which destinations belong as a real multi-select, propose the tree, then build only after confirmation. Collapses to a redirect when a level has fewer than two destinations. Config-driven, so adding a version is a one-line edit; inherits the product's branding, and never commits.
+
+### Changed
+
+- **time-tracker** loses its on/off switch. Hours are still measured after the fact from Claude Code session transcripts, but the boundary is now a `trackFrom` date written into `config.json` at setup rather than something you start and stop. **Update tracker** becomes the single main mode — remeasure the hours, name every unnamed day from that day's commits, re-render the PDF — replacing `start`, `stop` and `update tracking`. Nothing runs in the background any more: the `SessionStart` hook is gone, along with the `state`, `track` and `session-start` engine scripts.
+
 ## 0.4.0 - 2026-09-07
 
 ### Changed
