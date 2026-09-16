@@ -2,6 +2,19 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.6.0 - 2026-09-16
+
+### Added
+
+- **code-to-figma** skill — pushes a screen or component from the codebase into a Figma file (code → design). Writing to Figma is gated: nothing is touched unless you ask, you pick which frames change, you see the changes before they are made, and anything bigger than a small tweak asks whether to back up the old frame first. Screens are built from the components, variables and styles already in the file rather than raw values, and what was pushed is recorded so the next run knows what the file holds. Handles a single file or a published design-system library with a separate screens file.
+- **figma-to-code** skill — brings a design into the codebase (design → code): syncs the design-system tokens, implements a new screen or mirrors changes to an existing one, or unpacks a claude.ai/design handoff link. It only reads Figma, previews the code changes before writing, and maps design values back to the project's tokens instead of pasting raw colours and sizes.
+
+Both skills keep project-specific details — the Figma file, viewport, token paths, component catalogue — in a `FIGMA.md` at the project root, and offer to create one on first run.
+
+### Changed
+
+- **time-tracker** keeps a run log. Each **update tracker** now ends by adding one line to `<tracking>/log.jsonl` — the days it named, the commits it used, the month total — so a client-facing timesheet has an audit trail, and the next run knows which commits it has already seen. Labelling reads only the days that still need a name (`cache/<month>.pending.json`) instead of the whole month, including days with hours but no commits.
+
 ## 0.5.0 - 2026-09-07
 
 ### Added
