@@ -44,6 +44,29 @@ given** if the project does not make it obvious; do not invent a route. This is 
 question about the destination, never about where the Rooter sits - that is
 always `/`.
 
+**External destinations** - a deck, a Figma file, a TestFlight link, a Storybook
+hosted elsewhere - are not in the route tree, so detection never finds them.
+Don't go looking in docs for links to guess at. They arrive from the
+instruction ("add the deck: https://…") or through the checklist's **Other**,
+and go in with an absolute `href`.
+
+### Assign each one a kind
+
+Every candidate gets a `kind` (`references/config-schema.md`, "Kinds"), which
+sets its icon and tag word on the page:
+
+| Found | `kind` |
+| --- | --- |
+| A product or app entry route, an admin that is its own product | `app` |
+| Storybook, a `/ds` or `/design-system` route, a component gallery | `system` |
+| A version tree (`/v1/`, `src/versions/v2`) | `version` |
+| An Expo / React Native / Flutter / Capacitor app, a TestFlight or hosted mobile build | `mobile` |
+| A deck, a pre-read, a PDF, a Figma file - usually external | `deck` |
+
+A persona row is `kind: 'persona'` - outside the built-in set, so it renders
+with the word and no icon. Anything else that fits none of these, ask the
+user for its kind word in the proposal rather than forcing it into one.
+
 ## 3. Personas
 
 **A persona level can hang under any app-like destination** - a Product or a

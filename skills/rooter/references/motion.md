@@ -4,8 +4,8 @@ One interaction carries the whole page: **the row responds to being pointed at.*
 Everything else is still. A Rooter is signage - it should feel crisp to move
 through, never animated at.
 
-Taken verbatim from the reference implementation (stg, `src/styles/chooser.css`).
-Reuse these values rather than inventing new ones.
+These values are the spec. Reuse them rather than inventing new ones - unless
+the project has motion tokens (see the last section).
 
 ## The row hover
 

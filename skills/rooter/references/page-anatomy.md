@@ -12,7 +12,7 @@ what makes a Rooter recognisable as a Rooter across a body of client work. The
 | **Title** | What this page is | Required |
 | **Lede** | One or two sentences on the product or what is on offer | Required |
 | **Options** | One row per destination | Required, one or more |
-| **Footer** | Client name, date. Nothing else | Optional |
+| **Footer** | `Copyright © {year} {project}`. Nothing else | **Required** - see "The footer" below |
 
 Nothing else goes on the page. No nav, no hero, no feature grid, no call to
 action. A Rooter that grows a second section has become the thing it exists to
@@ -28,16 +28,18 @@ point at.
 │   Same firm, same constraints, three      <- LEDE   required  │
 │   arguments. The differences are the point.                  │
 │  ──────────────────────────────────────────────────────────  │
-│   v1   Field & Plate                              ->         │
-│        A chromatic dark field, rounded media                 │
-│        plates, a hero video.                     <- OPTIONS  │
-│        Switzer + IBM Plex Mono                     1 or more │
+│   ◫ v1 · chosen                                   ->         │
+│   Field & Plate                                              │
+│   A chromatic dark field, rounded media          <- OPTIONS  │
+│   plates, a hero video.                            1 or more │
+│   Switzer + IBM Plex Mono                                    │
 │  ──────────────────────────────────────────────────────────  │
-│   v2   Register                                   ->         │
-│        A hairline-ruled modular grid on paper.               │
-│        Geist + Geist Mono                                    │
+│   ◫ v2                                            ->         │
+│   Register                                                   │
+│   A hairline-ruled modular grid on paper.                    │
+│   Geist + Geist Mono                                         │
 │  ──────────────────────────────────────────────────────────  │
-│   Client · design study                   <- FOOTER optional │
+│   Copyright © 2026 FloorZap               <- FOOTER required │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,24 +52,60 @@ one item, and it will look right when it has three.
 ## The row
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│  ┌────┐  Name                                        ->     │
-│  │ v1 │  required                              ↑  ↑         │
-│  └────┘                                        │  └ arrow,  │
-│    ↑     Description - what is behind this     │    decorative
-│  TAG     door. Required.                       │    aria-hidden
-│  optional                                      │            │
-│          Meta · secondary detail               └ "Opens in a │
-│          optional, degrades to absent            new tab" -  │
-│                                                  visually    │
-│                                                  hidden text │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  ▢ app · new                                              ->     │
+│  ↑  ↑     ↑                                               ↑      │
+│  │  │     └ STATUS - optional; chosen in the accent       │      │
+│  │  └ KIND word - the product's label style               │      │
+│  └ ICON - from assets/icons/, decorative           arrow - top   │
+│                                                    right, on the │
+│  Name                                              TAG LINE, in  │
+│  display face, large - required                    the accent,   │
+│                                                    aria-hidden   │
+│  Description - what is behind this door.                         │
+│  Body face, ~60ch. Required.                                     │
+│                                                                  │
+│  Meta · secondary detail - mono, optional,     + "Opens in a new │
+│  degrades to absent                              tab", visually  │
+│                                                  hidden          │
+└──────────────────────────────────────────────────────────────────┘
   the whole row is ONE link
   accessible name = name + description + that span
 ```
 
+Four lines, top to bottom, **at every width**: the tag line, the name, the
+description, the meta. Nothing sits in a left gutter.
+
+**The tag line** is the icon, the kind word (`app`, `system`, `deck`, `version`,
+`mobile`, or the `tag` override) and, where a row has one, the status word after
+` · `. Kinds, icons and statuses are defined in `references/config-schema.md`.
+
+- The icon is the skill's own SVG, drawn in `currentColor` at about the
+  cap-height of the tag text (~1em), in the same muted colour as the kind word.
+  It is decorative: `aria-hidden="true"`, `focusable="false"`.
+- The kind word stays out of the accessible name unless it disambiguates -
+  "Arborgold FSM, app" adds nothing, but two rows both named "Arborgold" do
+  need it.
+- The status word is part of the accessible name. `chosen` takes the accent
+  colour; `new`, `in progress` and `archived` stay muted.
+- The **arrow** aligns with the tag line, at the far right of the rule - not
+  with the name, and not centred on the row.
+
+**An archived row** is last in its list, with its name in the muted colour. It is
+still a full row and still a link. No "Earlier" heading, no divider of its own -
+the anatomy stays at five slots.
+
 ## What the copy may say
 
+- **Every destination name is in Title Case** - `Release Notes`, not `Release
+  notes`; `Brand Voice`, `Design System`, `Mobile App`. It is a proper name on a
+  door, not a sentence. Capitalise every major word; keep `a`, `an`, `the`,
+  `and`, `but`, `or`, `for`, `nor`, `of`, `in`, `on`, `at`, `to`, `by` lower-case
+  unless they come first or last (`State of the Art`, `Notes to Read`). A name
+  with its own casing keeps it: `FloorZap`, `iOS`, `TestFlight`, `v2`. This
+  applies to persona names and to names the user supplies through **Other**
+  too - fix the casing, and show it in the proposal. Only names: the page title,
+  lede and descriptions stay in sentence case.
 - **A description describes the destination, not the client.** "A hairline-ruled
   grid on paper" - not "a leading firm in structured finance". The Rooter makes
   no claim about the product or the business; it says what is behind each door
@@ -79,6 +117,25 @@ one item, and it will look right when it has three.
   Where it has none, the line is not rendered - never a placeholder or a dash.
 - Draft the copy from what the codebase actually showed you, and put it in the
   proposal so the words and the structure are approved together.
+
+## The footer
+
+Every Rooter ends with one line, always in this form:
+
+```text
+Copyright © 2026 FloorZap
+```
+
+- **`{project}` is the project's name**, from the config's `project` field -
+  the product as the client knows it (`FloorZap`), not the repo slug
+  (`floorzap-web`) and not the agency's name. It is never guessed: see SKILL.md
+  (a) and (d) for how it is found and confirmed.
+- **`{year}` is the current year, computed by the renderer** (at build time for
+  a static page, at request time otherwise) - never a number typed into the
+  config, which would go stale on the first of January.
+- Nothing else on the line: no tagline, no "design system and frontend build",
+  no links. Body face, muted colour, on the page's one left edge.
+- A second-level page carries the same footer.
 
 ## Branding
 
@@ -136,11 +193,45 @@ Where the project has three families, they map onto the slots like this:
 | Title | Display / heading, at the weight the product gives a heading |
 | Destination name | Display / heading - the one word the reader is choosing between |
 | Description, lede | Body |
-| Tag, meta | Mono, uppercase, with tracking - these read as labels, not prose |
+| Tag line | The project's **label style** - see below |
+| Meta | The same label style as the tag line |
 
-Mono on the tag and meta is what stops them competing with the name beside them.
-If the project has no mono face, keep them in the body face and lighten the
-colour instead.
+### The tag and meta take the design system's label style
+
+The tag line and the meta line are labels, and most design systems already have
+a label: an eyebrow, an overline, a badge, a table header, a `label` or
+`caption` text style. **Use that style, whole** - its face, size, weight,
+case, letter-spacing and colour token - rather than composing one. A product
+whose labels are `APP` in tracked caps gets `APP`; one whose labels are quiet
+lowercase mono gets `app`. The config always stores the lowercase word
+(`kind: 'app'`) and the style does the casing, via `text-transform`, never by
+retyping the word.
+
+Where to look, in order:
+
+1. A text-style token or class named for it: `label`, `overline`, `eyebrow`,
+   `caption`, `badge`, `kicker`.
+2. A component that renders one: `<Eyebrow>`, `<Badge>`, `<Overline>`, a
+   section label in the product's own pages.
+3. The most repeated small-caps or small-mono treatment in the product's
+   stylesheets.
+
+Name the style you took in the proposal (*"tags use the product's `overline`
+style: Inter 600, 0.75rem, uppercase, 0.08em tracking"*), so it is a visible
+choice.
+
+**Where the project has no label style**, or for a neutral versions Rooter that
+must not borrow from any version, use the Rooter's own default: **mono,
+uppercase, ~0.75rem, 0.08em tracking, muted colour**. Uppercase is the default
+because at label size it holds its own next to a large name, reads as a
+category rather than as a stray word, and keeps a short tag like `app` from
+looking like a typo. With no mono face, use the body face at the same size and
+tracking.
+
+Whatever the style, three things are fixed: the tag and meta share it, it is
+visibly smaller and quieter than the description, and the icon matches the tag
+text's colour and cap-height. Mono or tracked caps are what stop the tag and
+meta competing with the name between them.
 
 ### Every element, not just the obvious ones
 
@@ -193,7 +284,7 @@ than assumed.
   and description - never from an `aria-label` that restates them.
 - The arrow is decorative: `aria-hidden="true"`, `focusable="false"`.
 - Visible focus ring on every row. A skip link to the options list.
-- `noindex` while nothing is promoted - a chooser has no business in an index.
+- `noindex`, always - a chooser has no business in a search index.
 
 ## Where it sits
 
@@ -211,18 +302,18 @@ Professional persona" a one-line config edit.
 ## Responsive
 
 ```text
-   WIDE                          NARROW
-   ┌──────────────────────┐      ┌──────────────┐
-   │ tag  name        ->  │      │ tag          │
-   │      description     │      │ name         │
-   │      meta            │      │ description  │
-   └──────────────────────┘      │ meta      -> │
-                                 └──────────────┘
+   WIDE                               NARROW
+   ┌───────────────────────────┐      ┌──────────────┐
+   │ ▢ tag                 ->  │      │ ▢ tag     -> │
+   │ name                      │      │ name         │
+   │ description               │      │ description  │
+   │ meta                      │      │ meta         │
+   └───────────────────────────┘      └──────────────┘
 ```
 
 Single column throughout, capped around **60rem**. No grid - the list is the
-layout. The tag sits in a left gutter when wide and stacks above the name when
-narrow; the arrow drops to the last line.
+layout. The row is the same stack at every width: tag line with the arrow,
+then name, description, meta. Only the measure and the type sizes change.
 
 ### It is a desktop page that reflows - always, with no exception
 
@@ -276,22 +367,25 @@ several - unless the user asks for something else, this is the page:
 │      changed.                                                      │
 │                                                                    │
 │  ────────────────────────────────────────────────────────────────  │
-│      The product                                            →      │
-│      The TCG platform itself: the homepage,                        │
-│      events, forums, creators, the lobby.        rules span the    │
-│      THREE ACCOUNTS TO OPEN IT WITH              FULL measure;     │
+│      ▢ app                                                  →      │
+│      The product                                                   │
+│      The TCG platform itself: the homepage,      rules span the    │
+│      events, forums, creators, the lobby.        FULL measure;     │
+│      Three accounts to open it with                                │
 │  ────────────────────────────────────────────────────────────────  │
-│      Component gallery                                      →      │
-│      Every component with its live states,       text block is     │
-│      props and usage notes.                      NARROWER than     │
-│      /DESIGN-SYSTEM                              the rule          │
+│      ▢ system · new                                         →      │
+│      Component gallery                           text block is     │
+│      Every component with its live states,       NARROWER than     │
+│      props and usage notes.                      the rule          │
+│      /design-system                                                │
 │  ────────────────────────────────────────────────────────────────  │
-│      Changelog                                              →      │
-│      Every release, newest first.                                  │
-│      /CHANGELOG                                                    │
+│      ▢ deck                                                 →      │
+│      The Deck                                                      │
+│      The pitch, kept at a standing link.                           │
+│      Open to anyone with the link                                  │
 │  ────────────────────────────────────────────────────────────────  │
 │                                                                    │
-│      Girudo 2.0 - frontend build            footer, quiet          │
+│      Copyright © 2026 Girudo                footer, quiet          │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
    everything left-aligned on one axis · content starts at the top
@@ -306,10 +400,12 @@ What makes it work, and what to keep:
 - **The rules span the full measure**; the text inside a row does not. That
   contrast is what makes the list read as a list rather than as three
   paragraphs.
-- **The arrow sits at the far right of the rule**, hard against the measure, not
-  next to the text. It is the only thing on the right-hand side.
-- **Three type sizes per row**, descending: name (display face), description
-  (body), meta (mono, uppercase, smallest). The meta line is what stops the row
-  looking unfinished.
+- **The arrow sits at the far right of the rule**, on the tag line, hard against
+  the measure, not next to the text. It is the only thing on the right-hand side.
+- **The tag line opens every row** - icon, kind, status - so the reader knows
+  what kind of thing a row opens before reading its name.
+- **The name is the largest thing in the row by a wide margin**, then the
+  description (body), then the tag and meta (mono, smallest). The meta line is
+  what stops the row looking unfinished.
 - **The page ends where the content ends.** No sticky footer, no filling the
   viewport - empty space below the footer is correct.

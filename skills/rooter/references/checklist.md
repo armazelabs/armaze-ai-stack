@@ -17,11 +17,11 @@ AskUserQuestion({
     question: 'Which of these belong in the Rooter?',
     multiSelect: true,
     options: [
-      { label: 'Version 1 — Field & Plate',
+      { label: 'Version 1 — Field & Plate (recommended)',
         description: '/v1/ · a complete version tree under src/versions/v1' },
-      { label: 'Version 2 — Register',
+      { label: 'Version 2 — Register (recommended)',
         description: '/v2/ · a complete version tree under src/versions/v2' },
-      { label: 'Version 3 — Broadside',
+      { label: 'Version 3 — Broadside (recommended)',
         description: '/v3/ · a complete version tree under src/versions/v3' },
       { label: 'Design system',
         description: '/ds/ · sparse — 2 pages. Include only if the client should see it.' },
@@ -39,8 +39,32 @@ Two things carry the meaning:
   fact can be weighed, a verdict ("probably not useful") cannot.
 
 The tool always offers **Other**, which is how the user names something detection
-never found - an Expo preview build, a TestFlight link, a separately hosted app.
-That covers the "anything I missed?" question without asking it separately.
+never found - an Expo preview build, a TestFlight link, a deck, a separately
+hosted app. That covers the "anything I missed?" question without asking it
+separately.
+
+## Nothing can be pre-ticked - mark it instead
+
+`AskUserQuestion` has no pre-selection: every box starts empty. So the default
+is **written into the label**, and the user ticks what they want:
+
+| Suffix | Means |
+| --- | --- |
+| ` (in Rooter)` | This row is in the Rooter today |
+| ` (recommended)` | Not in the Rooter yet; detection judges it client-facing |
+| *(none)* | Offered, not recommended - the `description` says why |
+
+A row is never both: once a destination is in the Rooter it is `(in Rooter)`,
+whatever detection thinks of it. The suffix goes on the end of the `label`, so
+the name still leads and the `description` keeps the route and the reason.
+
+Marked rows go **first** in each question. The line before the question says
+what an untick does, so a removal is never a surprise:
+
+> Tick everything that should be in the Rooter. Unticking a row marked
+> *(in Rooter)* removes it.
+
+Suffixes are for the question only - they never reach the config or the page.
 
 ## The hard limit, and how to live within it
 
@@ -95,9 +119,9 @@ There is no skip. First run or tenth, specific instruction or vague, the
 selection is asked - it is the one mechanism, and that is what makes the skill
 predictable to use.
 
-A named destination does not replace the question, it **arrives pre-selected in
-it**. *"Add V3"* asks the same question with V3 already ticked alongside
-everything in the Rooter today, so the user confirms the whole result rather
+A named destination does not replace the question, it **arrives marked in it**.
+*"Add V3"* asks the same question with V3 marked `(recommended)` alongside
+everything marked `(in Rooter)`, so the user confirms the whole result rather
 than a fragment.
 
 The only run without a question is one with nothing to ask about: zero candidates
@@ -105,16 +129,20 @@ found. Say so plainly and stop.
 
 ## When a Rooter already exists
 
-Pre-select to the **current config**, so the user is ticking against what is live
-today. Put every difference from the deployed Rooter in the `description`:
+Mark every row of the **current config** `(in Rooter)`, so the user is ticking
+against what is live today. Put every difference from the deployed Rooter in
+the `description`:
 
 ```
-{ label: 'Version 3 — Broadside',
-  description: '/v3/ · new — found in the repo, not yet in the Rooter' }
+{ label: 'Version 3 — Broadside (recommended)',
+  description: '/v3/ · found in the repo, not yet in the Rooter' }
 
-{ label: 'Design system',
-  description: '/ds/ · in the Rooter today, but this route 404s now' }
+{ label: 'Design system (in Rooter)',
+  description: '/ds/ · in the Rooter today, but this route returned 404' }
 ```
 
 That second one matters: a Rooter row pointing at a dead route is worse than a
-missing row, and this question is where it surfaces.
+missing row, and this question is where it surfaces. The 404 is a fact from the
+link check in "Analyse" (SKILL.md), not a guess from the file tree - say which
+it is when the check could not run (*"route not found in src/pages - not
+requested"*).
