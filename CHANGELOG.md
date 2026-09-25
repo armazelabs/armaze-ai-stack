@@ -2,7 +2,7 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.7.0 - 2026-09-25
 
 ### Changed
 
@@ -12,7 +12,6 @@ All notable changes to the Armaze AI Stack — the shared shelf of skills and ag
 - **rooter** checks its links. Every run requests each route and URL before asking and again after building, and reports anything that doesn't resolve instead of linking to nothing.
 - **rooter** names and footers follow house style. Every destination name is in Title Case (`Release Notes`, not `Release notes`), keeping a brand's own casing (`FloorZap`, `iOS`). The footer is always `Copyright © {year} {project}`: the year is computed when the page renders, and the project name is taken from what the product calls itself, then confirmed in the proposal, or asked for when it isn't clear.
 - **rooter** marks its defaults instead of claiming to pre-tick them. The selection can't start ticked, so labels say `(in Rooter)` or `(recommended)`, and unticking an `(in Rooter)` row removes it.
-
 - **time-tracker** works for teams. Each person on a project keeps their own timesheet: setup registers whoever runs it by `git config user.name` and `user.email`, and their files carry that id — `2026-09.<id>.md`, `2026-09.<id>.pdf`, `log.<id>.jsonl` — so teammates sharing a repo never overwrite each other's days. Only commits authored under the person's own email(s) are used to name their days, so a teammate's work no longer lands on your timesheet. An existing single-person timesheet is renamed to the first person who re-runs setup. The email lives only in `config.json` and never appears on the PDF.
 - **time-tracker** PDFs now say what the time delivered. Under each task sit 2–4 plain-language outcome bullets ("Customers get a receipt email after every purchase") written from that day's commits, commit messages and prompts. **Update tracker** also adds bullets to days that were named before this change.
 - **time-tracker** writes weekly PDFs alongside the monthly one. Each update writes this month's PDF and this week's, into `<tracking>/weekly/<month>/`. Weeks run Monday to Sunday and are split at the month's edge, so a month's weekly PDFs always add up to its monthly PDF. `report.mjs --all-weeks` rewrites every week of a month.
