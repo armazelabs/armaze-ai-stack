@@ -2,7 +2,8 @@
 //
 //   node <tracking>/engine/log.mjs record --named 2026-09-08,2026-09-09 --session 4c11d0a
 //
-// One JSON object per line in <tracking>/log.jsonl, appended newest-last. It
+// One JSON object per line in <tracking>/log.<person>.jsonl, appended
+// newest-last - each person on the project keeps their own. It
 // records the days named, the commits consumed, the session that did it and
 // the month total afterwards - an audit trail for a timesheet a client sees.
 //
@@ -25,19 +26,18 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { formatDuration } from "./blocks.mjs";
-import { REPO_ROOT, TRACKING_DIR, loadConfig, monthFilePath, monthOf } from "./config.mjs";
+import { REPO_ROOT, currentPerson, loadConfig, logPath, monthFilePath, monthOf } from "./config.mjs";
 import { parseMonthFile } from "./month-file.mjs";
-
-export const LOG_PATH = path.join(TRACKING_DIR, "log.jsonl");
 
 /**
  * Every entry, oldest first. A malformed line is skipped rather than fatal -
  * an append-only log that has been hand-edited must still be readable, and a
  * corrupt line costs a watermark, not the timesheet.
  */
-export function readLog() {
-  if (!existsSync(LOG_PATH)) return [];
-  return readFileSync(LOG_PATH, "utf8")
+export function readLog(id) {
+  const file = logPath(id);
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => {
@@ -57,7 +57,7 @@ export function readLog() {
  * (which logs `throughCommit: null`) does not erase the watermark left by a
  * run that did have commits.
  */
-export function lastCommit(entries = readLog()) {
+export function lastCommit(id, entries = readLog(id)) {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     if (entries[index]?.throughCommit) return entries[index].throughCommit;
   }
@@ -94,14 +94,15 @@ function isKnownCommit(sha) {
 }
 
 /**
- * The commits this run consumed.
+ * The commits this run consumed - this person's only, by author email, the
+ * same filter the collector applies to its evidence.
  *
  * From the watermark where it still exists in history, and otherwise from the
  * earliest day being named - because a rebase must degrade to "read a bit
  * more" rather than to an error or to silently reading nothing.
  */
-export function commitsSince(sha, sinceDay) {
-  const format = "--format=%h%x09%s";
+export function commitsSince(sha, sinceDay, emails) {
+  const format = "--format=%h%x09%ae%x09%s";
   try {
     const out = isKnownCommit(sha)
       ? git(["log", `${sha}..HEAD`, format])
@@ -110,9 +111,11 @@ export function commitsSince(sha, sinceDay) {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [short, ...rest] = line.split("\t");
-        return { sha: short, subject: rest.join("\t") };
+        const [short, email, ...rest] = line.split("\t");
+        return { sha: short, email: (email ?? "").toLowerCase(), subject: rest.join("\t") };
       })
+      .filter((commit) => emails.has(commit.email))
+      .map(({ sha: short, subject }) => ({ sha: short, subject }))
       .reverse();
   } catch {
     return [];
@@ -120,15 +123,15 @@ export function commitsSince(sha, sinceDay) {
 }
 
 /** The month's recorded total, read back from the markdown after the naming. */
-function monthTotal(month) {
-  const file = monthFilePath(month);
+function monthTotal(month, id) {
+  const file = monthFilePath(month, id);
   if (!existsSync(file)) return null;
   const { days } = parseMonthFile(readFileSync(file, "utf8"));
   return formatDuration(days.reduce((sum, day) => sum + Math.round(day.seconds / 60) * 60, 0));
 }
 
-export function appendEntry(entry) {
-  appendFileSync(LOG_PATH, `${JSON.stringify(entry)}\n`);
+export function appendEntry(id, entry) {
+  appendFileSync(logPath(id), `${JSON.stringify(entry)}\n`);
   return entry;
 }
 
@@ -150,12 +153,13 @@ function main() {
     .sort();
 
   const config = loadConfig();
+  const person = currentPerson(config);
   const month = flag("month") ?? monthOf(named[0] ?? new Date().toISOString().slice(0, 10));
-  const previous = lastCommit();
-  const commits = commitsSince(previous, named[0] ?? month + "-01");
+  const previous = lastCommit(person.id);
+  const commits = commitsSince(previous, named[0] ?? month + "-01", person.emails);
   const head = headCommit();
 
-  const entry = appendEntry({
+  const entry = appendEntry(person.id, {
     at: new Date().toLocaleString("sv", { timeZone: config.timeZone }).replace(" ", "T"),
     month,
     session: flag("session"),
@@ -165,7 +169,7 @@ function main() {
     // being stepped over.
     throughCommit: head,
     commits,
-    monthTotal: monthTotal(month),
+    monthTotal: monthTotal(month, person.id),
   });
 
   console.log(
@@ -176,5 +180,10 @@ function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
 }

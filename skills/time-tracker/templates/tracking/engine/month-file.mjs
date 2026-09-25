@@ -36,6 +36,13 @@ export const IN_PROGRESS = "In progress";
 const PLACEHOLDERS = new Set([UNLABELLED, IN_PROGRESS]);
 
 /**
+ * The honest label for time the evidence cannot name. It gets no bullets:
+ * there is nothing on record to say about it, and inventing outcomes for it
+ * would put claims on a client document that nothing supports.
+ */
+export const UNATTRIBUTED = "Unattributed work";
+
+/**
  * How far a re-measured day may fall below the recorded one before it is read
  * as lost evidence rather than arithmetic.
  *
@@ -57,9 +64,22 @@ export function isPlaceholder(name) {
   return PLACEHOLDERS.has(name);
 }
 
+/**
+ * Whether a named task still needs its outcome bullets - the plain-language
+ * list of what the time actually delivered, which is what the PDF shows under
+ * each task.
+ */
+export function needsBullets(task) {
+  return !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !(task.details?.length > 0);
+}
+
 const DAY_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s+\([A-Za-z]{3}\)\s+-\s+(.+?)\s*$/;
 const TABLE_ROW = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
 const MONTH_HEADING = /^#\s+Time tracking\s+-\s+(\d{4}-\d{2})\s*$/;
+/** `- Task name` - selects which task the indented bullets below belong to. */
+const DETAIL_TASK = /^-\s+(.+?)\s*$/;
+/** `  - What was delivered` - one outcome bullet for the selected task. */
+const DETAIL_ITEM = /^\s{2,}[-*]\s+(.+?)\s*$/;
 
 /**
  * Parse a month file. Unknown lines are ignored rather than rejected so a
@@ -71,6 +91,7 @@ export function parseMonthFile(markdown) {
   let month = "";
   const days = [];
   let current = null;
+  let detailTask = null;
 
   for (const line of lines) {
     const monthMatch = MONTH_HEADING.exec(line);
@@ -87,10 +108,29 @@ export function parseMonthFile(markdown) {
         tasks: [],
       };
       days.push(current);
+      detailTask = null;
       continue;
     }
 
     if (!current) continue;
+
+    // Outcome bullets live in a list after the day's table, keyed by task name,
+    // so the table itself stays two columns and every older file still parses.
+    // Bullets under a name the table does not hold are dropped: the table is
+    // what the hours hang off, and a detail with no hours has nowhere to go.
+    const itemMatch = DETAIL_ITEM.exec(line);
+    if (itemMatch) {
+      if (detailTask) (detailTask.details ??= []).push(itemMatch[1]);
+      continue;
+    }
+    const taskMatch = DETAIL_TASK.exec(line);
+    if (taskMatch) {
+      detailTask =
+        current.tasks.find((task) => task.name === taskMatch[1] && !task.details) ??
+        current.tasks.find((task) => task.name === taskMatch[1]) ??
+        null;
+      continue;
+    }
 
     const rowMatch = TABLE_ROW.exec(line);
     if (rowMatch) {
@@ -136,6 +176,15 @@ export function renderMonthFile(file, workdays = [0, 1, 2, 3, 4, 5, 6]) {
       out.push(`| ${task.name} | ${formatDuration(task.seconds)} |`);
     }
     out.push("");
+
+    const detailed = day.tasks.filter((task) => !isPlaceholder(task.name) && task.details?.length > 0);
+    if (detailed.length > 0) {
+      for (const task of detailed) {
+        out.push(`- ${task.name}`);
+        for (const item of task.details) out.push(`  - ${item}`);
+      }
+      out.push("");
+    }
   }
 
   return out.join("\n");

@@ -1,7 +1,27 @@
 // Render a month's timesheet to PDF.
 //
-// Run with `node <tracking>/engine/report.mjs` (current month), or
-// `--month 2026-08` / `--last-month` for a specific one.
+// Run with `node <tracking>/engine/report.mjs`. With no flags - what "update
+// tracker" runs - it writes the current month's PDF and the current week's.
+// `--month 2026-08` / `--last-month` write one specific month instead, and
+// `--all-weeks` adds every week of whichever month is being written.
+//
+// Weeks run Monday to Sunday and are split at a month's edge, so a month's
+// weekly PDFs always add up to exactly its monthly one:
+//
+//   <tracking>/<YYYY-MM>.<person>.pdf                          the month
+//   <tracking>/weekly/<YYYY-MM>/<first day>.<person>.pdf       each week in it
+//
+// Every personal PDF has a team twin, the one that goes to the client. It
+// merges every person's timesheet found in this folder into one, with no
+// names and nothing that splits the work by person - the same task on the same
+// day is one row, its time summed and its bullets pooled:
+//
+//   <tracking>/client/<YYYY-MM>.pdf
+//   <tracking>/client/weekly/<YYYY-MM>/<first day>.pdf
+//
+// It can only include the timesheets present in this checkout, so it names -
+// in the terminal, never on the PDF - whose it merged and when each was last
+// updated. A teammate's timesheet that has not been pulled is not in it.
 //
 // The markdown file is the input, so the PDF can never disagree with the ledger
 // you read and correct. Printing goes through headless Chrome rather than a PDF
@@ -9,18 +29,20 @@
 // prints is the same document a browser would show.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { formatDuration, weekdayOf } from "./blocks.mjs";
 import {
   CACHE_DIR,
   TRACKING_DIR,
+  currentPerson,
   loadConfig,
+  logPath,
   monthFilePath,
   projectName,
 } from "./config.mjs";
-import { isPlaceholder, parseMonthFile } from "./month-file.mjs";
+import { isPlaceholder, needsBullets, parseMonthFile } from "./month-file.mjs";
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -62,6 +84,17 @@ function monthLabel(month) {
   return `${name} ${year}`;
 }
 
+/** `22 - 28 September 2026`, or across a month edge never, since weeks are split there. */
+function weekLabel(start, end) {
+  const [year, month, first] = start.split("-").map(Number);
+  const last = Number(end.slice(8, 10));
+  const name = new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-GB", {
+    month: "long",
+    timeZone: "UTC",
+  });
+  return first === last ? `${first} ${name} ${year}` : `${first} - ${last} ${name} ${year}`;
+}
+
 /** `Wed 26 Aug` - short enough to never wrap in a day heading. */
 function dayLabel(date) {
   const [year, month, day] = date.split("-").map(Number);
@@ -92,8 +125,14 @@ function taskRollup(days) {
  * Those are the contractor's own settings, they live in `config.json`, and
  * they do not belong on a document that gets sent onward. Do not reintroduce
  * a footer or a subtitle line explaining them.
+ *
+ * The same goes for who the timesheet belongs to: no person name and no email.
+ * The id only ever reaches the file name.
+ *
+ * Under each task sit its outcome bullets - what the time delivered, in plain
+ * words - so a reader sees the substance of the work, not just its label.
  */
-function renderHtml(month, days) {
+function renderHtml(period, days) {
   const total = days.reduce((sum, day) => sum + day.seconds, 0);
   const rollup = taskRollup(days);
   const average = days.length > 0 ? total / days.length : 0;
@@ -110,7 +149,10 @@ function renderHtml(month, days) {
             `<div class="row${isPlaceholder(task.name) ? " unlabelled" : ""}">` +
             `<span class="name">${escapeHtml(task.name)}</span>` +
             `<span class="dots"></span>` +
-            `<span class="time mono">${formatDuration(task.seconds)}</span></div>`,
+            `<span class="time mono">${formatDuration(task.seconds)}</span></div>` +
+            (task.details?.length > 0
+              ? `<ul class="details">${task.details.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+              : ""),
         )
         .join("");
       return `<section class="day">
@@ -139,7 +181,7 @@ function renderHtml(month, days) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>${name} time tracking - ${monthLabel(month)}</title>
+<title>${name} time tracking - ${period}</title>
 <style>
   @page { size: A4; margin: 16mm 14mm; }
   * { box-sizing: border-box; }
@@ -192,6 +234,14 @@ function renderHtml(month, days) {
   .row .name { color: #2b2f38; }
   .row .time { color: #16181d; }
   .row.unlabelled .name { color: #9a3412; font-style: italic; }
+  /* Outcome bullets sit under their task, indented and a step quieter, so the
+     name and time still read as the row and the list reads as its substance. */
+  .details {
+    margin: 0 0 4px; padding: 0 0 0 14px; color: #4b5260; font-size: 9pt;
+    line-height: 1.4; break-inside: avoid; break-before: avoid;
+  }
+  .details li { margin: 1px 0; padding-left: 2px; }
+  .details li::marker { color: #9aa1ad; }
 
   table { width: 100%; border-collapse: collapse; margin-top: 6px; }
   th {
@@ -213,7 +263,7 @@ function renderHtml(month, days) {
 <body>
 <header>
   <h1>${name} - time tracking</h1>
-  <div class="subtitle">${monthLabel(month)}</div>
+  <div class="subtitle">${period}</div>
 </header>
 
 <div class="summary">
@@ -237,73 +287,293 @@ ${daySections}
 `;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Above this, a merged day on the client PDF reads as more than one person. */
+const LONG_DAY_SECONDS = 12 * 60 * 60;
+
+function addDays(day, count) {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + count * DAY_MS).toISOString().slice(0, 10);
+}
+
+function monthEnd(month) {
+  const [year, index] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, index, 0)).toISOString().slice(0, 10);
+}
+
+/** Monday to Sunday around `day`, then cut to `month` so no week spans two. */
+function weekIn(day, month) {
+  const offset = (new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const monday = addDays(day, -offset);
+  const sunday = addDays(monday, 6);
+  const first = `${month}-01`;
+  const last = monthEnd(month);
+  return { start: monday < first ? first : monday, end: sunday > last ? last : sunday };
+}
+
+/** Every Monday-to-Sunday week of a month, split at its edges. */
+function weeksOf(month) {
+  const weeks = [];
+  for (let day = `${month}-01`; day <= monthEnd(month); ) {
+    const week = weekIn(day, month);
+    weeks.push(week);
+    day = addDays(week.end, 1);
+  }
+  return weeks;
+}
+
 function parseArgs(config) {
   const args = process.argv.slice(2);
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: config.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const allWeeks = args.includes("--all-weeks");
+
   const monthFlag = args.indexOf("--month");
   if (monthFlag !== -1 && args[monthFlag + 1]) {
     const month = args[monthFlag + 1];
     if (!/^\d{4}-\d{2}$/.test(month)) throw new Error(`--month expects YYYY-MM, got ${month}`);
-    return { month };
+    return { month, today, explicit: true, allWeeks };
   }
 
-  const local = new Intl.DateTimeFormat("en-CA", {
-    timeZone: config.timeZone,
-    year: "numeric",
-    month: "2-digit",
-  }).format(new Date());
-
   if (args.includes("--last-month")) {
-    const [year, month] = local.split("-").map(Number);
+    const [year, month] = today.split("-").map(Number);
     const previous = new Date(Date.UTC(year, month - 2, 1));
     return {
       month: `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`,
+      today,
+      explicit: true,
+      allWeeks,
     };
   }
-  return { month: local };
+  return { month: today.slice(0, 7), today, explicit: false, allWeeks };
 }
 
-function main() {
-  const config = loadConfig();
-  const { month } = parseArgs(config);
-  const source = monthFilePath(month);
+/**
+ * Which PDFs this run writes.
+ *
+ * The routine run is the month so far and the week so far. When the current
+ * week began in last month, last month's share of it - and last month itself -
+ * are written too: the last days of a month are usually named on the first
+ * update of the next, and without this they would never reach a PDF.
+ */
+function plan(args, id) {
+  const jobs = [];
+  const monthJob = (month) => ({
+    kind: "month",
+    month,
+    start: `${month}-01`,
+    end: monthEnd(month),
+    period: monthLabel(month),
+    pdf: path.join(TRACKING_DIR, `${month}.${id}.pdf`),
+    html: path.join(CACHE_DIR, `${month}.${id}.html`),
+  });
+  const weekJob = (month, week) => ({
+    kind: "week",
+    month,
+    ...week,
+    period: `Week of ${weekLabel(week.start, week.end)}`,
+    pdf: path.join(TRACKING_DIR, "weekly", month, `${week.start}.${id}.pdf`),
+    html: path.join(CACHE_DIR, `${week.start}.${id}.week.html`),
+  });
 
-  if (!existsSync(source)) {
-    throw new Error(
-      `No timesheet for ${month}. Run \`node ${path.join(TRACKING_DIR, "engine", "collect.mjs")}\` first.`,
-    );
+  if (args.explicit) {
+    jobs.push(monthJob(args.month));
+    if (args.allWeeks) for (const week of weeksOf(args.month)) jobs.push(weekJob(args.month, week));
+    return withTeam(jobs);
   }
 
-  const { days } = parseMonthFile(readFileSync(source, "utf8"));
-  if (days.length === 0) throw new Error(`${month} has no recorded days.`);
+  const current = args.today.slice(0, 7);
+  const monday = addDays(args.today, -((new Date(`${args.today}T00:00:00Z`).getUTCDay() + 6) % 7));
+  const spill = monday.slice(0, 7);
+  if (spill !== current && existsSync(monthFilePath(spill, id))) {
+    jobs.push(monthJob(spill), weekJob(spill, weekIn(monday, spill)));
+  }
+  jobs.push(monthJob(current));
+  if (args.allWeeks) for (const week of weeksOf(current)) jobs.push(weekJob(current, week));
+  else jobs.push(weekJob(current, weekIn(args.today, current)));
+  return withTeam(jobs);
+}
+
+/** The client PDF for each personal one: same range, everyone merged. */
+function withTeam(jobs) {
+  const team = jobs.map((job) => ({
+    ...job,
+    team: true,
+    pdf:
+      job.kind === "month"
+        ? path.join(TRACKING_DIR, "client", `${job.month}.pdf`)
+        : path.join(TRACKING_DIR, "client", "weekly", job.month, `${job.start}.pdf`),
+    html: path.join(CACHE_DIR, `${job.start}.client.${job.kind}.html`),
+  }));
+  return [...jobs, ...team];
+}
+
+/** A person's recorded days for a month, or null when they have no timesheet. */
+function readDays(month, id) {
+  const file = monthFilePath(month, id);
+  return existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")).days : null;
+}
+
+/** Every person with a timesheet for `month` in this checkout, registered or not. */
+function teamIds(month, config) {
+  const ids = new Set(Object.keys(config.people ?? {}));
+  const pattern = new RegExp(`^${month}\\.(.+)\\.md$`);
+  for (const name of readdirSync(TRACKING_DIR)) {
+    const found = pattern.exec(name);
+    if (found) ids.add(found[1]);
+  }
+  return [...ids].sort().filter((id) => existsSync(monthFilePath(month, id)));
+}
+
+/**
+ * Fold several people's days into one timesheet that does not show how many
+ * people there were.
+ *
+ * Days are unioned and their hours summed. Within a day, tasks of the same
+ * name become one row - time summed, bullets pooled with exact repeats
+ * dropped - so two people on "Checkout flow" read as one piece of work.
+ * Nothing about who did what survives the merge.
+ */
+function mergeDays(lists) {
+  const byDate = new Map();
+  for (const days of lists) {
+    for (const day of days) {
+      const merged = byDate.get(day.date) ?? { date: day.date, seconds: 0, tasks: [] };
+      merged.seconds += day.seconds;
+      for (const task of day.tasks) {
+        const existing = merged.tasks.find((row) => row.name === task.name);
+        if (!existing) {
+          merged.tasks.push({ name: task.name, seconds: task.seconds, details: [...(task.details ?? [])] });
+          continue;
+        }
+        existing.seconds += task.seconds;
+        for (const item of task.details ?? []) {
+          if (!existing.details.includes(item)) existing.details.push(item);
+        }
+      }
+      byDate.set(day.date, merged);
+    }
+  }
+  // Longest first, name as tie-break: an order that depends only on the work,
+  // never on whose timesheet happened to be read first.
+  for (const day of byDate.values()) {
+    day.tasks.sort((a, b) => b.seconds - a.seconds || a.name.localeCompare(b.name));
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** When each person last ran an update, for the terminal note - never the PDF. */
+function lastUpdate(id) {
+  try {
+    const lines = readFileSync(logPath(id), "utf8").split("\n").filter((line) => line.trim());
+    return JSON.parse(lines[lines.length - 1]).at ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The days a PDF covers. A personal PDF reads the person's own timesheet; the
+ * client PDF reads everyone's and merges them. Unnamed days are found before
+ * the merge, so the terminal can say whose they are.
+ */
+function daysFor(job, id, config) {
+  const inRange = (days) => days.filter((day) => day.date >= job.start && day.date <= job.end);
+  const hasPlaceholder = (day) => day.tasks.some((task) => isPlaceholder(task.name));
+
+  if (!job.team) {
+    const days = readDays(job.month, id);
+    if (!days) {
+      throw new Error(
+        `No timesheet for ${job.month}. Run \`node ${path.join(TRACKING_DIR, "engine", "collect.mjs")}\` first.`,
+      );
+    }
+    return inRange(days);
+  }
+
+  const lists = [];
+  const unnamed = [];
+  for (const other of teamIds(job.month, config)) {
+    const days = inRange(readDays(job.month, other));
+    for (const day of days.filter(hasPlaceholder)) unnamed.push(`${other} ${day.date}`);
+    lists.push(days);
+  }
+  if (unnamed.length > 0) {
+    // A teammate's unnamed day can only be named on their machine, from their
+    // evidence - so say whose it is. The client PDF waits for it rather than
+    // leaving their hours out, which would under-bill without a word.
+    throw new Error(
+      `No client PDF for ${job.period} - still unnamed: ${unnamed.join(", ")}. ` +
+        "Each person names their own days with \"update tracker\", then commits and pushes their timesheet.",
+    );
+  }
+  const days = mergeDays(lists);
+  // The one thing a merge cannot hide is a day longer than one person could
+  // work. Say so here, where only the sender sees it, and leave the choice of
+  // whether to send to them - trimming hours to disguise it would misbill.
+  const long = days.filter((day) => day.seconds > LONG_DAY_SECONDS);
+  if (long.length > 0 && job.kind === "month") {
+    console.warn(
+      `Note: ${long.map((day) => `${day.date} (${formatDuration(day.seconds)})`).join(", ")} - ` +
+        "over 12 hours in one day on the client PDF, which a reader may take as more than one person.",
+    );
+  }
+  return days;
+}
+
+/** Write one PDF, or say why not. Returns a line for the summary. */
+function render(job, id, config) {
+  const days = daysFor(job, id, config);
+  if (days.length === 0) {
+    // A week with no tracked days is not a failure - there is simply nothing
+    // to bill - but a month with none is, since it was asked for by name.
+    if (job.kind === "week") return `${job.period}: no tracked days, no PDF.`;
+    throw new Error(`${job.month} has no recorded days.`);
+  }
 
   // The PDF is the client-facing artefact, so a placeholder must never reach
   // it. There is deliberately no --force: a document that can be sent onward
   // cannot be allowed to say "In progress" where a task name belongs. Naming
   // the days is the fix, and it is what the time-tracker skill's labelling
-  // pass does.
+  // pass does. Only the days inside this PDF's own range count.
   const unnamed = days.filter((day) => day.tasks.some((task) => isPlaceholder(task.name)));
   if (unnamed.length > 0) {
     throw new Error(
-      `No PDF written - ${month} still has unnamed days: ` +
+      `No PDF for ${job.period} - still unnamed: ` +
         `${unnamed.map((day) => day.date).join(", ")}. ` +
         "Label them first (time-tracker skill, labelling pass), then run this again.",
     );
   }
 
-  for (const day of days) {
-    const tasked = day.tasks.reduce((sum, task) => sum + task.seconds, 0);
-    if (Math.abs(tasked - day.seconds) >= 60) {
-      console.warn(
-        `Warning: ${day.date} task rows total ${formatDuration(tasked)} but the day is ` +
-          `${formatDuration(day.seconds)}. Re-run the collector to reconcile.`,
-      );
+  // Missing bullets thin the report but do not falsify it, so unlike a
+  // placeholder they warn rather than block - an older month named before
+  // bullets existed must still render. Said once, on the month.
+  const bare = days.filter((day) => day.tasks.some(needsBullets));
+  if (bare.length > 0 && job.kind === "month" && !job.team) {
+    console.warn(
+      `Warning: ${bare.map((day) => day.date).join(", ")} ${bare.length === 1 ? "has" : "have"} ` +
+        "tasks with no outcome bullets. \"update tracker\" writes them.",
+    );
+  }
+
+  if (job.kind === "month" && !job.team) {
+    for (const day of days) {
+      const tasked = day.tasks.reduce((sum, task) => sum + task.seconds, 0);
+      if (Math.abs(tasked - day.seconds) >= 60) {
+        console.warn(
+          `Warning: ${day.date} task rows total ${formatDuration(tasked)} but the day is ` +
+            `${formatDuration(day.seconds)}. Re-run the collector to reconcile.`,
+        );
+      }
     }
   }
 
   mkdirSync(CACHE_DIR, { recursive: true });
-  const html = path.join(CACHE_DIR, `${month}.html`);
-  const pdf = path.join(TRACKING_DIR, `${month}.pdf`);
-  writeFileSync(html, renderHtml(month, days));
+  mkdirSync(path.dirname(job.pdf), { recursive: true });
+  writeFileSync(job.html, renderHtml(job.period, days));
 
   execFileSync(
     findChrome(),
@@ -311,18 +581,54 @@ function main() {
       "--headless",
       "--disable-gpu",
       "--no-pdf-header-footer",
-      `--print-to-pdf=${pdf}`,
-      new URL(`file://${html}`).href,
+      `--print-to-pdf=${job.pdf}`,
+      new URL(`file://${job.html}`).href,
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
 
   const total = days.reduce((sum, day) => sum + day.seconds, 0);
   const count = days.length;
-  console.log(
-    `${path.relative(process.cwd(), pdf)} - ${formatDuration(total)}, ` +
-      `${count} tracked ${count === 1 ? "day" : "days"}.`,
+  return (
+    `${path.relative(process.cwd(), job.pdf)} - ${formatDuration(total)}, ` +
+    `${count} tracked ${count === 1 ? "day" : "days"}.`
   );
+}
+
+function main() {
+  const config = loadConfig();
+  const person = currentPerson(config);
+  const args = parseArgs(config);
+
+  // Each PDF stands alone: an unnamed day in last month's tail must not stop
+  // this week's PDF from being written. Every failure is still reported, and
+  // still fails the run.
+  const jobs = plan(args, person.id);
+
+  // Whose timesheets the client PDF merges, and how fresh each is. Terminal
+  // only: the PDF itself never says how many people there were.
+  const months = [...new Set(jobs.filter((job) => job.team).map((job) => job.month))];
+  for (const month of months) {
+    const ids = teamIds(month, config);
+    const others = ids.filter((id) => id !== person.id);
+    const notes = others.map((id) => `${id} (last update ${lastUpdate(id) ?? "never"})`);
+    console.log(
+      `Client PDF for ${month} merges ${ids.length} timesheet${ids.length === 1 ? "" : "s"}` +
+        (others.length > 0 ? `: yours, ${notes.join(", ")}.` : ": yours only.") +
+        " Pull first to include teammates' latest.",
+    );
+  }
+
+  let failed = false;
+  for (const job of jobs) {
+    try {
+      console.log(render(job, person.id, config));
+    } catch (error) {
+      failed = true;
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+  if (failed) process.exit(1);
 }
 
 // Every failure here is an ordinary, actionable condition - an unnamed day, a

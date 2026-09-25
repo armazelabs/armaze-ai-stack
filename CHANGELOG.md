@@ -2,6 +2,15 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **time-tracker** works for teams. Each person on a project keeps their own timesheet: setup registers whoever runs it by `git config user.name` and `user.email`, and their files carry that id — `2026-09.<id>.md`, `2026-09.<id>.pdf`, `log.<id>.jsonl` — so teammates sharing a repo never overwrite each other's days. Only commits authored under the person's own email(s) are used to name their days, so a teammate's work no longer lands on your timesheet. An existing single-person timesheet is renamed to the first person who re-runs setup. The email lives only in `config.json` and never appears on the PDF.
+- **time-tracker** PDFs now say what the time delivered. Under each task sit 2–4 plain-language outcome bullets ("Customers get a receipt email after every purchase") written from that day's commits, commit messages and prompts. **Update tracker** also adds bullets to days that were named before this change.
+- **time-tracker** writes weekly PDFs alongside the monthly one. Each update writes this month's PDF and this week's, into `<tracking>/weekly/<month>/`. Weeks run Monday to Sunday and are split at the month's edge, so a month's weekly PDFs always add up to its monthly PDF. `report.mjs --all-weeks` rewrites every week of a month.
+- **time-tracker** writes a client PDF — the one to send. Every timesheet in the tracking folder is merged into `<tracking>/client/<month>.pdf` (plus weekly ones), with no names and nothing that shows how many people worked: hours are summed per day and the same task on the same day becomes one row. The terminal lists whose timesheets were merged and when each was last updated, and a teammate's unnamed day holds the client PDF back rather than leaving their hours out.
+
 ## 0.6.0 - 2026-09-16
 
 ### Added

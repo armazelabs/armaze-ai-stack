@@ -4,5 +4,6 @@
   "idleGapMinutes": 20,
   "hoursMultiplier": {{HOURS_MULTIPLIER}},
   "workdays": [0, 1, 2, 3, 4, 5, 6],
-  "sentinel": "TIME-TRACKER-AUTOMATION"
+  "sentinel": "TIME-TRACKER-AUTOMATION",
+  "people": {}
 }

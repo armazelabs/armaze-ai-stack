@@ -9,9 +9,11 @@
 // Layout, from this file outwards:
 //   <repo>/<project-management>/<tracking>/engine/config.mjs   <- here
 //   <repo>/<project-management>/<tracking>/config.json
-//   <repo>/<project-management>/<tracking>/<YYYY-MM>.md
+//   <repo>/<project-management>/<tracking>/<YYYY-MM>.<person>.md
+//   <repo>/<project-management>/<tracking>/log.<person>.jsonl
 //   <repo>/<project-management>/<tracking>/cache/
 
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -40,6 +42,8 @@ const DEFAULT_CONFIG = {
   hoursMultiplier: 1,
   workdays: [0, 1, 2, 3, 4, 5, 6],
   sentinel: "TIME-TRACKER-AUTOMATION",
+  // `{ "<id>": { "emails": [...] } }` - one entry per person, written by setup.
+  people: {},
 };
 
 /**
@@ -56,8 +60,63 @@ export function historyPath() {
   return path.join(homedir(), ".claude", "history.jsonl");
 }
 
-export function monthFilePath(month) {
-  return path.join(TRACKING_DIR, `${month}.md`);
+/**
+ * One timesheet per person. Every per-person file carries the person's id as a
+ * suffix - `2026-09.munawar-khel.md` - so teammates who share a checkout never
+ * write to the same file, and never conflict in git.
+ */
+export function monthFilePath(month, id) {
+  return path.join(TRACKING_DIR, `${month}.${id}.md`);
+}
+
+export function monthFilePattern(id) {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^(\\d{4}-\\d{2})\\.${escaped}\\.md$`);
+}
+
+export function logPath(id) {
+  return path.join(TRACKING_DIR, `log.${id}.jsonl`);
+}
+
+/** The git identity of whoever is running this, or null where there is none. */
+export function gitEmail() {
+  try {
+    return (
+      execFileSync("git", ["config", "user.email"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Who this timesheet belongs to: the `people` entry whose emails include the
+ * current `git config user.email`.
+ *
+ * The emails are only ever used to pick the person and to filter commits. They
+ * never reach the month file or the PDF - the id is what names the files.
+ */
+export function currentPerson(config) {
+  const email = gitEmail();
+  if (!email) {
+    throw new Error(
+      "No git user.email here, so there is no way to tell whose timesheet this is. " +
+        'Run `git config user.email "you@example.com"`, then re-run the time-tracker setup.',
+    );
+  }
+  const wanted = email.toLowerCase();
+  for (const [id, person] of Object.entries(config.people ?? {})) {
+    const emails = (person?.emails ?? []).map((value) => String(value).toLowerCase());
+    if (emails.includes(wanted)) return { id, emails: new Set(emails) };
+  }
+  throw new Error(
+    `${email} is not registered in ${CONFIG_PATH}. Re-run the time-tracker setup to add ` +
+      "yourself - each person on a project gets their own timesheet.",
+  );
 }
 
 /**

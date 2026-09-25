@@ -2,10 +2,12 @@
 name: time-tracker
 description: >
   Time tracking with no timer and no switch, measured after the fact from
-  Claude Code session transcripts and named from git commits. One command
-  brings the timesheet fully up to date: remeasure the hours, name every
-  unnamed day, re-render the PDF. Sets itself up in any project, in any
-  language - no package.json or build tooling needed - inside
+  Claude Code session transcripts and named from the person's own git commits,
+  with plain-language outcome bullets under every task. One timesheet per
+  person, so it works for teams. One command brings it fully up to date:
+  remeasure the hours, name every unnamed day, re-render the monthly and
+  weekly PDFs - personal ones, and one merged, anonymous client PDF for the
+  whole team. Sets itself up in any project, in any language - no package.json or build tooling needed - inside
   <project-management>/tracking/. Use for "set up time tracking", "add a time
   tracker", "update tracker", "update tracking", "updatetracking", "how many
   hours have I worked", "label my time", "time tracking report", or the
@@ -24,6 +26,17 @@ The one boundary is `trackFrom` in `<tracking>/config.json` - the day the
 tracker was installed. Every day from then on counts; days before it are
 ignored even though their transcripts exist.
 
+**Every timesheet belongs to one person.** Setup registers whoever runs it
+under `people` in `config.json`: an id slugged from `git config user.name`,
+recognised by `git config user.email`. That id suffixes all their files -
+`<month>.<id>.md`, `<month>.<id>.pdf`, `log.<id>.jsonl`,
+`cache/<month>.<id>.pending.json` - so teammates sharing a repo never write to
+the same file. Hours come from this machine's own transcripts, and only
+commits authored under the person's own emails are evidence. A second address
+for the same person goes in their `emails` list by hand. If the engine says the
+current email is not registered, run Setup - it adds them without touching
+anyone else's files.
+
 ## Pick the mode from what was asked
 
 | The user wants | Mode |
@@ -32,7 +45,7 @@ ignored even though their transcripts exist.
 | "update tracker", the timesheet current, hours + labels + PDF | **Update tracker** |
 | hours so far, what's tracked, is it current | **Status** |
 | the days named and nothing else | **Label** |
-| a PDF for some other month | **Report** |
+| a PDF for some other month, or every week of one | **Report** |
 
 **Update tracker is the main mode.** Almost every request that is not a first
 install is one - reach for the narrower modes only when the user asked for that
@@ -60,7 +73,9 @@ Then run, from the project root:
 node <skill_dir>/scripts/setup.mjs --multiplier <their answer>
 ```
 
-Omit the flag only if they explicitly want the default of 1. On a re-run, where
+It stops if the checkout has no `git config user.name` or `user.email` and
+prints the commands to set them; relay those. Omit the flag only if they
+explicitly want the default of 1. On a re-run, where
 `config.json` already exists, skip the question entirely - the file owns the
 value, and `--multiplier` is ignored. To change it later, edit `hoursMultiplier`
 in `<tracking>/config.json`.
@@ -80,7 +95,13 @@ that, but never treat "no package.json" as a reason to stop.
 **Re-running setup migrates an older install.** It removes the SessionStart
 hook, deletes `state.json`, prunes the engine files that are gone, and backfills
 `trackFrom` from the earliest day the old switch ever tracked - so a timesheet
-that already exists survives intact. Say what it migrated.
+that already exists survives intact. An install from before per-person files
+has one shared `<month>.md` and `log.jsonl`; the first person to re-run setup
+has them renamed to their id. Say what it migrated.
+
+When a teammate runs setup on a project that already has the tracker, they are
+registered under their own id and start their own timesheet. Nobody's files are
+claimed but the first person's, and only from a single-person install.
 
 Tell the user tracking counts from today onward, and give them the phrase
 **"update tracker"**.
@@ -93,13 +114,21 @@ The one command. Triggered by "update tracker", "update tracking",
 1. **Measure.** `node <engine>/collect.mjs` - rescan the transcripts, rewrite
    the month markdown, and build the work list.
 2. **Name.** Read `references/labelling.md` and name **every** unnamed day,
-   today included. Commits lead; prompts fill in the blocks that have none.
-   Read `cache/<month>.pending.json` for this - it holds only the days that
-   still need a name. Never read `raw.json` for a routine update: it is the
-   whole month, and reading twenty settled days to name one is the cost this
-   is here to avoid.
-3. **Render.** `node <engine>/report.mjs` - write the PDF. Go straight here
-   from step 2; **do not collect again to check the naming**. Today is still
+   today included, writing 2-4 plain-language outcome bullets under each task.
+   Commits lead; prompts fill in the blocks that have none. Read
+   `cache/<month>.<id>.pending.json` for this - it holds only the days that
+   still need work, each with its `needs`: `names` and `bullets` for an
+   unnamed day, `bullets` alone for a day named before bullets existed, which
+   keeps its names and gets its bullets added. Never read `raw.json` for a
+   routine update: it is the whole month, and reading twenty settled days to
+   name one is the cost this is here to avoid.
+3. **Render.** `node <engine>/report.mjs` - write this month's PDF and this
+   week's. When the current week began last month (an update on Thursday
+   1 October, say), it also writes last month's PDF and last month's share of
+   the week, so the final days of a month still reach a PDF - which means any
+   of last month's days still unnamed (its own `pending.json`) must be named in
+   step 2 too. Go straight here from step 2; **do not collect again to check
+   the naming**. Today is still
    running, so a second collect finds the minutes that passed while you were
    labelling and opens a fresh `In progress` row for them - which blocks the
    render you are about to do.
@@ -109,14 +138,16 @@ The one command. Triggered by "update tracker", "update tracking",
    node <engine>/log.mjs record --named <the days you named> --session <session id>
    ```
 
-   Comma-separate the days. This appends one line to `<tracking>/log.jsonl`
+   Comma-separate the days. This appends one line to `<tracking>/log.<id>.jsonl`
    saying what was named, which commits were consumed, and the month total -
    and moves the commit watermark that step 1 reads next time. Do it last, once
    the naming is actually on disk, so the log never claims work that was not
    done. Pass the session id from this session's transcript path if you have
    it; omit `--session` rather than inventing one.
 
-Then report the days you named, the month total, and where the PDF landed. If no
+Then report the days you named, the month total, where the PDFs landed - the
+client PDF first, since it is the one that gets sent - and whose timesheets it
+merged. If no
 Chromium-based browser is found the hours are still recorded and the markdown is
 still complete - say so rather than treating it as a failure.
 
@@ -128,7 +159,7 @@ That is the design, not a mistake to chase.
 
 ## The log and the watermark
 
-`<tracking>/log.jsonl` is one line per update: days named, commits consumed,
+`<tracking>/log.<id>.jsonl` is one line per update: days named, commits consumed,
 session, month total. It is an audit trail for a client-facing timesheet - and
 the last line's `throughCommit` is the watermark the next run reads, so there is
 no separate state file.
@@ -157,31 +188,71 @@ asked for names and nothing else; otherwise it is step 2 of Update tracker.
 ## Report
 
 ```
-node <engine>/report.mjs                # current month
-node <engine>/report.mjs --last-month
-node <engine>/report.mjs --month 2026-08
+node <engine>/report.mjs                          # this month + this week
+node <engine>/report.mjs --all-weeks              # this month + every week in it
+node <engine>/report.mjs --last-month --all-weeks
+node <engine>/report.mjs --month 2026-08          # that month only
 ```
 
-Writes a PDF next to the month markdown. It needs a Chromium-based browser; if
-none is found, say so - the markdown record is complete either way.
+Each run writes two sets of PDFs over the same ranges.
+
+**Personal**, one person's own timesheet:
+
+- **Monthly** - `<tracking>/<month>.<id>.pdf`, the whole month.
+- **Weekly** - `<tracking>/weekly/<month>/<first day>.<id>.pdf`. Weeks run
+  Monday to Sunday and are **split at the month's edge**: Mon 28 Sep - Sun 4 Oct
+  is `weekly/2026-09/2026-09-28` (28-30 Sep) and `weekly/2026-10/2026-10-01`
+  (1-4 Oct). So a month's weekly PDFs always add up to exactly its monthly one.
+  A week with no tracked days gets no PDF.
+
+**Client** - the one to send. Every person's timesheet found in the tracking
+folder, merged into one: `<tracking>/client/<month>.pdf` and
+`<tracking>/client/weekly/<month>/<first day>.pdf`. It looks exactly like a
+personal PDF and shows **no names and nothing that reveals how many people
+worked**: days are unioned and their hours summed, the same task on the same
+day is one row with its time summed and bullets pooled, and tasks are ordered
+by time, not by person. It includes only the timesheets in this checkout, so
+teammates commit and push theirs after their own update, and the sender pulls
+before rendering. The terminal (never the PDF) lists whose timesheets were
+merged and when each was last updated - relay that, and flag anyone stale. A
+teammate's unnamed day blocks the client PDF for its range and is reported by
+name: only they can name it, from their own evidence, and leaving their hours
+out would under-bill silently. A merged day over 12 hours prints a note, since
+a reader may take it as more than one person; the hours are never trimmed to
+hide it - tell the user and let them decide.
+
+A routine update writes only the current week; finished weeks keep the PDF from
+their last update. After correcting an older day, re-run with `--all-weeks` so
+its week's PDF catches up. It needs a Chromium-based browser; if none is found,
+say so - the markdown record is complete either way.
 
 **The PDF is client-facing.** It shows the project, the month, the days, the
-task names and the hours - and nothing else. No measurement method, no idle
-cut-off, no multiplier, no timezone. Those are the contractor's own settings and
+task names, their outcome bullets and the hours - and nothing else. No person
+name and no email: who the timesheet belongs to shows only in its file name.
+No measurement method, no idle cut-off, no multiplier, no timezone. Those are the contractor's own settings and
 they stay in `config.json`. Never add a footer or subtitle line explaining them.
 
-**It refuses to render a month that still has an unnamed day**, and there is no
-override. The fix is always to name the days first. Update tracker does that
+**It refuses to render a PDF whose range still has an unnamed day**, and there is
+no override. Each PDF is judged on its own days, so an unnamed day in one week
+blocks that week and the month but not the other weeks. A named task without
+bullets only warns - an old month still renders. The fix is always to name the
+days first. Update tracker does that
 then renders, so reach for this mode on its own for a *different* month.
 
 ## Rules
 
 - **Never move the boundary on your own.** `trackFrom` is the user's decision.
   Back-date it only when asked, and say what it will pull in.
+- **Never put a person on the PDF.** No name, no email, no who-did-what, and on
+  the client PDF nothing that counts heads - not in the header, the task names
+  or the bullets. The emails in `config.json` exist
+  to pick the person and filter commits, nothing else.
+- **Never name a day from someone else's commits.** The evidence is already
+  filtered to the person's own; do not widen it with a raw `git log`.
 - **Never hand-write a day's hours.** They are recomputed from the transcripts
   on the next collect, so an edit to a total is lost work. Task names are the
   opposite: once a row is named, the engine keeps it.
-- **The log is append-only.** Never rewrite or prune `log.jsonl` to tidy it,
+- **The log is append-only.** Never rewrite or prune a `log.<id>.jsonl` to tidy it,
   and never add a line for a run that did not happen. An audit trail that is
   edited is not one.
 - **The engine is generated.** Do not hand-edit `<engine>/*.mjs`; change the

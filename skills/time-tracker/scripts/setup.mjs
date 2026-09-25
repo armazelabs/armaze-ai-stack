@@ -10,7 +10,12 @@
 // readme - are written only if absent, so a project's own choices are never
 // clobbered. There is no on/off switch: setup writes today's date into
 // config.json as `trackFrom`, and every day from then on counts.
+//
+// Each person on a project keeps their own timesheet. Setup registers whoever
+// runs it - by `git config user.name` and `user.email` - under an id that
+// suffixes their files (`2026-09.<id>.md`), so teammates never share a file.
 
+import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   cpSync,
@@ -18,6 +23,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -137,6 +143,38 @@ function shellPath(value) {
 
 function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+}
+
+function gitConfig(key) {
+  try {
+    return (
+      execFileSync("git", ["config", key], {
+        cwd: TARGET_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Who is running setup. Both halves are required: the name becomes the id on
+ * the file names, and the email is how the engine recognises this person and
+ * picks out their commits. Neither is ever printed on the PDF.
+ */
+function detectPerson() {
+  const name = gitConfig("user.name");
+  const email = gitConfig("user.email");
+  if (name && email) return { name, email };
+
+  console.error("time-tracker setup: each person gets their own timesheet, keyed by their git identity,");
+  console.error("and this checkout has none. Set it, then re-run setup:");
+  console.error("");
+  if (!name) console.error('  git config user.name "Your Name"');
+  if (!email) console.error('  git config user.email "you@example.com"');
+  process.exit(1);
 }
 
 // --- folders -------------------------------------------------------------
@@ -338,7 +376,7 @@ function resolveTrackFrom(trackingDir, todayDay) {
 
   const recorded = [];
   for (const name of entries(trackingDir)) {
-    if (!/^\d{4}-\d{2}\.md$/.test(name.name)) continue;
+    if (!/^\d{4}-\d{2}(\.[^.]+)?\.md$/.test(name.name)) continue;
     try {
       const text = readFileSync(path.join(trackingDir, name.name), "utf8");
       for (const [, day] of text.matchAll(/^##\s+(\d{4}-\d{2}-\d{2})/gm)) recorded.push(day);
@@ -374,10 +412,76 @@ function backfillTrackFrom(configPath, day) {
   return { backfilled: true };
 }
 
+/**
+ * Add the person to `people` in config.json, or find them there.
+ *
+ * The email decides who someone is: a person already registered under this
+ * email keeps their id even if their display name has changed since. A new
+ * email under a name already taken by someone else gets a numbered id rather
+ * than being merged into a stranger's timesheet. A second address for the same
+ * person is added by hand to their `emails` list.
+ */
+function registerPerson(configPath, person) {
+  let config;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return { error: "config.json will not parse - fix it and re-run." };
+  }
+  const people = config.people && typeof config.people === "object" ? config.people : {};
+  const wasEmpty = Object.keys(people).length === 0;
+  const email = person.email.toLowerCase();
+
+  for (const [id, entry] of Object.entries(people)) {
+    const emails = (entry?.emails ?? []).map((value) => String(value).toLowerCase());
+    if (emails.includes(email)) return { id, added: false, wasEmpty };
+  }
+
+  const base = slugify(person.name);
+  let id = base;
+  for (let index = 2; Object.hasOwn(people, id); index += 1) id = `${base}-${index}`;
+
+  people[id] = { emails: [person.email] };
+  config.people = people;
+  // Keep short number arrays like `workdays` on one line, as the template writes them.
+  const json = JSON.stringify(config, null, 2).replace(/\[\s*(\d+(?:,\s*\d+)*)\s*\]/g, (_, inner) =>
+    `[${inner.split(/,\s*/).join(", ")}]`,
+  );
+  writeFileSync(configPath, `${json}\n`);
+  return { id, added: true, wasEmpty };
+}
+
+/**
+ * Hand a single-person timesheet to the first person who registers.
+ *
+ * Before per-person files, a project had one `2026-09.md` and one
+ * `log.jsonl`. The first person to re-run setup is the one who kept them, so
+ * they are renamed to that person's id rather than left to be orphaned. Stale
+ * evidence in cache/ is scratch and is simply removed.
+ */
+function claimSinglePersonFiles(trackingDir, cacheDir, id) {
+  const moved = [];
+  for (const entry of entries(trackingDir)) {
+    if (!entry.isFile()) continue;
+    const month = /^(\d{4}-\d{2})\.(md|pdf)$/.exec(entry.name);
+    const target = month ? `${month[1]}.${id}.${month[2]}` : entry.name === "log.jsonl" ? `log.${id}.jsonl` : null;
+    if (!target || existsSync(path.join(trackingDir, target))) continue;
+    renameSync(path.join(trackingDir, entry.name), path.join(trackingDir, target));
+    moved.push(`${entry.name} -> ${target}`);
+  }
+  for (const entry of entries(cacheDir)) {
+    if (entry.isFile() && /^\d{4}-\d{2}\.(raw\.json|pending\.json|html)$/.test(entry.name)) {
+      rmSync(path.join(cacheDir, entry.name));
+    }
+  }
+  return moved;
+}
+
 // --- main ----------------------------------------------------------------
 
 function main() {
   const project = detectProjectName();
+  const person = detectPerson();
   const timeZone = detectTimeZone();
   const multiplier = parseMultiplier();
   const todayDay = new Intl.DateTimeFormat("en-CA", {
@@ -428,7 +532,10 @@ function main() {
   const readmeContent = fill(readTemplate("tracking-readme.md"), values);
   const readmeStale = (() => {
     try {
-      return /track\.mjs|state\.json/.test(readFileSync(readmePath, "utf8"));
+      // Also stale: a readme from before per-person files, which documents one
+      // shared `<YYYY-MM>.md` and `log.jsonl` that no longer exist.
+      const text = readFileSync(readmePath, "utf8");
+      return /track\.mjs|state\.json/.test(text) || !text.includes("<YYYY-MM>.<person>.md");
     } catch {
       return false;
     }
@@ -442,6 +549,11 @@ function main() {
     ? { backfilled: false }
     : backfillTrackFrom(path.join(tracking.dir, "config.json"), trackFrom.day);
   const hook = removeSettingsHook();
+  const registered = registerPerson(path.join(tracking.dir, "config.json"), person);
+  const claimed =
+    registered.id && registered.wasEmpty
+      ? claimSinglePersonFiles(tracking.dir, path.join(tracking.dir, "cache"), registered.id)
+      : [];
   // The start/stop switch is gone, and a stale state.json is only there to be
   // misread as one.
   const legacyState = path.join(tracking.dir, "state.json");
@@ -470,7 +582,7 @@ function main() {
       readmeCreated
         ? "created"
         : readmeRewritten
-          ? "rewritten - the old one documented start/stop"
+          ? "rewritten - the old one documented files that no longer exist"
           : "already existed, left untouched"
     }`,
   );
@@ -496,6 +608,15 @@ function main() {
       }`,
     );
   }
+  if (registered.error) {
+    console.log(`- person: not registered - ${registered.error}`);
+  } else {
+    console.log(
+      `- person: ${registered.added ? "registered" : "already registered"} as ${registered.id} ` +
+        `(your files end in .${registered.id}.md)`,
+    );
+  }
+  for (const move of claimed) console.log(`- ${trackingRel}/${move}: claimed the existing single-person timesheet`);
   if (stateRemoved) {
     console.log(`- ${trackingRel}/state.json: removed - start/stop is gone, trackFrom replaces it`);
   }

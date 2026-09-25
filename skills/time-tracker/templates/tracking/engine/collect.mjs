@@ -3,6 +3,11 @@
 // Run with `node <tracking>/engine/collect.mjs`. It writes the month markdown
 // next to itself, plus an evidence file in cache/ for labelling.
 //
+// Everything is per person. The transcripts read are this machine's own, the
+// commits read are the ones this person authored, and the files written carry
+// the person's id - `2026-09.<id>.md` - so teammates sharing a checkout each
+// keep their own timesheet and never overwrite each other's days.
+//
 // Only days from `trackFrom` onward are counted - the date written into
 // config.json when the tracker was installed. Days before it are ignored
 // entirely, even though the transcripts for them exist.
@@ -33,14 +38,17 @@ import {
   CACHE_DIR,
   REPO_ROOT,
   TRACKING_DIR,
+  currentPerson,
   historyPath,
   loadConfig,
   monthFilePath,
+  monthFilePattern,
   monthOf,
   transcriptDir,
 } from "./config.mjs";
 import {
   isPlaceholder,
+  needsBullets,
   parseMonthFile,
   rebuild,
   renderMonthFile,
@@ -55,6 +63,12 @@ const TIMESTAMP = /"timestamp":"([^"]+)"/g;
  */
 const MAX_PROMPTS_PER_BLOCK = 500;
 const MAX_PROMPT_LENGTH = 200;
+/**
+ * A commit body is evidence for the outcome bullets - it often says what the
+ * subject only names. Capped so one essay of a commit message cannot swamp the
+ * work list.
+ */
+const MAX_BODY_LENGTH = 600;
 
 /**
  * Match the sentinel only where a prompt *begins* with it.
@@ -129,29 +143,42 @@ function readPrompts() {
 }
 
 /**
- * Commit subjects, for labelling evidence. A project with no git history, or
- * no git at all, simply contributes none.
+ * This person's commits, for the labelling evidence. Read-only, and the only
+ * git this tracker ever runs - nothing here stages, commits or pushes anything.
+ * The timesheet is left in the working tree for its owner to commit when they
+ * choose. A project with no git history, or no git at all, contributes none.
+ *
+ * Only commits authored under one of the person's own emails count. A
+ * teammate's commit landing inside your hours is not evidence of what *you*
+ * did, and naming your day from it would put their work on your timesheet.
+ * Matched in code rather than with `--author`, which is a regex and would
+ * misread the `.` and `+` that real addresses carry.
  */
-/**
- * Commit subjects for the labelling evidence. Read-only, and the only git this
- * tracker ever runs - nothing here stages, commits or pushes anything. The
- * timesheet is left in the working tree for its owner to commit when they
- * choose.
- */
-function readCommits(sinceMs) {
+function readCommits(sinceMs, emails) {
   try {
     const out = execFileSync(
       "git",
-      ["log", `--since=${new Date(sinceMs).toISOString()}`, "--format=%ct%x09%h%x09%s"],
-      { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      [
+        "log",
+        `--since=${new Date(sinceMs).toISOString()}`,
+        "--format=%x1e%ct%x09%h%x09%ae%x09%s%x09%b",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 },
     );
     return out
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [seconds, sha, ...rest] = line.split("\t");
-        return { at: Number(seconds) * 1000, sha, subject: rest.join("\t") };
-      });
+      .split("\x1e")
+      .filter((record) => record.trim())
+      .map((record) => {
+        const [seconds, sha, email, subject, ...body] = record.split("\t");
+        return {
+          at: Number(seconds) * 1000,
+          sha,
+          email: (email ?? "").toLowerCase(),
+          subject: subject ?? "",
+          body: body.join("\t").replace(/\s+/g, " ").trim().slice(0, MAX_BODY_LENGTH),
+        };
+      })
+      .filter((commit) => emails.has(commit.email));
   } catch {
     return [];
   }
@@ -173,13 +200,26 @@ function writeIfChanged(file, content) {
   return true;
 }
 
-function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
+function writeEvidence(month, id, file, blocks, prompts, commits, timeZone) {
   const days = file.days.map((day) => {
     const dayBlocks = blocks.filter((block) => block.day === day.date);
+    // Two jobs a day can still need. `names`: a placeholder row is standing.
+    // `bullets`: a named task has no outcome list yet - including days named
+    // before bullets existed, which is how an older month gets backfilled.
+    const needs = [];
+    // A day still being named needs both: every name written gets its bullets
+    // in the same pass.
+    if (day.tasks.some((task) => isPlaceholder(task.name))) needs.push("names", "bullets");
+    else if (day.tasks.some(needsBullets)) needs.push("bullets");
     return {
       date: day.date,
       duration: formatDuration(day.seconds),
-      labelled: day.tasks.every((task) => !isPlaceholder(task.name)),
+      needs,
+      tasks: day.tasks.map((task) => ({
+        name: task.name,
+        time: formatDuration(task.seconds),
+        ...(task.details?.length > 0 ? { details: task.details } : {}),
+      })),
       blocks: dayBlocks.map((block) => ({
         range: `${toLocalTime(block.start, timeZone)}-${toLocalTime(block.end, timeZone)}`,
         duration: formatDuration((block.end - block.start) / 1000),
@@ -198,6 +238,7 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
             at: toLocalTime(commit.at, timeZone),
             sha: commit.sha,
             subject: commit.subject,
+            ...(commit.body ? { body: commit.body } : {}),
           })),
       })),
     };
@@ -217,7 +258,7 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
   }
 
   writeIfChanged(
-    path.join(CACHE_DIR, `${month}.raw.json`),
+    path.join(CACHE_DIR, `${month}.${id}.raw.json`),
     `${JSON.stringify({ month, days }, null, 2)}\n`,
   );
 
@@ -228,12 +269,12 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
   // reading rather than twenty - which is the whole point, since reading the
   // evidence is the slow part of an update, not measuring it.
   //
-  // Built from placeholders, deliberately, and never from the commit
+  // Built from placeholders and missing bullets, deliberately, and never from the commit
   // watermark: a day can hold six hours and no commits at all, and a work list
   // derived from commits would drop it.
-  const since = lastCommit();
+  const since = lastCommit(id);
   const pending = days
-    .filter((day) => !day.labelled)
+    .filter((day) => day.needs.length > 0)
     .map((day) => ({
       ...day,
       blocks: day.blocks.map((block) => ({
@@ -246,7 +287,7 @@ function writeEvidence(month, file, blocks, prompts, commits, timeZone) {
     }));
 
   writeIfChanged(
-    path.join(CACHE_DIR, `${month}.pending.json`),
+    path.join(CACHE_DIR, `${month}.${id}.pending.json`),
     `${JSON.stringify({ month, sinceCommit: since, days: pending }, null, 2)}\n`,
   );
 }
@@ -274,6 +315,7 @@ function isNewCommit(sha, since) {
 
 function main() {
   const config = loadConfig();
+  const person = currentPerson(config);
   const todayDay = toLocalDay(Date.now(), config.timeZone);
 
   // The boundary. Absent means the tracker was never set up here, and a run
@@ -305,7 +347,7 @@ function main() {
     .filter((block) => block.day >= trackedFrom && block.day <= todayDay);
 
   const prompts = readPrompts();
-  const commits = readCommits(Math.min(...instants));
+  const commits = readCommits(Math.min(...instants), person.emails);
 
   const byMonth = new Map();
   for (const block of blocks) {
@@ -318,8 +360,10 @@ function main() {
   // Rebuild any month with fresh data, plus any month already on disk, so days
   // recorded on another machine keep rendering here.
   const months = new Set(byMonth.keys());
+  const ownMonth = monthFilePattern(person.id);
   for (const name of readdirSync(TRACKING_DIR)) {
-    if (/^\d{4}-\d{2}\.md$/.test(name)) months.add(name.slice(0, 7));
+    const found = ownMonth.exec(name);
+    if (found) months.add(found[1]);
   }
 
   for (const month of [...months].sort()) {
@@ -336,7 +380,7 @@ function main() {
       blocks: dayBlocks,
     }));
 
-    const file = monthFilePath(month);
+    const file = monthFilePath(month, person.id);
     const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
     // Days recorded before the boundary are dropped. Days after it that this
     // machine holds no evidence for are left alone - a second computer's work
@@ -356,7 +400,7 @@ function main() {
     if (rebuilt.days.length === 0) continue;
 
     const changed = writeIfChanged(file, renderMonthFile(rebuilt, config.workdays));
-    writeEvidence(month, rebuilt, monthBlocks, prompts, commits, config.timeZone);
+    writeEvidence(month, person.id, rebuilt, monthBlocks, prompts, commits, config.timeZone);
 
     // Match the rounding the month file itself prints, so the two never differ.
     const total = rebuilt.days.reduce((sum, day) => sum + Math.round(day.seconds / 60) * 60, 0);
@@ -368,4 +412,11 @@ function main() {
   }
 }
 
-main();
+// Not being registered, or having no git identity, is an ordinary condition
+// with a one-line fix, so it prints as a sentence rather than a stack trace.
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}
