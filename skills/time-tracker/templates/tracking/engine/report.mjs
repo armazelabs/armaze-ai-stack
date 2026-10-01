@@ -31,6 +31,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { formatDuration, weekdayOf } from "./blocks.mjs";
 import {
@@ -411,10 +412,43 @@ function withTeam(jobs) {
   return [...jobs, ...team];
 }
 
+/**
+ * A task row that is about keeping the timesheet rather than about the
+ * project - "Timesheet update", "Hours recorded and named", "Tracker fixes".
+ * Time spent updating the tracker is left out at measurement and the
+ * labeller is told never to write such a row; this is the safety net under
+ * both, so one never reaches a client whatever an older month holds.
+ */
+const TRACKER_ROW =
+  /\b(?:time\s*sheet|time[\s-]*track(?:er|ing)?|tracker|hours\s+(?:recorded|named|logged|labell?ed)|(?:recorded|named)\s+and\s+(?:named|recorded))\b/i;
+
+export function isTrackerRow(name) {
+  return TRACKER_ROW.test(name);
+}
+
+/**
+ * Drop the timesheet rows from each day and keep the day's total equal to
+ * the rows that remain. A day with nothing else in it is dropped whole: the
+ * client did not buy an hour of bookkeeping.
+ */
+export function withoutTrackerRows(days) {
+  const kept = [];
+  for (const day of days) {
+    const tasks = day.tasks.filter((task) => !isTrackerRow(task.name));
+    if (tasks.length === day.tasks.length) {
+      kept.push(day);
+      continue;
+    }
+    if (tasks.length === 0) continue;
+    kept.push({ ...day, tasks, seconds: tasks.reduce((sum, task) => sum + task.seconds, 0) });
+  }
+  return kept;
+}
+
 /** A person's recorded days for a month, or null when they have no timesheet. */
 function readDays(month, id) {
   const file = monthFilePath(month, id);
-  return existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")).days : null;
+  return existsSync(file) ? withoutTrackerRows(parseMonthFile(readFileSync(file, "utf8")).days) : null;
 }
 
 /** Every person with a timesheet for `month` in this checkout, registered or not. */
@@ -634,9 +668,12 @@ function main() {
 // Every failure here is an ordinary, actionable condition - an unnamed day, a
 // month with no timesheet, no browser installed - so it prints as a sentence
 // rather than a stack trace. The exit code still marks it as a failure.
-try {
-  main();
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exit(1);
+// Guarded so the pure parts above can be imported by tests without a run.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
 }

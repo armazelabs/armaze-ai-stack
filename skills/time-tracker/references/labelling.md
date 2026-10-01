@@ -141,6 +141,13 @@ because of it**.
   here too.
 - **Where the evidence is genuinely empty**, `Unattributed work` is the correct
   label. It is better than a confident guess.
+- **Never write a row for timesheet work.** No "Timesheet update", "Hours
+  recorded and named", "Timesheet corrected", "Tracker fixes" or anything of
+  the kind. The collector already leaves the time spent on "update tracker"
+  out of the day's total and out of the evidence, so there is nothing to
+  account for; a block whose prompts were nothing but tracker requests gets no
+  row. The PDF drops any such row it finds, so writing one only makes the
+  rows stop adding up.
 - **The rows must add up** to the day's heading total. The collector will warn
   if they do not.
 - **Two to five rows a day** is the useful range. One row for eight hours says

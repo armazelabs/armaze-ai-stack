@@ -26,13 +26,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildBlocks,
   formatDuration,
   isWorkday,
+  subtractBlocks,
   toLocalDay,
   toLocalTime,
+  uncoveredSeconds,
 } from "./blocks.mjs";
 import {
   CACHE_DIR,
@@ -85,21 +88,115 @@ function sentinelPattern(sentinel) {
 }
 
 /**
+ * Whether a prompt is a request to update the tracker and nothing else -
+ * "update tracker", "update tracking", "updatetracking", "update my
+ * timesheet", the `/time-tracker` command, and the typos those arrive with.
+ *
+ * Deliberately anchored to the whole prompt: a prompt that asks for an update
+ * *and* something else is work, and only the labeller can say how much.
+ */
+export function isTrackerPrompt(text) {
+  const prompt = String(text ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s.!?,:;]+$/, "");
+  if (prompt.startsWith("/time-tracker")) return true;
+  return TRACKER_PROMPT.test(prompt);
+}
+
+const TRACKER_PROMPT =
+  /^(?:please\s+|pls\s+)?(?:run\s+|do\s+)?(?:an?\s+|the\s+)?u[pd]{1,2}[a-z]*t[a-z]*\s*(?:the\s+|my\s+)?(?:time\s*)?(?:tr[a-z]*|timesheet|time\s*sheet)(?:\s+please|\s+pls)?$/;
+
+/**
+ * The stretches of each session that were spent updating the tracker.
+ *
+ * Grouped by the session each prompt was typed in. A session whose prompts
+ * are all tracker requests is excluded whole. In a mixed session, a stretch
+ * runs from a tracker prompt until the next prompt that is about something
+ * else, or - when nothing follows it - to the end of the session (`end: null`,
+ * resolved once the transcript's last instant is known).
+ *
+ * Prompts the history could not attribute to a session apply to every
+ * session: there is no way to tell which one they belong to, and leaving them
+ * in would bill the update as work.
+ */
+export function trackerStretches(prompts) {
+  const bySession = new Map();
+  for (const prompt of prompts) {
+    const key = prompt.session ?? "*";
+    const bucket = bySession.get(key);
+    if (bucket) bucket.push(prompt);
+    else bySession.set(key, [prompt]);
+  }
+
+  const exclusions = new Map();
+  for (const [session, list] of bySession) {
+    const sorted = [...list].sort((a, b) => a.at - b.at);
+    if (session !== "*" && sorted.every((prompt) => isTrackerPrompt(prompt.text))) {
+      exclusions.set(session, { whole: true, stretches: [] });
+      continue;
+    }
+    const stretches = [];
+    let open = null;
+    for (const prompt of sorted) {
+      if (isTrackerPrompt(prompt.text)) {
+        if (!open) open = { start: prompt.at, end: null };
+      } else if (open) {
+        open.end = prompt.at;
+        stretches.push(open);
+        open = null;
+      }
+    }
+    if (open) stretches.push(open);
+    if (stretches.length > 0) exclusions.set(session, { whole: false, stretches });
+  }
+  return exclusions;
+}
+
+/**
  * Collect every event instant from this project's transcripts.
  *
- * Only top-level `*.jsonl` files are read: subagent transcripts live in
- * per-session subdirectories and reuse the parent's wall-clock window, so
- * including them would add no time while multiplying the work.
+ * Returns `{ main, all, holes, sessions }`. `main` holds the instants of the top-level
+ * session transcripts; `all` adds each session's `subagents/*.jsonl`. A
+ * background agent keeps working after its parent falls idle, and that work
+ * is only in the subagent file - reading the parent alone drops it. The two
+ * lists let the caller multiply main-session time and credit agent time at
+ * its actual length only where no main block covers it.
+ *
+ * `exclusions` (see `trackerStretches`) removes the time spent updating the
+ * tracker. A session excluded whole is skipped with its subagents, like a
+ * sentinel session. A stretch in a mixed session comes back in `holes`, with
+ * an open end resolved to the session's last instant, for the caller to cut
+ * out of the built blocks with `cutHoles`. The instants inside it are kept
+ * on purpose: the block is built first and the stretch cut from it, so the
+ * minutes between the last event before the update and the update itself
+ * still count - dropping the instants would lose them, or let the idle gap
+ * bridge the hole. `sessions` maps each session to its instants, which is
+ * what lets that cut spare another session's concurrent work.
+ *
+ * A missing transcript folder is empty, not an error: the shape stays the
+ * same so the caller can destructure it.
  */
-function readTimestamps(dir, sentinel) {
-  if (!existsSync(dir)) return [];
+export function readTimestamps(dir, sentinel, exclusions = new Map()) {
+  if (!existsSync(dir)) return { main: [], all: [], holes: [], sessions: new Map() };
 
   const pattern = sentinelPattern(sentinel);
-  const instants = [];
+  const sessions = new Map();
   let skipped = 0;
+  let excluded = 0;
+
+  const instantsOf = (file) => {
+    const instants = [];
+    for (const match of readFileSync(file, "utf8").matchAll(TIMESTAMP)) {
+      const parsed = Date.parse(match[1]);
+      if (!Number.isNaN(parsed)) instants.push(parsed);
+    }
+    return instants;
+  };
 
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    const id = entry.name.slice(0, -".jsonl".length);
 
     const content = readFileSync(path.join(dir, entry.name), "utf8");
     // A scheduled tracker run is itself a Claude session in this repo. Without
@@ -108,21 +205,89 @@ function readTimestamps(dir, sentinel) {
       skipped += 1;
       continue;
     }
+    if (exclusions.get(id)?.whole) {
+      excluded += 1;
+      continue;
+    }
 
+    const main = [];
     for (const match of content.matchAll(TIMESTAMP)) {
       const parsed = Date.parse(match[1]);
-      if (!Number.isNaN(parsed)) instants.push(parsed);
+      if (!Number.isNaN(parsed)) main.push(parsed);
+    }
+
+    const subagents = [];
+    const agentDir = path.join(dir, id, "subagents");
+    if (existsSync(agentDir)) {
+      for (const agent of readdirSync(agentDir, { withFileTypes: true })) {
+        if (!agent.isFile() || !agent.name.endsWith(".jsonl")) continue;
+        subagents.push(...instantsOf(path.join(agentDir, agent.name)));
+      }
+    }
+
+    sessions.set(id, { main, subagents });
+  }
+
+  const holes = [];
+  const result = { main: [], all: [], holes, sessions: new Map() };
+  const shared = exclusions.get("*")?.stretches ?? [];
+  for (const [id, session] of sessions) {
+    result.main.push(...session.main);
+    result.all.push(...session.main, ...session.subagents);
+    result.sessions.set(id, [...session.main, ...session.subagents]);
+
+    const own = exclusions.get(id)?.stretches ?? [];
+    const last = Math.max(...session.main, ...session.subagents, 0);
+    for (const stretch of [...own, ...shared]) {
+      const end = stretch.end ?? last;
+      if (end > stretch.start) holes.push({ session: id, start: stretch.start, end });
     }
   }
 
   if (skipped > 0) {
     console.log(`Skipped ${skipped} tracker-automation session(s).`);
   }
-  return instants;
+  if (excluded > 0) {
+    console.log(`Skipped ${excluded} session(s) that only updated the tracker.`);
+  }
+  return result;
 }
 
-function readPrompts() {
-  const file = historyPath();
+/**
+ * Cut the tracker-update stretches out of a set of blocks.
+ *
+ * A stretch belongs to one session. Another session working at the same
+ * time is still work, so a hole only removes the parts of itself that no
+ * other session's activity covers - `blocks` is the merged timeline, where
+ * that distinction is already lost, which is why the per-session instants
+ * come along. The other sessions' own holes are taken out of that cover, so
+ * two updates running side by side do not spare each other.
+ */
+export function cutHoles(blocks, holes, sessionInstants, options) {
+  if (holes.length === 0) return blocks;
+  const cover = new Map();
+  const coverFor = (session) => {
+    let found = cover.get(session);
+    if (!found) {
+      const others = [];
+      for (const [id, instants] of sessionInstants) if (id !== session) others.push(...instants);
+      const theirHoles = holes
+        .filter((hole) => hole.session !== session)
+        .map((hole) => ({ day: "", start: hole.start, end: hole.end }));
+      found = subtractBlocks(buildBlocks(others, options), theirHoles);
+      cover.set(session, found);
+    }
+    return found;
+  };
+  const effective = holes.flatMap((hole) =>
+    subtractBlocks([{ day: "", start: hole.start, end: hole.end }], coverFor(hole.session)),
+  );
+  // A cut can leave a sliver shorter than a minute on either side of a hole.
+  // It rounds to nothing and would only clutter the evidence.
+  return subtractBlocks(blocks, effective).filter((block) => block.end - block.start >= 60 * 1000);
+}
+
+export function readPrompts(file = historyPath(), repoRoot = REPO_ROOT) {
   if (!existsSync(file)) return [];
 
   const prompts = [];
@@ -131,10 +296,14 @@ function readPrompts() {
     try {
       const row = JSON.parse(line);
       if (typeof row !== "object" || row === null) continue;
-      const { project, timestamp, display } = row;
-      if (project !== REPO_ROOT) continue;
+      const { project, timestamp, display, sessionId } = row;
+      if (project !== repoRoot) continue;
       if (typeof timestamp !== "number" || typeof display !== "string") continue;
-      prompts.push({ at: timestamp, text: display });
+      prompts.push({
+        at: timestamp,
+        text: display,
+        session: typeof sessionId === "string" && sessionId ? sessionId : null,
+      });
     } catch {
       // A truncated trailing line is normal while a session is live.
     }
@@ -330,24 +499,42 @@ function main() {
 
   mkdirSync(CACHE_DIR, { recursive: true });
 
-  const instants = readTimestamps(transcriptDir(), config.sentinel);
-  if (instants.length === 0) {
+  // Time spent updating the tracker is not work. The prompts say when each
+  // update began, so those stretches are taken out before anything is
+  // measured, and the prompts themselves never reach the evidence - a block
+  // that holds nothing else gets no row to name.
+  const allPrompts = readPrompts();
+  const exclusions = trackerStretches(allPrompts);
+  const prompts = allPrompts.filter((prompt) => !isTrackerPrompt(prompt.text));
+
+  const { main: mainInstants, all, holes, sessions } = readTimestamps(
+    transcriptDir(),
+    config.sentinel,
+    exclusions,
+  );
+  if (all.length === 0) {
     console.log(`No transcripts found under ${transcriptDir()}.`);
     return;
   }
 
-  const blocks = buildBlocks(instants, {
-    idleGapMinutes: config.idleGapMinutes,
-    timeZone: config.timeZone,
-  })
-    .filter((block) => isWorkday(block.day, config.workdays))
+  const options = { idleGapMinutes: config.idleGapMinutes, timeZone: config.timeZone };
+  const inRange = (block) =>
     // The boundary. Work predating the install is not part of the record, and
     // nothing in the future is counted, even though transcripts may exist for
     // either.
-    .filter((block) => block.day >= trackedFrom && block.day <= todayDay);
+    isWorkday(block.day, config.workdays) && block.day >= trackedFrom && block.day <= todayDay;
 
-  const prompts = readPrompts();
-  const commits = readCommits(Math.min(...instants), person.emails);
+  // Two timelines over the same days. `blocks` is everything - sessions and
+  // their subagents - and is what the evidence and the day grouping use.
+  // `mainBlocks` is the sessions alone: the time the multiplier applies to.
+  // What `blocks` holds beyond `mainBlocks` is agent work no session covered,
+  // credited at its actual length.
+  const blocks = cutHoles(buildBlocks(all, options), holes, sessions, options).filter(inRange);
+  const mainBlocks = cutHoles(buildBlocks(mainInstants, options), holes, sessions, options).filter(
+    inRange,
+  );
+
+  const commits = readCommits(Math.min(...all), person.emails);
 
   const byMonth = new Map();
   for (const block of blocks) {
@@ -375,10 +562,14 @@ function main() {
       if (bucket) bucket.push(block);
       else byDate.set(block.day, [block]);
     }
-    const measured = [...byDate.entries()].map(([date, dayBlocks]) => ({
-      date,
-      blocks: dayBlocks,
-    }));
+    const measured = [...byDate.entries()].map(([date, dayBlocks]) => {
+      const dayMainBlocks = mainBlocks.filter((block) => block.day === date);
+      return {
+        date,
+        blocks: dayMainBlocks,
+        unscaledSeconds: uncoveredSeconds(dayBlocks, dayMainBlocks),
+      };
+    });
 
     const file = monthFilePath(month, person.id);
     const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
@@ -414,9 +605,12 @@ function main() {
 
 // Not being registered, or having no git identity, is an ordinary condition
 // with a one-line fix, so it prints as a sentence rather than a stack trace.
-try {
-  main();
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exit(1);
+// Guarded so the pure parts above can be imported by tests without a run.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
 }

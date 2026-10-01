@@ -533,9 +533,14 @@ function main() {
   const readmeStale = (() => {
     try {
       // Also stale: a readme from before per-person files, which documents one
-      // shared `<YYYY-MM>.md` and `log.jsonl` that no longer exist.
+      // shared `<YYYY-MM>.md` and `log.jsonl` that no longer exist - or from
+      // before subagent time and tracker updates were measured as they are now.
       const text = readFileSync(readmePath, "utf8");
-      return /track\.mjs|state\.json/.test(text) || !text.includes("<YYYY-MM>.<person>.md");
+      return (
+        /track\.mjs|state\.json/.test(text) ||
+        !text.includes("<YYYY-MM>.<person>.md") ||
+        !text.includes("Subagents count without the multiplier")
+      );
     } catch {
       return false;
     }

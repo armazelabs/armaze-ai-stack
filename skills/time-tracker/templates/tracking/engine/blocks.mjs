@@ -132,6 +132,60 @@ export function mergeBlocks(blocks) {
   return merged;
 }
 
+/**
+ * The parts of `blocks` that no interval in `cover` overlaps.
+ *
+ * Both lists are merged first, so overlapping entries on either side count
+ * once. A piece keeps the day of the block it was cut from - a block never
+ * spans midnight, so neither does any part of it - while `cover` is read as
+ * bare `[start, end]` ranges and may cross midnight freely.
+ */
+export function subtractBlocks(blocks, cover) {
+  const sortedCover = mergeRanges(cover);
+  const pieces = [];
+
+  for (const block of mergeBlocks(blocks)) {
+    let cursor = block.start;
+    for (const range of sortedCover) {
+      if (range.end <= cursor) continue;
+      if (range.start >= block.end) break;
+      if (range.start > cursor) pieces.push({ day: block.day, start: cursor, end: range.start });
+      cursor = Math.max(cursor, range.end);
+      if (cursor >= block.end) break;
+    }
+    if (cursor < block.end) pieces.push({ day: block.day, start: cursor, end: block.end });
+  }
+
+  return pieces;
+}
+
+/** Union of `[start, end]` ranges on the epoch line, ignoring days. */
+function mergeRanges(ranges) {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged = [];
+  for (const range of sorted) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+      continue;
+    }
+    merged.push({ start: range.start, end: range.end });
+  }
+  return merged;
+}
+
+/**
+ * Seconds of `blocks` that no block in `cover` overlaps.
+ *
+ * This is how subagent time is credited: an agent that worked while its main
+ * session sat idle adds the stretch nobody else was counting, and an agent
+ * that ran alongside the main session adds nothing - the main session already
+ * covers that time, and counting it again would bill one hour as two.
+ */
+export function uncoveredSeconds(blocks, cover) {
+  return totalSeconds(subtractBlocks(blocks, mergeBlocks(cover)));
+}
+
 /** Whole seconds of activity across a set of blocks. */
 export function totalSeconds(blocks) {
   return blocks.reduce((sum, block) => sum + (block.end - block.start) / 1000, 0);

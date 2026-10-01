@@ -266,6 +266,9 @@ function reconcileTasks(existing, seconds, pending, tailSeconds) {
  *
  * `hoursMultiplier` scales measured seconds before they are recorded - 1.5
  * means an hour of measured activity is written down as an hour and a half.
+ * It applies to `entry.blocks`, the main-session time. An entry may also
+ * carry `unscaledSeconds` - subagent time no main-session block covered -
+ * which is added at its actual length, never multiplied.
  */
 export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hoursMultiplier = 1) {
   const days = new Map((existing?.days ?? []).map((day) => [day.date, day]));
@@ -275,23 +278,26 @@ export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hou
     // Measured time is scaled here, once, so every downstream consumer -
     // reconciliation, the rendered markdown, the PDF - sees the same already
     // scaled seconds rather than each having to remember to apply it.
-    const seconds = totalSeconds(merged) * hoursMultiplier;
+    const seconds = totalSeconds(merged) * hoursMultiplier + (entry.unscaledSeconds ?? 0);
     if (seconds <= 0) continue;
 
     const previous = days.get(entry.date);
 
-    // A finished day whose every row is named is settled. The day has been
-    // measured, it has been named, and the number a reader saw when the day
-    // closed must still be there tomorrow - so a tail of transcript that
-    // surfaces later (a session outliving the day's final collect, say) stays
-    // in the evidence cache but no longer moves the record. A day still
-    // carrying a placeholder is still being reconciled and keeps updating,
-    // and today always does.
+    // A finished day whose every row is named is settled: protected against
+    // shrinking and against rounding, but not against growth. The number a
+    // reader saw when the day closed must still be there tomorrow, so a
+    // re-measure within a minute of it changes nothing. A day named partway
+    // through and then worked on until midnight is the exception that made
+    // this a rule rather than a wall - the rows written at noon stay as they
+    // are, and the evening lands below them as a new placeholder row through
+    // the reconcile further down. A day still carrying a placeholder is still
+    // being reconciled and keeps updating, and today always does.
     if (
       previous &&
       entry.date < todayDay &&
       previous.tasks.length > 0 &&
-      previous.tasks.every((task) => !isPlaceholder(task.name))
+      previous.tasks.every((task) => !isPlaceholder(task.name)) &&
+      seconds - previous.seconds <= SHRINK_TOLERANCE_SECONDS
     ) {
       continue;
     }

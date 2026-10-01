@@ -151,6 +151,14 @@ merged. If no
 Chromium-based browser is found the hours are still recorded and the markdown is
 still complete - say so rather than treating it as a failure.
 
+**Time spent updating the tracker is not work.** The collector leaves out a
+session that only asked for an update, and in a mixed session the stretch from
+"update tracker" to the next unrelated prompt. Never write a task row for
+timesheet work ("Timesheet update", "Hours recorded and named" or similar) -
+the PDF drops such rows anyway, so one only makes the day's rows stop adding
+up. Subagent time is counted at its actual length, without the multiplier,
+wherever no main session covered it.
+
 **Today gets named like any other day.** With nothing running in the background
 there is no later pass to defer to, so a day left as `In progress` would just
 stay that way and block the PDF. Later work on the same day arrives as a fresh

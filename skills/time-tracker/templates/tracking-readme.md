@@ -53,11 +53,22 @@ recorded - that is `hoursMultiplier` in `config.json`. Changing it applies to
 days measured from then on; days already recorded keep the number they were
 written with.
 
+Subagents count without the multiplier. A background agent working while its
+main session is idle adds the time it worked, at its actual length. Where it
+overlaps a main session, only the main session's time counts.
+
 All seven days count, weekends included.
 
 The day totals are recomputed from the transcripts on every collect. The task
 names are not: anything you or the labelling pass writes in place of
-`Unlabelled` is kept.
+`Unlabelled` is kept. A day named partway through that then grows keeps its
+named rows, and the extra time shows up as a new `Unlabelled` row. A named day
+never shrinks.
+
+Time spent updating the tracker is not counted and never appears on a PDF. A
+session that only said "update tracker" is left out whole; in a session that
+did other things too, the stretch from the request to the next unrelated
+prompt is left out.
 
 ## Naming the work
 

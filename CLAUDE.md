@@ -51,6 +51,9 @@ cat install.zsh | HOME=/path/to/fakehome ZSH= ZSH_CUSTOM= ARMAZE_STACK_DIR=/path
 
 # Check the plugin resolves the repo root and registers completion
 zsh -fc 'autoload -Uz compinit; compinit -u -d /dev/null; source oh-my-zsh/armaze/armaze.plugin.zsh; print $ARMAZE_STACK_DIR ${_comps[aistack]}'
+
+# The time-tracker skill's engine is Node (the one component with tests - node:test, no dependencies)
+node --test skills/time-tracker/tests/
 ```
 
 `git rev-parse HEAD` must succeed in the fixture stack for `stack_rev` to produce a real value; `git init && git commit` the fixture first.
