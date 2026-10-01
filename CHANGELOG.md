@@ -2,6 +2,14 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.7.1 - 2026-10-01
+
+### Fixed
+
+- **time-tracker** keeps counting a day after it has been named. Running "update tracker" partway through a day used to freeze it: a named past day was treated as settled, and the rest of the day's work was never counted. A named day now still grows. Its rows stay as written and the extra time shows up as a new `Unlabelled` row to name. It still never shrinks.
+- **time-tracker** counts subagent time. Background agents that keep working while their main session sits idle were dropped. Their time is now added at its actual length, without the hours multiplier, and only where no main session was already counting it.
+- **time-tracker** no longer bills for its own upkeep. Time spent in "update tracker" runs is left out of the hours, and a timesheet row such as "Timesheet update" never reaches a monthly, weekly or client PDF. Day totals on the PDF always equal the rows shown.
+
 ## 0.7.0 - 2026-09-25
 
 ### Changed
