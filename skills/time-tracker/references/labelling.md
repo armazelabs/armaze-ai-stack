@@ -2,29 +2,35 @@
 
 The arithmetic is not your job - the collector measures the hours. Your job is
 to say **what the work was**, using only evidence: a short name for each task,
-and under it a few bullets saying what that time actually delivered.
+its work type, and under it a few bullets saying what that time actually
+delivered.
 
-Everything is per person. The files carry the id of whoever is running this -
-`<month>.<id>.md`, `cache/<month>.<id>.pending.json` - and the evidence holds
-only that person's own commits. `<id>` below means that suffix; the collector
-prints the month it wrote, and the tracking folder shows the files.
+Everything is per person, per computer. The files carry the file id of whoever
+is running this, on this computer - `<month>.<fileid>.md`,
+`cache/<month>.<fileid>.pending.json`, where `<fileid>` is
+`<person>.<computer>` - and the evidence holds only that person's own commits
+and this computer's own sessions. The collector prints the month it wrote, and
+the tracking folder shows the files. Never edit another computer's month file
+to name its days: it holds time this computer has no evidence for, and only
+that computer can name it.
 
 ## What the files mean
 
-- `<tracking>/<month>.<id>.md` - the record. Human-readable, hand-correctable, and
+- `<tracking>/<month>.<fileid>.md` - the record. Human-readable, hand-correctable, and
   the input to the PDF. This is the only file you edit, and within it only the
-  task rows and their bullets.
-- `<tracking>/cache/<month>.<id>.pending.json` - **your evidence, and the file
+  task rows' names and types and their bullets. Never a row marked `· manual`:
+  those belong to `manual.mjs` (see the skill's Manual hours step).
+- `<tracking>/cache/<month>.<fileid>.pending.json` - **your evidence, and the file
   you read.** Only the days that still need work, each with its `needs`
-  (`names`, `bullets`, or both), its current `tasks`, and its blocks: the
+  (`names`, `bullets`, `types`, or any mix), its current `tasks`, and its blocks: the
   prompts typed in them and this person's commits landed in them, each commit
   with its `subject` and, where it has one, its message `body`. Generated,
   gitignored.
-- `<tracking>/cache/<month>.<id>.raw.json` - the same evidence for the *whole* month,
+- `<tracking>/cache/<month>.<fileid>.raw.json` - the same evidence for the *whole* month,
   settled days included. Reach for it only when re-checking a day someone has
   already named. Reading it for a routine update means reading a month to name
   a day, which is exactly what `pending.json` exists to avoid.
-- `<tracking>/log.<id>.jsonl` - what previous runs did. You append to it at the end
+- `<tracking>/log.<fileid>.jsonl` - what previous runs did. You append to it at the end
   of an update; you do not need to read it to label.
 
 ## Procedure
@@ -34,7 +40,7 @@ prints the month it wrote, and the tracking folder shows the files.
    in config.json, stop and tell the user - the tracker is not set up here and
    there is nothing to label.
 
-2. Read `cache/<month>.<id>.pending.json` for the month you are labelling (the
+2. Read `cache/<month>.<fileid>.pending.json` for the month you are labelling (the
    current month unless told otherwise). Every day in it needs you - that is
    what the file is. An empty `days` array means there is nothing to name, and
    the honest answer is to say so rather than to go looking in `raw.json`.
@@ -73,19 +79,19 @@ prints the month it wrote, and the tracking folder shows the files.
    to find where topics actually change, and derive each task's minutes from the
    time span it covers rather than splitting the day proportionally.
 
-   Then edit `<tracking>/<month>.<id>.md`, replacing that day's
+   Then edit `<tracking>/<month>.<fileid>.md`, replacing that day's
 
    ```
-   | Unlabelled | 5h 56m |
+   | Unlabelled | - | 5h 56m |
    ```
 
-   row with one row per task, and add a bullet list after the table - one
-   top-level item per task, spelled exactly as in its row, with its outcome
-   bullets indented beneath it:
+   row with one row per task - its name, its work type, its time - and add a
+   bullet list after the table - one top-level item per task, spelled exactly
+   as in its row, with its outcome bullets indented beneath it:
 
    ```
-   | Legal pages and hero band | 3h 10m |
-   | Design-system rail documentation | 2h 46m |
+   | Legal pages and hero band | Development | 3h 10m |
+   | Design-system rail documentation | Content | 2h 46m |
 
    - Legal pages and hero band
      - Privacy policy and terms pages, linked from the footer
@@ -95,9 +101,15 @@ prints the month it wrote, and the tracking folder shows the files.
      - Usage examples for buttons, forms and cards
    ```
 
-   A day whose `needs` is only `bullets` is already named: add the list for
-   the tasks that lack one, and leave the rows - names and times - exactly as
-   they are. That is how days named before bullets existed get filled in.
+   A day whose `needs` is only `bullets` or `types` is already named: add the
+   list for the tasks that lack one, write a type into each `-` Type cell, and
+   leave the names and times exactly as they are. That is how days named
+   before bullets or types existed get filled in.
+
+   A row whose Type reads `Design · manual` (any type) was logged by hand.
+   Its hours are not in the blocks and not yours to split - leave it exactly
+   as it is, and name only the measured rows around it. The rows still add up
+   to the day's total with it included.
 
 4. **Do not re-run the collector to check your work.** Today is still running,
    so a collect after naming will nearly always find another minute or two and
@@ -132,6 +144,31 @@ because of it**.
   about it.
 - **Nothing personal.** No names, emails or who-did-what - the timesheet is
   already one person's.
+
+## Picking the work type
+
+Every named task gets exactly one type from `categories` in
+`<tracking>/config.json`, spelled exactly as listed there - a type the list
+does not hold splits the PDF's "By type" table and the collector warns about
+it. The default list is Design, Development, Research, Content, QA/Testing,
+Meetings, Project management, Other; a project may have trimmed or extended it.
+
+Read the type off the same evidence as the name:
+
+- **Design** - layouts, screens, visual style, Figma, mockups, icons, colour and
+  type decisions, UI polish where the prompts are about how it looks.
+- **Development** - code: features, fixes, refactors, builds, deploys,
+  integrations. Most commits land here.
+- **Research** - reading, comparing options, investigating a problem before
+  changing anything, spikes.
+- **Content** - copy, docs, help text, marketing pages' words.
+- **QA/Testing** - writing tests, running them, reproducing and verifying bugs.
+- **Meetings**, **Project management** - planning, specs, scoping, tickets.
+- **Other** - only when nothing above fits.
+
+A task that mixes two kinds of work takes the one most of its time went to;
+if the split is real and large, it is two tasks. `Unattributed work` needs no
+type - leave its cell `-`.
 
 ## Rules for the labels
 

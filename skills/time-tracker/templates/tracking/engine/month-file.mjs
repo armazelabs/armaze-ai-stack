@@ -59,6 +59,21 @@ const SHRINK_TOLERANCE_SECONDS = 60;
  */
 const ZERO_ROW_SECONDS = 30;
 
+/**
+ * Marks a row as manual in the Type column: `Design · manual`. Manual hours are
+ * work that never touched a transcript - a Figma afternoon, a paper sketch - so
+ * no collect can measure them. The marker is what tells a rebuild to leave the
+ * row alone and to count it on top of what it measures.
+ */
+export const MANUAL_MARK = "manual";
+const TYPE_SEPARATOR = " · ";
+/** The Type cell of a row nobody has typed yet, and of the placeholders. */
+const NO_TYPE = "-";
+
+function sumSeconds(tasks) {
+  return tasks.reduce((sum, task) => sum + task.seconds, 0);
+}
+
 /** Whether a task still needs a real name. */
 export function isPlaceholder(name) {
   return PLACEHOLDERS.has(name);
@@ -73,8 +88,33 @@ export function needsBullets(task) {
   return !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !(task.details?.length > 0);
 }
 
+/**
+ * Whether a named task still needs its work type - one of the config's
+ * `categories`. Like missing bullets this only thins the report, so it is a
+ * backfill on the next update, never a reason to refuse a PDF.
+ */
+export function needsType(task) {
+  return !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !task.type;
+}
+
+/** `Design`, `Design · manual`, or `-` - the Type cell as the markdown spells it. */
+export function typeCell(task) {
+  const type = task.type || NO_TYPE;
+  return task.manual ? `${type}${TYPE_SEPARATOR}${MANUAL_MARK}` : type;
+}
+
+function parseTypeCell(cell) {
+  const marker = `${TYPE_SEPARATOR}${MANUAL_MARK}`;
+  const manual = cell.toLowerCase().endsWith(marker);
+  const type = (manual ? cell.slice(0, -marker.length) : cell).trim();
+  return { type: type && type !== NO_TYPE ? type : null, manual };
+}
+
 const DAY_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s+\([A-Za-z]{3}\)\s+-\s+(.+?)\s*$/;
+/** `| Task | Time |` - files written before tasks carried a type. */
 const TABLE_ROW = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
+/** `| Task | Type | Time |` - tried first, since the two-column pattern would swallow it. */
+const TYPED_ROW = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
 const MONTH_HEADING = /^#\s+Time tracking\s+-\s+(\d{4}-\d{2})\s*$/;
 /** `- Task name` - selects which task the indented bullets below belong to. */
 const DETAIL_TASK = /^-\s+(.+?)\s*$/;
@@ -132,12 +172,17 @@ export function parseMonthFile(markdown) {
       continue;
     }
 
-    const rowMatch = TABLE_ROW.exec(line);
+    // A two-column row is an older file: it parses with no type, and the
+    // next render writes it back with a Type column for the labeller to fill.
+    const typedMatch = TYPED_ROW.exec(line);
+    const rowMatch = typedMatch ?? TABLE_ROW.exec(line);
     if (rowMatch) {
-      const [, name, time] = rowMatch;
+      const name = rowMatch[1];
+      const time = typedMatch ? typedMatch[3] : rowMatch[2];
       // Skip the header row and its `| ---- |` separator.
       if (name === "Task" || /^-+$/.test(name)) continue;
-      current.tasks.push({ name, seconds: parseDuration(time) });
+      const { type, manual } = typedMatch ? parseTypeCell(typedMatch[2]) : { type: null, manual: false };
+      current.tasks.push({ name, type, manual, seconds: parseDuration(time) });
     }
   }
 
@@ -170,10 +215,10 @@ export function renderMonthFile(file, workdays = [0, 1, 2, 3, 4, 5, 6]) {
   for (const day of [...file.days].sort((a, b) => a.date.localeCompare(b.date))) {
     out.push(`## ${day.date} (${weekdayOf(day.date)}) - ${formatDuration(day.seconds)}`);
     out.push("");
-    out.push("| Task | Time |");
-    out.push("| ---- | ---- |");
+    out.push("| Task | Type | Time |");
+    out.push("| ---- | ---- | ---- |");
     for (const task of day.tasks) {
-      out.push(`| ${task.name} | ${formatDuration(task.seconds)} |`);
+      out.push(`| ${task.name} | ${typeCell(task)} | ${formatDuration(task.seconds)} |`);
     }
     out.push("");
 
@@ -257,6 +302,30 @@ function reconcileTasks(existing, seconds, pending, tailSeconds) {
 }
 
 /**
+ * A day's measured time, scaled: main-session blocks times the multiplier,
+ * plus agent time no session covered at its actual length. Scaled here, once,
+ * so every downstream consumer - reconciliation, the rendered markdown, the
+ * PDF - sees the same already scaled seconds rather than each having to
+ * remember to apply it.
+ */
+export function measuredSeconds(entry, hoursMultiplier = 1) {
+  return totalSeconds(mergeBlocks(entry.blocks)) * hoursMultiplier + (entry.unscaledSeconds ?? 0);
+}
+
+/**
+ * How much of a day's measured time is still unnamed, and so may be taken
+ * out as overlap with another computer. Named rows are someone's accepted
+ * account of the day; overlap found after they were written is reported, not
+ * trimmed from them. A day with no record yet is all unnamed.
+ */
+export function overlapRoom(previousDay, measured) {
+  const named = (previousDay?.tasks ?? [])
+    .filter((task) => !task.manual && !isPlaceholder(task.name))
+    .reduce((sum, task) => sum + task.seconds, 0);
+  return Math.max(0, measured - named);
+}
+
+/**
  * Rebuild the month from what this machine measured, keeping existing labels.
  *
  * Days the caller has no evidence for are kept exactly as they were. That is
@@ -269,19 +338,33 @@ function reconcileTasks(existing, seconds, pending, tailSeconds) {
  * It applies to `entry.blocks`, the main-session time. An entry may also
  * carry `unscaledSeconds` - subagent time no main-session block covered -
  * which is added at its actual length, never multiplied.
+ *
+ * `overlapSeconds` is time another of the person's computers already counted,
+ * already scaled and capped to the day's unnamed time (`overlapRoom`); it
+ * comes off the measured total before reconciling.
+ *
+ * Manual rows sit outside all of this. No transcript measured them, so no
+ * transcript can grow, shrink or trim them: every guard and the reconcile run
+ * against the measured rows alone, and the manual ones are carried across
+ * untouched, their time added on top of the day's measured total.
  */
 export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hoursMultiplier = 1) {
   const days = new Map((existing?.days ?? []).map((day) => [day.date, day]));
 
   for (const entry of measured) {
-    const merged = mergeBlocks(entry.blocks);
-    // Measured time is scaled here, once, so every downstream consumer -
-    // reconciliation, the rendered markdown, the PDF - sees the same already
-    // scaled seconds rather than each having to remember to apply it.
-    const seconds = totalSeconds(merged) * hoursMultiplier + (entry.unscaledSeconds ?? 0);
-    if (seconds <= 0) continue;
+    const raw = measuredSeconds(entry, hoursMultiplier);
+    if (raw <= 0) continue;
+    // What this computer counts once time another of the person's computers
+    // already counted is left out. The guards below compare `raw` - this
+    // machine's evidence - against the record; only the reconcile uses the
+    // reduced figure.
+    const seconds = raw - (entry.overlapSeconds ?? 0);
 
     const previous = days.get(entry.date);
+    const manual = (previous?.tasks ?? []).filter((task) => task.manual);
+    const manualSeconds = sumSeconds(manual);
+    const recorded = (previous?.tasks ?? []).filter((task) => !task.manual);
+    const recordedSeconds = (previous?.seconds ?? 0) - manualSeconds;
 
     // A finished day whose every row is named is settled: protected against
     // shrinking and against rounding, but not against growth. The number a
@@ -295,9 +378,9 @@ export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hou
     if (
       previous &&
       entry.date < todayDay &&
-      previous.tasks.length > 0 &&
-      previous.tasks.every((task) => !isPlaceholder(task.name)) &&
-      seconds - previous.seconds <= SHRINK_TOLERANCE_SECONDS
+      recorded.length > 0 &&
+      recorded.every((task) => !isPlaceholder(task.name)) &&
+      raw - recordedSeconds <= SHRINK_TOLERANCE_SECONDS
     ) {
       continue;
     }
@@ -310,26 +393,41 @@ export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hou
     // keep what is on record and say so.
     if (
       previous &&
-      previous.seconds - seconds > SHRINK_TOLERANCE_SECONDS &&
-      previous.tasks.some((task) => !isPlaceholder(task.name))
+      recordedSeconds - raw > SHRINK_TOLERANCE_SECONDS &&
+      recorded.some((task) => !isPlaceholder(task.name))
     ) {
       console.warn(
-        `Warning: ${entry.date} measures ${formatDuration(seconds)} but the timesheet records ` +
-          `${formatDuration(previous.seconds)} against named work. Keeping the recorded day - ` +
+        `Warning: ${entry.date} measures ${formatDuration(raw)} but the timesheet records ` +
+          `${formatDuration(recordedSeconds)} against named work. Keeping the recorded day - ` +
           `its transcripts have most likely expired.`,
       );
       continue;
     }
 
+    // Everything measured here was counted on another computer first. The
+    // overlap is only ever taken out of unnamed time, so nothing named stands
+    // here: what is left is the manual rows, or no day at all.
+    if (seconds < ZERO_ROW_SECONDS) {
+      if (manual.length > 0) {
+        days.set(entry.date, { date: entry.date, seconds: manualSeconds, tasks: manual.map((task) => ({ ...task })) });
+      } else {
+        days.delete(entry.date);
+      }
+      continue;
+    }
+
     days.set(entry.date, {
       date: entry.date,
-      seconds,
-      tasks: reconcileTasks(
-        days.get(entry.date)?.tasks ?? [],
-        seconds,
-        entry.date === todayDay ? IN_PROGRESS : UNLABELLED,
-        idleGapMinutes * 60,
-      ),
+      seconds: seconds + manualSeconds,
+      tasks: [
+        ...reconcileTasks(
+          recorded,
+          seconds,
+          entry.date === todayDay ? IN_PROGRESS : UNLABELLED,
+          idleGapMinutes * 60,
+        ),
+        ...manual.map((task) => ({ ...task })),
+      ],
     });
   }
 
@@ -337,4 +435,61 @@ export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hou
     month,
     days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
+}
+
+/**
+ * Manual hours: added, changed and removed only through these, so a day's
+ * total is never hand-written. A day's measured time is its total less its
+ * manual rows, and every edit keeps it exactly that while the manual rows
+ * change around it. A day that holds only manual rows exists all the same -
+ * no collect has evidence for it, so no collect touches it.
+ *
+ * Each takes a parsed month file and returns a new one; the caller writes it.
+ */
+export function addManualTask(file, date, task) {
+  const days = file.days.map((day) => ({ ...day, tasks: day.tasks.map((row) => ({ ...row })) }));
+  let day = days.find((candidate) => candidate.date === date);
+  if (!day) {
+    day = { date, seconds: 0, tasks: [] };
+    days.push(day);
+  }
+  if (day.tasks.some((row) => row.manual && row.name === task.name)) {
+    throw new Error(`${date} already has a manual row "${task.name}". Change it with \`set\` instead.`);
+  }
+  day.tasks.push({ ...task, manual: true });
+  day.seconds += task.seconds;
+  return { ...file, days: days.sort((a, b) => a.date.localeCompare(b.date)) };
+}
+
+export function setManualTask(file, date, name, changes) {
+  return editManual(file, date, name, (row) => {
+    const next = { ...row };
+    if (changes.rename) next.name = changes.rename;
+    if (changes.type) next.type = changes.type;
+    if (changes.seconds != null) next.seconds = changes.seconds;
+    if (changes.details) next.details = changes.details;
+    return next;
+  });
+}
+
+export function removeManualTask(file, date, name) {
+  return editManual(file, date, name, () => null);
+}
+
+function editManual(file, date, name, change) {
+  const day = file.days.find((candidate) => candidate.date === date);
+  const row = day?.tasks.find((task) => task.manual && task.name === name);
+  if (!row) throw new Error(`${date} has no manual row "${name}".`);
+
+  const replaced = change(row);
+  if (replaced && replaced.name !== name && day.tasks.some((task) => task.manual && task.name === replaced.name)) {
+    throw new Error(`${date} already has a manual row "${replaced.name}".`);
+  }
+  const tasks = day.tasks.flatMap((task) => (task === row ? (replaced ? [replaced] : []) : [{ ...task }]));
+  const seconds = day.seconds - row.seconds + (replaced?.seconds ?? 0);
+  const days = file.days
+    .map((candidate) => (candidate === day ? { ...day, seconds, tasks } : candidate))
+    // A day that only ever held manual time is gone once its last row is.
+    .filter((candidate) => candidate.tasks.length > 0);
+  return { ...file, days };
 }

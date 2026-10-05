@@ -19,15 +19,38 @@ import {
   totalSeconds,
   uncoveredSeconds,
 } from "../templates/tracking/engine/blocks.mjs";
+import { monthFileIds, personFileIds, splitFileId } from "../templates/tracking/engine/config.mjs";
 import {
   cutHoles,
+  dayNeeds,
   isTrackerPrompt,
+  overlapCover,
   readPrompts,
   readTimestamps,
   trackerStretches,
 } from "../templates/tracking/engine/collect.mjs";
-import { UNLABELLED, rebuild } from "../templates/tracking/engine/month-file.mjs";
-import { isTrackerRow, withoutTrackerRows } from "../templates/tracking/engine/report.mjs";
+import { lastCommit } from "../templates/tracking/engine/log.mjs";
+import { entryProblem, findManualOwner, parseHours } from "../templates/tracking/engine/manual.mjs";
+import {
+  IN_PROGRESS,
+  UNLABELLED,
+  addManualTask,
+  overlapRoom,
+  parseMonthFile,
+  rebuild,
+  removeManualTask,
+  renderMonthFile,
+  setManualTask,
+} from "../templates/tracking/engine/month-file.mjs";
+import {
+  isTrackerRow,
+  manualTag,
+  mergeDays,
+  personalDays,
+  typeRollup,
+  withoutTrackerRows,
+} from "../templates/tracking/engine/report.mjs";
+import { legacyMoves } from "../scripts/setup.mjs";
 
 const DAY = "2026-09-14";
 const TODAY = "2026-09-30";
@@ -112,6 +135,185 @@ test("agent time fully inside a main block adds nothing", () => {
   ];
   const { days } = rebuild(null, "2026-09", measured, TODAY, 20, 1.5);
   assert.equal(days[0].seconds, 90 * 60);
+});
+
+// --- work types and manual hours -------------------------------------------
+
+const TYPED_FILE = `# Time tracking - 2026-09
+
+Total: 6h 30m across 1 tracked day.
+
+## 2026-09-14 (Mon) - 6h 30m
+
+| Task | Type | Time |
+| ---- | ---- | ---- |
+| Checkout form validation | Development | 3h 30m |
+| Checkout screens in Figma | Design · manual | 3h |
+
+- Checkout form validation
+  - Clear error messages on every field
+- Checkout screens in Figma
+  - Mobile and desktop checkout layouts
+`;
+
+function manualRow(name, seconds, type = "Design") {
+  return { name, type, manual: true, seconds };
+}
+
+test("an old two-column file parses untyped and re-renders with a Type column", () => {
+  const old = [
+    "# Time tracking - 2026-09",
+    "",
+    "## 2026-09-14 (Mon) - 2h",
+    "",
+    "| Task | Time |",
+    "| ---- | ---- |",
+    "| Checkout | 2h |",
+    "",
+  ].join("\n");
+  const parsed = parseMonthFile(old);
+  assert.deepEqual(parsed.days[0].tasks, [{ name: "Checkout", type: null, manual: false, seconds: 7200 }]);
+  assert.match(renderMonthFile(parsed), /\| Task \| Type \| Time \|\n\| ---- \| ---- \| ---- \|\n\| Checkout \| - \| 2h \|/);
+});
+
+test("a typed file with a manual row round-trips byte for byte", () => {
+  const parsed = parseMonthFile(TYPED_FILE);
+  assert.deepEqual(
+    parsed.days[0].tasks.map(({ name, type, manual }) => ({ name, type, manual })),
+    [
+      { name: "Checkout form validation", type: "Development", manual: false },
+      { name: "Checkout screens in Figma", type: "Design", manual: true },
+    ],
+  );
+  assert.equal(renderMonthFile(parsed), TYPED_FILE);
+});
+
+test("a re-measure leaves manual rows alone and counts them on top", () => {
+  const existing = {
+    month: "2026-09",
+    days: [{ date: DAY, seconds: 5 * 3600, tasks: [{ name: "Checkout", type: "Development", seconds: 2 * 3600 }, manualRow("Figma", 3 * 3600)] }],
+  };
+  const measured = [{ date: DAY, blocks: [block(0, 4 * 60)] }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
+  assert.equal(days[0].seconds, 4 * 3600 + 3 * 3600);
+  assert.deepEqual(days[0].tasks, [
+    { name: "Checkout", type: "Development", seconds: 2 * 3600 },
+    { name: UNLABELLED, seconds: 2 * 3600 },
+    manualRow("Figma", 3 * 3600),
+  ]);
+});
+
+test("a fully named past day with manual hours does not grow an Unlabelled row", () => {
+  const existing = {
+    month: "2026-09",
+    days: [{ date: DAY, seconds: 5 * 3600, tasks: [{ name: "Checkout", type: "Development", seconds: 2 * 3600 }, manualRow("Figma", 3 * 3600)] }],
+  };
+  const measured = [{ date: DAY, blocks: [block(0, 2 * 60)] }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
+  assert.deepEqual(days, existing.days);
+});
+
+test("a manual-only day survives a collect with no evidence for it", () => {
+  const existing = { month: "2026-09", days: [{ date: DAY, seconds: 3 * 3600, tasks: [manualRow("Paper sketches", 3 * 3600)] }] };
+  const { days } = rebuild(existing, "2026-09", [], TODAY, 20, 2);
+  assert.deepEqual(days, existing.days);
+});
+
+test("the multiplier scales measured time, never manual hours", () => {
+  const existing = { month: "2026-09", days: [{ date: TODAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }] };
+  const measured = [{ date: TODAY, blocks: [block(0, 60, TODAY)] }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 2);
+  // An hour measured counts as two; the hour logged by hand stays one.
+  assert.equal(days[0].seconds, 3 * 3600);
+  assert.deepEqual(days[0].tasks, [{ name: IN_PROGRESS, seconds: 2 * 3600 }, manualRow("Figma", 3600)]);
+});
+
+test("adding, changing and removing a manual row moves the day total with it", () => {
+  let file = parseMonthFile(TYPED_FILE);
+  file = addManualTask(file, DAY, { name: "Onboarding sketch", type: "Design", seconds: 1800 });
+  assert.equal(file.days[0].seconds, 7 * 3600);
+  assert.throws(() => addManualTask(file, DAY, { name: "Onboarding sketch", type: "Design", seconds: 60 }), /already has/);
+
+  file = setManualTask(file, DAY, "Onboarding sketch", { seconds: 3600, type: "Research" });
+  assert.equal(file.days[0].seconds, 7.5 * 3600);
+  assert.equal(file.days[0].tasks.at(-1).type, "Research");
+
+  file = removeManualTask(file, DAY, "Onboarding sketch");
+  assert.equal(file.days[0].seconds, 6.5 * 3600);
+  assert.throws(() => removeManualTask(file, DAY, "Checkout form validation"), /no manual row/);
+
+  // A day that held only manual time is created by the add and gone with the remove.
+  let empty = addManualTask({ month: "2026-09", days: [] }, "2026-09-02", manualRow("Figma", 3600));
+  assert.equal(empty.days.length, 1);
+  empty = removeManualTask(empty, "2026-09-02", "Figma");
+  assert.equal(empty.days.length, 0);
+});
+
+test("manual entries are checked against trackFrom, today and the categories", () => {
+  const config = { trackFrom: "2026-09-01", categories: ["Design", "Development"] };
+  const ok = { date: "2026-09-14", type: "Design", seconds: 3600 };
+  assert.equal(entryProblem(ok, config, TODAY), null);
+  assert.match(entryProblem({ ...ok, date: "2026-08-31" }, config, TODAY), /before trackFrom/);
+  assert.match(entryProblem({ ...ok, date: "2026-10-01" }, config, TODAY), /future/);
+  assert.match(entryProblem({ ...ok, type: "Coding" }, config, TODAY), /not a category/);
+  assert.match(entryProblem({ ...ok, seconds: null }, config, TODAY), /--hours/);
+  assert.match(entryProblem({ ...ok, seconds: 25 * 3600 }, config, TODAY), /--hours/);
+});
+
+test("manual hours read as decimals, h/m or bare minutes", () => {
+  assert.equal(parseHours("3"), 3 * 3600);
+  assert.equal(parseHours("1.5"), 90 * 60);
+  assert.equal(parseHours("1h 30m"), 90 * 60);
+  assert.equal(parseHours("45m"), 45 * 60);
+  assert.equal(parseHours("0"), null);
+  assert.equal(parseHours("a few"), null);
+});
+
+test("manual log lines leave the commit watermark where it was", () => {
+  const entries = [
+    { throughCommit: "abc123" },
+    { kind: "manual", action: "add", date: DAY, task: "Figma" },
+  ];
+  assert.equal(lastCommit("nobody", entries), "abc123");
+});
+
+test("a named day with no work type needs types, and a placeholder day needs everything", () => {
+  assert.deepEqual(dayNeeds({ tasks: [{ name: "Checkout", seconds: 60, details: ["Done"] }] }), ["types"]);
+  assert.deepEqual(dayNeeds({ tasks: [{ name: "Checkout", type: "Development", seconds: 60 }] }), ["bullets"]);
+  assert.deepEqual(dayNeeds({ tasks: [{ name: UNLABELLED, seconds: 60 }] }), ["names", "bullets", "types"]);
+  assert.deepEqual(
+    dayNeeds({ tasks: [{ name: "Checkout", type: "Development", seconds: 60, details: ["Done"] }] }),
+    [],
+  );
+});
+
+test("the client merge keeps types apart and marks manual-plus-measured as partly manual", () => {
+  const day = (tasks) => ({ date: DAY, seconds: tasks.reduce((sum, task) => sum + task.seconds, 0), tasks });
+  const [merged] = mergeDays([
+    [day([{ name: "Checkout", type: "Design", seconds: 3600 }, { name: "Pricing", type: "Development", seconds: 1800 }])],
+    [day([{ name: "Checkout", type: "Development", seconds: 3600 }, manualRow("Pricing", 1800, "Development")])],
+  ]);
+  const byKey = Object.fromEntries(merged.tasks.map((task) => [`${task.name}/${task.type}`, task]));
+  assert.equal(merged.tasks.length, 3);
+  assert.equal(byKey["Checkout/Design"].seconds, 3600);
+  assert.equal(byKey["Checkout/Development"].seconds, 3600);
+  assert.equal(byKey["Pricing/Development"].seconds, 3600);
+  assert.equal(manualTag(byKey["Pricing/Development"]), "Partly manual");
+  assert.equal(manualTag(byKey["Checkout/Design"]), null);
+  assert.equal(manualTag(manualRow("Figma", 60)), "Manual");
+
+  assert.deepEqual(typeRollup([merged]), [
+    { type: "Development", seconds: 7200, manualSeconds: 1800 },
+    { type: "Design", seconds: 3600, manualSeconds: 0 },
+  ]);
+});
+
+test("asking to log manual hours is tracker upkeep, describing other work is not", () => {
+  assert.equal(isTrackerPrompt("log manual hours"), true);
+  assert.equal(isTrackerPrompt("add manual time: 3h in Figma yesterday"), true);
+  assert.equal(isTrackerPrompt("Please log my manual hours"), true);
+  assert.equal(isTrackerPrompt("add a manual override to the checkout form"), false);
+  assert.equal(isTrackerPrompt("log the hours worked to the console"), false);
 });
 
 // --- collect ---------------------------------------------------------------
@@ -299,4 +501,115 @@ test("a mixed day's PDF total equals its visible rows", () => {
   assert.equal(days[0].seconds, days[0].tasks.reduce((sum, task) => sum + task.seconds, 0));
   assert.equal(days[0].seconds, 3 * 3600);
   assert.equal(days[1].seconds, 2 * 3600);
+});
+
+// --- one timesheet per computer --------------------------------------------
+
+function range(startMinutes, endMinutes) {
+  return { start: T0 + startMinutes * MINUTE, end: T0 + endMinutes * MINUTE };
+}
+
+function covered(cover) {
+  return totalSeconds(subtractBlocks([block(0, 24 * 60)], [])) - totalSeconds(subtractBlocks([block(0, 24 * 60)], cover));
+}
+
+test("a computer leaves out what an earlier-sorting computer counted", () => {
+  // laptop sorts after desk: it drops desk's 10:00-11:00 even having recorded it.
+  const cover = overlapCover("laptop", [range(60, 120)], [{ machine: "desk", ranges: [range(60, 120)] }]);
+  assert.equal(covered(cover), 3600);
+});
+
+test("a computer keeps what it recorded first when the other sorts later", () => {
+  // desk recorded 10:00-11:00 before laptop did: tie or not, desk keeps it.
+  assert.deepEqual(overlapCover("desk", [range(60, 120)], [{ machine: "laptop", ranges: [range(60, 120)] }]), []);
+  // ...but leaves out laptop's stretch it had not recorded itself.
+  const cover = overlapCover("desk", [range(60, 120)], [{ machine: "laptop", ranges: [range(90, 180)] }]);
+  assert.equal(covered(cover), 3600);
+});
+
+test("overlap only comes out of unnamed time", () => {
+  const named = { date: DAY, seconds: 3 * 3600, tasks: [{ name: "Checkout", seconds: 2 * 3600 }, { name: UNLABELLED, seconds: 3600 }] };
+  assert.equal(overlapRoom(named, 3 * 3600), 3600);
+  assert.equal(overlapRoom({ ...named, tasks: [{ name: "Checkout", seconds: 3 * 3600 }] }, 3 * 3600), 0);
+  // Manual rows are not measured, so they never make room.
+  assert.equal(overlapRoom({ date: DAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }, 1800), 1800);
+  assert.equal(overlapRoom(undefined, 5400), 5400);
+});
+
+test("rebuild takes overlap off the unnamed tail and leaves named rows", () => {
+  const existing = { month: "2026-09", days: [namedDay(4 * 3600, [["Checkout", 2 * 3600], [UNLABELLED, 2 * 3600]])] };
+  const measured = [{ date: DAY, blocks: [block(0, 4 * 60)], overlapSeconds: 3600 }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
+  assert.equal(days[0].seconds, 3 * 3600);
+  assert.deepEqual(days[0].tasks, [{ name: "Checkout", seconds: 2 * 3600 }, { name: UNLABELLED, seconds: 3600 }]);
+});
+
+test("a day counted wholly on another computer keeps only its manual rows", () => {
+  const existing = { month: "2026-09", days: [{ date: TODAY, seconds: 2 * 3600, tasks: [{ name: IN_PROGRESS, seconds: 3600 }, manualRow("Figma", 3600)] }] };
+  const measured = [{ date: TODAY, blocks: [block(0, 60, TODAY)], overlapSeconds: 3600 }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
+  assert.deepEqual(days, [{ date: TODAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }]);
+  const { days: none } = rebuild(null, "2026-09", measured, TODAY, 20, 1);
+  assert.deepEqual(none, []);
+});
+
+test("a person's computers merge into one personal timesheet", () => {
+  const desk = [{ date: DAY, seconds: 3600, tasks: [{ name: "Checkout", type: "Development", seconds: 3600 }] }];
+  const laptop = [{ date: DAY, seconds: 1800, tasks: [{ name: "Checkout", type: "Development", seconds: 1800 }] }];
+  const [day] = personalDays([{ id: "ann.desk", days: desk }, { id: "ann.laptop", days: laptop }], "ann.desk");
+  assert.equal(day.seconds, 5400);
+  assert.equal(day.tasks.length, 1);
+  assert.equal(day.tasks[0].seconds, 5400);
+  // One computer passes through untouched.
+  assert.equal(personalDays([{ id: "ann.desk", days: desk }], "ann.desk"), desk);
+});
+
+test("a day unnamed on another computer blocks the personal PDF and names that computer", () => {
+  const laptop = [{ date: DAY, seconds: 1800, tasks: [{ name: UNLABELLED, seconds: 1800 }] }];
+  assert.throws(
+    () => personalDays([{ id: "ann.desk", days: [] }, { id: "ann.laptop-1a2b", days: laptop }], "ann.desk"),
+    /2026-09-14 on laptop-1a2b/,
+  );
+  // This computer's own unnamed day is left for the usual check.
+  assert.doesNotThrow(() => personalDays([{ id: "ann.desk", days: laptop }], "ann.desk"));
+});
+
+test("timesheets are found per person and per computer, legacy ones included", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-ids-"));
+  try {
+    for (const name of ["2026-10.ann.md", "2026-10.ann.lap-1a2b.md", "2026-10.bob.desk-9f9f.md", "2026-10.ann.pdf", "2026-09.ann.md"]) {
+      writeFileSync(path.join(dir, name), "");
+    }
+    assert.deepEqual(monthFileIds("2026-10", dir), ["ann", "ann.lap-1a2b", "bob.desk-9f9f"]);
+    assert.deepEqual(personFileIds("2026-10", "ann", dir), ["ann", "ann.lap-1a2b"]);
+    assert.deepEqual(splitFileId("ann.lap-1a2b"), { person: "ann", machine: "lap-1a2b" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the first computer upgraded takes the older timesheet, a later one does not", () => {
+  const legacy = ["2026-09.ann.md", "2026-09.ann.pdf", "log.ann.jsonl", "2026-09.bob.md", "config.json"];
+  assert.deepEqual(legacyMoves(legacy, "ann", "desk-1a2b"), {
+    moves: [
+      ["2026-09.ann.md", "2026-09.ann.desk-1a2b.md"],
+      ["log.ann.jsonl", "log.ann.desk-1a2b.jsonl"],
+    ],
+    blocked: false,
+  });
+  assert.deepEqual(legacyMoves([...legacy, "2026-10.ann.lap-9f9f.md"], "ann", "desk-1a2b"), { moves: [], blocked: true });
+  // Re-running on the computer that took it moves nothing more.
+  assert.deepEqual(legacyMoves(["2026-09.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl"], "ann", "desk-1a2b"), {
+    moves: [],
+    blocked: false,
+  });
+});
+
+test("a manual row is found on whichever of the person's computers holds it", () => {
+  const files = [
+    { id: "ann.desk", file: { days: [{ date: DAY, tasks: [{ name: "Figma", seconds: 60 }] }] } },
+    { id: "ann.laptop", file: { days: [{ date: DAY, tasks: [manualRow("Figma", 60)] }] } },
+  ];
+  assert.equal(findManualOwner(files, DAY, "Figma"), "ann.laptop");
+  assert.equal(findManualOwner(files, DAY, "Sketches"), null);
 });

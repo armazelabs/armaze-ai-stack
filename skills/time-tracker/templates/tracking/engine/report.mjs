@@ -11,10 +11,14 @@
 //   <tracking>/<YYYY-MM>.<person>.pdf                          the month
 //   <tracking>/weekly/<YYYY-MM>/<first day>.<person>.pdf       each week in it
 //
+// A personal PDF is the person's, not one computer's: it merges the timesheet
+// each of their computers keeps (`<YYYY-MM>.<person>.<computer>.md`).
+//
 // Every personal PDF has a team twin, the one that goes to the client. It
 // merges every person's timesheet found in this folder into one, with no
-// names and nothing that splits the work by person - the same task on the same
-// day is one row, its time summed and its bullets pooled:
+// names and nothing that splits the work by person - the same task, of the
+// same work type, on the same day is one row, its time summed and its bullets
+// pooled:
 //
 //   <tracking>/client/<YYYY-MM>.pdf
 //   <tracking>/client/weekly/<YYYY-MM>/<first day>.pdf
@@ -29,7 +33,7 @@
 // prints is the same document a browser would show.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,10 +44,13 @@ import {
   currentPerson,
   loadConfig,
   logPath,
+  monthFileIds,
   monthFilePath,
+  personFileIds,
   projectName,
+  splitFileId,
 } from "./config.mjs";
-import { isPlaceholder, needsBullets, parseMonthFile } from "./month-file.mjs";
+import { isPlaceholder, needsBullets, needsType, parseMonthFile } from "./month-file.mjs";
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -106,6 +113,46 @@ function dayLabel(date) {
   return `${weekdayOf(date)} ${day} ${name}`;
 }
 
+/**
+ * How much of a row was logged by hand. A personal row is all or nothing; a
+ * client row merged from several people can be part of each, which is why the
+ * merge carries `manualSeconds` rather than a flag.
+ */
+export function manualShare(task) {
+  return task.manualSeconds ?? (task.manual ? task.seconds : 0);
+}
+
+/** `Manual`, `Partly manual`, or null - the tag the PDF prints after a task. */
+export function manualTag(task) {
+  const share = manualShare(task);
+  if (share <= 0) return null;
+  return share >= task.seconds ? "Manual" : "Partly manual";
+}
+
+/** Time per work type, largest first, with how much of it was manual. */
+export function typeRollup(days) {
+  const totals = new Map();
+  for (const day of days) {
+    for (const task of day.tasks) {
+      const type = task.type || "Untyped";
+      const entry = totals.get(type) ?? { type, seconds: 0, manualSeconds: 0 };
+      entry.seconds += task.seconds;
+      entry.manualSeconds += manualShare(task);
+      totals.set(type, entry);
+    }
+  }
+  return [...totals.values()].sort((a, b) => b.seconds - a.seconds || a.type.localeCompare(b.type));
+}
+
+/** The work-type and manual tags that follow a task name on the PDF. */
+function tags(task) {
+  const manual = manualTag(task);
+  return (
+    (task.type ? `<span class="tag">${escapeHtml(task.type)}</span>` : "") +
+    (manual ? `<span class="tag manual">${manual}</span>` : "")
+  );
+}
+
 /** Month-wide time per task name, largest first. */
 function taskRollup(days) {
   const totals = new Map();
@@ -132,6 +179,8 @@ function taskRollup(days) {
  *
  * Under each task sit its outcome bullets - what the time delivered, in plain
  * words - so a reader sees the substance of the work, not just its label.
+ * After its name sit its work type and, for hours logged by hand, a Manual
+ * tag: the client sees up front which hours no transcript measured.
  */
 function renderHtml(period, days) {
   const total = days.reduce((sum, day) => sum + day.seconds, 0);
@@ -148,7 +197,7 @@ function renderHtml(period, days) {
         .map(
           (task) =>
             `<div class="row${isPlaceholder(task.name) ? " unlabelled" : ""}">` +
-            `<span class="name">${escapeHtml(task.name)}</span>` +
+            `<span class="name">${escapeHtml(task.name)}${tags(task)}</span>` +
             `<span class="dots"></span>` +
             `<span class="time mono">${formatDuration(task.seconds)}</span></div>` +
             (task.details?.length > 0
@@ -164,6 +213,16 @@ function renderHtml(period, days) {
         ${rows}
       </section>`;
     })
+    .join("");
+
+  const typeRows = typeRollup(days)
+    .map(
+      (entry) => `<tr>
+        <td>${escapeHtml(entry.type)}</td>
+        <td class="mono right">${formatDuration(entry.seconds)}</td>
+        <td class="mono right muted">${entry.manualSeconds > 0 ? formatDuration(entry.manualSeconds) : ""}</td>
+      </tr>`,
+    )
     .join("");
 
   const rollupRows = rollup
@@ -253,6 +312,16 @@ function renderHtml(period, days) {
   tr { break-inside: avoid; }
   td.right, th.right { padding-left: 10px; width: 1%; white-space: nowrap; }
   .unlabelled { color: #9a3412; font-style: italic; }
+  .muted { color: #6b7280; }
+
+  /* The work type and the manual marker ride after the task name, small and
+     quiet, so the name still reads first and the row stays one line. */
+  .tag {
+    display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px;
+    font-size: 7pt; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600;
+    color: #6b7280; background: #f1f2f5; vertical-align: 1px; white-space: nowrap;
+  }
+  .tag.manual { color: #92400e; background: #fcf1e3; }
 
   .grand {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -276,6 +345,12 @@ function renderHtml(period, days) {
 <h2>Daily breakdown</h2>
 ${daySections}
 <div class="grand"><span>Total</span><span class="mono">${formatDuration(total)}</span></div>
+
+<h2>By type</h2>
+<table>
+  <thead><tr><th>Type</th><th class="right">Time</th><th class="right">Manual</th></tr></thead>
+  <tbody>${typeRows}</tbody>
+</table>
 
 <h2>By task</h2>
 <table>
@@ -389,7 +464,7 @@ function plan(args, id) {
   const current = args.today.slice(0, 7);
   const monday = addDays(args.today, -((new Date(`${args.today}T00:00:00Z`).getUTCDay() + 6) % 7));
   const spill = monday.slice(0, 7);
-  if (spill !== current && existsSync(monthFilePath(spill, id))) {
+  if (spill !== current && personFileIds(spill, id).length > 0) {
     jobs.push(monthJob(spill), weekJob(spill, weekIn(monday, spill)));
   }
   jobs.push(monthJob(current));
@@ -445,21 +520,45 @@ export function withoutTrackerRows(days) {
   return kept;
 }
 
-/** A person's recorded days for a month, or null when they have no timesheet. */
+/** One computer's recorded days for a month, or null when it has no timesheet. */
 function readDays(month, id) {
   const file = monthFilePath(month, id);
   return existsSync(file) ? withoutTrackerRows(parseMonthFile(readFileSync(file, "utf8")).days) : null;
 }
 
-/** Every person with a timesheet for `month` in this checkout, registered or not. */
-function teamIds(month, config) {
-  const ids = new Set(Object.keys(config.people ?? {}));
-  const pattern = new RegExp(`^${month}\\.(.+)\\.md$`);
-  for (const name of readdirSync(TRACKING_DIR)) {
-    const found = pattern.exec(name);
-    if (found) ids.add(found[1]);
+/** `ann on laptop-1a2b`, or just `ann` for a timesheet from before computers had names. */
+export function whose(id) {
+  const { person, machine } = splitFileId(id);
+  return machine ? `${person} on ${machine}` : person;
+}
+
+/**
+ * One person's timesheet for a PDF: every one of their computers' days, merged
+ * the way the client PDF merges people. A single computer's days pass through
+ * untouched, rows in the order they were written.
+ *
+ * A day still unnamed on another computer stops it: only that computer holds
+ * the transcripts to name it, and leaving its hours out would under-report
+ * without a word. This computer's own unnamed days are left for the usual
+ * check, which tells the person to name them here.
+ *
+ * `entries` is `[{ id, days }]`, already cut to the PDF's range.
+ */
+export function personalDays(entries, ownId) {
+  const unnamed = entries
+    .filter((entry) => entry.id !== ownId)
+    .flatMap((entry) =>
+      entry.days
+        .filter((day) => day.tasks.some((task) => isPlaceholder(task.name)))
+        .map((day) => `${day.date} on ${splitFileId(entry.id).machine ?? "the older shared timesheet"}`),
+    );
+  if (unnamed.length > 0) {
+    throw new Error(
+      `still unnamed: ${unnamed.join(", ")}. Run "update tracker" on that computer, then commit ` +
+        "and push its timesheet and pull it here.",
+    );
   }
-  return [...ids].sort().filter((id) => existsSync(monthFilePath(month, id)));
+  return entries.length === 1 ? entries[0].days : mergeDays(entries.map((entry) => entry.days));
 }
 
 /**
@@ -467,23 +566,34 @@ function teamIds(month, config) {
  * people there were.
  *
  * Days are unioned and their hours summed. Within a day, tasks of the same
- * name become one row - time summed, bullets pooled with exact repeats
- * dropped - so two people on "Checkout flow" read as one piece of work.
- * Nothing about who did what survives the merge.
+ * name and the same work type become one row - time summed, bullets pooled
+ * with exact repeats dropped - so two people on "Checkout flow" read as one
+ * piece of work. The same name under two types stays two rows, so every row
+ * keeps one true type. A row merged from manual and measured time is tagged
+ * "Partly manual" through its `manualSeconds`. Nothing about who did what
+ * survives the merge.
  */
-function mergeDays(lists) {
+export function mergeDays(lists) {
   const byDate = new Map();
   for (const days of lists) {
     for (const day of days) {
       const merged = byDate.get(day.date) ?? { date: day.date, seconds: 0, tasks: [] };
       merged.seconds += day.seconds;
       for (const task of day.tasks) {
-        const existing = merged.tasks.find((row) => row.name === task.name);
+        const type = task.type ?? null;
+        const existing = merged.tasks.find((row) => row.name === task.name && row.type === type);
         if (!existing) {
-          merged.tasks.push({ name: task.name, seconds: task.seconds, details: [...(task.details ?? [])] });
+          merged.tasks.push({
+            name: task.name,
+            type,
+            seconds: task.seconds,
+            manualSeconds: manualShare(task),
+            details: [...(task.details ?? [])],
+          });
           continue;
         }
         existing.seconds += task.seconds;
+        existing.manualSeconds += manualShare(task);
         for (const item of task.details ?? []) {
           if (!existing.details.includes(item)) existing.details.push(item);
         }
@@ -510,29 +620,37 @@ function lastUpdate(id) {
 }
 
 /**
- * The days a PDF covers. A personal PDF reads the person's own timesheet; the
- * client PDF reads everyone's and merges them. Unnamed days are found before
- * the merge, so the terminal can say whose they are.
+ * The days a PDF covers. A personal PDF reads the person's own timesheets -
+ * one per computer - and merges them; the client PDF reads everyone's and
+ * merges them. Unnamed days are found before the merge, so the terminal can
+ * say whose they are, and on which computer.
  */
-function daysFor(job, id, config) {
+function daysFor(job, person) {
   const inRange = (days) => days.filter((day) => day.date >= job.start && day.date <= job.end);
   const hasPlaceholder = (day) => day.tasks.some((task) => isPlaceholder(task.name));
 
   if (!job.team) {
-    const days = readDays(job.month, id);
-    if (!days) {
+    const ids = personFileIds(job.month, person.id);
+    if (ids.length === 0) {
       throw new Error(
         `No timesheet for ${job.month}. Run \`node ${path.join(TRACKING_DIR, "engine", "collect.mjs")}\` first.`,
       );
     }
-    return inRange(days);
+    try {
+      return personalDays(
+        ids.map((id) => ({ id, days: inRange(readDays(job.month, id)) })),
+        person.fileId,
+      );
+    } catch (error) {
+      throw new Error(`No PDF for ${job.period} - ${error.message}`);
+    }
   }
 
   const lists = [];
   const unnamed = [];
-  for (const other of teamIds(job.month, config)) {
+  for (const other of monthFileIds(job.month)) {
     const days = inRange(readDays(job.month, other));
-    for (const day of days.filter(hasPlaceholder)) unnamed.push(`${other} ${day.date}`);
+    for (const day of days.filter(hasPlaceholder)) unnamed.push(`${whose(other)} ${day.date}`);
     lists.push(days);
   }
   if (unnamed.length > 0) {
@@ -559,8 +677,8 @@ function daysFor(job, id, config) {
 }
 
 /** Write one PDF, or say why not. Returns a line for the summary. */
-function render(job, id, config) {
-  const days = daysFor(job, id, config);
+function render(job, person) {
+  const days = daysFor(job, person);
   if (days.length === 0) {
     // A week with no tracked days is not a failure - there is simply nothing
     // to bill - but a month with none is, since it was asked for by name.
@@ -590,6 +708,15 @@ function render(job, id, config) {
     console.warn(
       `Warning: ${bare.map((day) => day.date).join(", ")} ${bare.length === 1 ? "has" : "have"} ` +
         "tasks with no outcome bullets. \"update tracker\" writes them.",
+    );
+  }
+  // A missing work type is the same kind of gap: the task still shows, it
+  // just lands under "Untyped" in the By type table.
+  const untyped = days.filter((day) => day.tasks.some(needsType));
+  if (untyped.length > 0 && job.kind === "month" && !job.team) {
+    console.warn(
+      `Warning: ${untyped.map((day) => day.date).join(", ")} ${untyped.length === 1 ? "has" : "have"} ` +
+        "tasks with no work type. \"update tracker\" adds them.",
     );
   }
 
@@ -639,24 +766,29 @@ function main() {
   // still fails the run.
   const jobs = plan(args, person.id);
 
-  // Whose timesheets the client PDF merges, and how fresh each is. Terminal
-  // only: the PDF itself never says how many people there were.
+  // Whose timesheets the PDFs merge, and how fresh each is - per computer, so
+  // a stale laptop shows up. Terminal only: the PDF itself never says how many
+  // people, or computers, there were.
   const months = [...new Set(jobs.filter((job) => job.team).map((job) => job.month))];
   for (const month of months) {
-    const ids = teamIds(month, config);
-    const others = ids.filter((id) => id !== person.id);
-    const notes = others.map((id) => `${id} (last update ${lastUpdate(id) ?? "never"})`);
+    const ids = monthFileIds(month);
+    const others = ids.filter((id) => id !== person.fileId);
+    const notes = others.map((id) => {
+      const { person: owner, machine } = splitFileId(id);
+      const label = owner === person.id ? `your ${machine ?? "older shared timesheet"}` : whose(id);
+      return `${label} (last update ${lastUpdate(id) ?? "never"})`;
+    });
     console.log(
       `Client PDF for ${month} merges ${ids.length} timesheet${ids.length === 1 ? "" : "s"}` +
-        (others.length > 0 ? `: yours, ${notes.join(", ")}.` : ": yours only.") +
-        " Pull first to include teammates' latest.",
+        (others.length > 0 ? `: yours on ${person.machine}, ${notes.join(", ")}.` : ": yours only.") +
+        " Pull first to include the latest from teammates and your other computers.",
     );
   }
 
   let failed = false;
   for (const job of jobs) {
     try {
-      console.log(render(job, person.id, config));
+      console.log(render(job, person));
     } catch (error) {
       failed = true;
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

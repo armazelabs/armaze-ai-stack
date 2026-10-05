@@ -11,11 +11,16 @@
 // clobbered. There is no on/off switch: setup writes today's date into
 // config.json as `trackFrom`, and every day from then on counts.
 //
-// Each person on a project keeps their own timesheet. Setup registers whoever
-// runs it - by `git config user.name` and `user.email` - under an id that
-// suffixes their files (`2026-09.<id>.md`), so teammates never share a file.
+// Each person on a project keeps their own timesheet, one per computer. Setup
+// registers whoever runs it - by `git config user.name` and `user.email` -
+// under an id, and names the computer it runs on once (kept in
+// ~/.claude/time-tracker/machine.json, for every project). Both suffix the
+// files (`2026-09.<id>.<computer>.md`), so neither teammates nor one person's
+// two computers ever share a file.
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { homedir, hostname } from "node:os";
 import {
   appendFileSync,
   cpSync,
@@ -175,6 +180,52 @@ function detectPerson() {
   if (!name) console.error('  git config user.name "Your Name"');
   if (!email) console.error('  git config user.email "you@example.com"');
   process.exit(1);
+}
+
+/**
+ * This computer's name, from machine.json, or made now from `--machine`.
+ *
+ * Asked once per computer, not per project: the same laptop is the same
+ * laptop in every project it tracks. The name the person chose is slugged and
+ * given four random hex characters, so two computers both called "laptop"
+ * still never share a file. Without a name and without the flag, setup stops
+ * with the suggested name - the skill asks the person and runs it again.
+ */
+function resolveMachine() {
+  const file = path.join(homedir(), ".claude", "time-tracker", "machine.json");
+  try {
+    const name = JSON.parse(readFileSync(file, "utf8")).name;
+    if (typeof name === "string" && /^[a-z0-9][a-z0-9-]*$/.test(name)) {
+      return { name, created: false, ignored: flagValue("--machine") != null };
+    }
+  } catch {
+    // Not named yet.
+  }
+
+  const chosen = flagValue("--machine");
+  if (!chosen) {
+    const suggested = slugify(hostname().replace(/\.local$/i, "")) || "computer";
+    console.error("time-tracker setup: this computer has no name yet. Each computer keeps its own");
+    console.error("timesheet, so two computers never write the same file. Re-run with:");
+    console.error("");
+    console.error(`  --machine ${suggested}`);
+    console.error("");
+    console.error("or any short name of your own (studio, laptop...). It is asked once per computer.");
+    process.exit(2);
+  }
+  const name = `${slugify(chosen)}-${randomBytes(2).toString("hex")}`;
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    `${JSON.stringify({ name, chosen, hostname: hostname(), created: new Date().toISOString() }, null, 2)}\n`,
+  );
+  return { name, created: true, ignored: false };
+}
+
+function flagValue(name) {
+  const args = process.argv.slice(2);
+  const index = args.indexOf(name);
+  return index === -1 ? null : (args[index + 1] ?? null);
 }
 
 // --- folders -------------------------------------------------------------
@@ -413,6 +464,36 @@ function backfillTrackFrom(configPath, day) {
 }
 
 /**
+ * Add `categories` to a config.json written before tasks carried a work type.
+ *
+ * The engine falls back to the same default list, so nothing breaks without
+ * it - but the list is meant to be edited per project, and a key the file does
+ * not show is a key nobody knows to edit. The one other key added on a re-run.
+ */
+function backfillCategories(configPath, categories) {
+  let config;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return { backfilled: false };
+  }
+  if (Array.isArray(config.categories)) return { backfilled: false };
+  // Before `people`, where the template puts it, so the file still reads in
+  // the template's order.
+  const { people, ...rest } = config;
+  writeConfig(configPath, people === undefined ? { ...rest, categories } : { ...rest, categories, people });
+  return { backfilled: true };
+}
+
+/** Keep short number arrays like `workdays` on one line, as the template writes them. */
+function writeConfig(configPath, config) {
+  const json = JSON.stringify(config, null, 2).replace(/\[\s*(\d+(?:,\s*\d+)*)\s*\]/g, (_, inner) =>
+    `[${inner.split(/,\s*/).join(", ")}]`,
+  );
+  writeFileSync(configPath, `${json}\n`);
+}
+
+/**
  * Add the person to `people` in config.json, or find them there.
  *
  * The email decides who someone is: a person already registered under this
@@ -443,11 +524,7 @@ function registerPerson(configPath, person) {
 
   people[id] = { emails: [person.email] };
   config.people = people;
-  // Keep short number arrays like `workdays` on one line, as the template writes them.
-  const json = JSON.stringify(config, null, 2).replace(/\[\s*(\d+(?:,\s*\d+)*)\s*\]/g, (_, inner) =>
-    `[${inner.split(/,\s*/).join(", ")}]`,
-  );
-  writeFileSync(configPath, `${json}\n`);
+  writeConfig(configPath, config);
   return { id, added: true, wasEmpty };
 }
 
@@ -477,11 +554,58 @@ function claimSinglePersonFiles(trackingDir, cacheDir, id) {
   return moved;
 }
 
+/**
+ * Which of a person's timesheets from before computers had names this
+ * computer takes, as `[from, to]` file names.
+ *
+ * The first computer upgraded takes them all - month files and the log -
+ * so the history carries on under a computer's name. Once any other computer
+ * of the person's has files of its own, it got there first: nothing is taken,
+ * since two computers each claiming the same history would count it twice.
+ * The personal PDFs keep their names; they are the person's, not a computer's.
+ */
+export function legacyMoves(names, id, machine) {
+  const MONTH = /^(\d{4}-\d{2})\.([a-z0-9-]+)(?:\.([a-z0-9-]+))?\.md$/;
+  const LOG = /^log\.([a-z0-9-]+)(?:\.([a-z0-9-]+))?\.jsonl$/;
+  const present = new Set(names);
+  let blocked = false;
+  const moves = [];
+  for (const name of names) {
+    const month = MONTH.exec(name);
+    const log = LOG.exec(name);
+    const [person, computer] = month ? [month[2], month[3]] : log ? [log[1], log[2]] : [null, null];
+    if (person !== id) continue;
+    if (computer && computer !== machine) blocked = true;
+    if (computer) continue;
+    const target = month ? `${month[1]}.${id}.${machine}.md` : `log.${id}.${machine}.jsonl`;
+    if (!present.has(target)) moves.push([name, target]);
+  }
+  return { moves: blocked ? [] : moves, blocked: blocked && moves.length > 0 };
+}
+
+function claimPersonFiles(trackingDir, cacheDir, id, machine) {
+  const { moves, blocked } = legacyMoves(
+    entries(trackingDir).filter((entry) => entry.isFile()).map((entry) => entry.name),
+    id,
+    machine,
+  );
+  for (const [from, to] of moves) renameSync(path.join(trackingDir, from), path.join(trackingDir, to));
+  // Evidence written under the old id is scratch; the next collect rebuilds it.
+  if (moves.length > 0) {
+    const stale = new RegExp(`^\\d{4}-\\d{2}\\.${id}\\.(raw\\.json|pending\\.json|html)$`);
+    for (const entry of entries(cacheDir)) {
+      if (entry.isFile() && stale.test(entry.name)) rmSync(path.join(cacheDir, entry.name));
+    }
+  }
+  return { moves, blocked };
+}
+
 // --- main ----------------------------------------------------------------
 
 function main() {
   const project = detectProjectName();
   const person = detectPerson();
+  const machine = resolveMachine();
   const timeZone = detectTimeZone();
   const multiplier = parseMultiplier();
   const todayDay = new Intl.DateTimeFormat("en-CA", {
@@ -532,14 +656,17 @@ function main() {
   const readmeContent = fill(readTemplate("tracking-readme.md"), values);
   const readmeStale = (() => {
     try {
-      // Also stale: a readme from before per-person files, which documents one
-      // shared `<YYYY-MM>.md` and `log.jsonl` that no longer exist - or from
-      // before subagent time and tracker updates were measured as they are now.
+      // Also stale: a readme from before per-computer files, or from before
+      // per-person ones, which documents one shared `<YYYY-MM>.md` and
+      // `log.jsonl` that no longer exist - or from
+      // before subagent time and tracker updates were measured as they are now,
+      // or from before tasks carried a work type and manual hours existed.
       const text = readFileSync(readmePath, "utf8");
       return (
         /track\.mjs|state\.json/.test(text) ||
-        !text.includes("<YYYY-MM>.<person>.md") ||
-        !text.includes("Subagents count without the multiplier")
+        !text.includes("<YYYY-MM>.<person>.<computer>.md") ||
+        !text.includes("Subagents count without the multiplier") ||
+        !text.includes("manual.mjs")
       );
     } catch {
       return false;
@@ -553,12 +680,21 @@ function main() {
   const backfilled = configCreated
     ? { backfilled: false }
     : backfillTrackFrom(path.join(tracking.dir, "config.json"), trackFrom.day);
+  const categories = configCreated
+    ? { backfilled: false }
+    : backfillCategories(
+        path.join(tracking.dir, "config.json"),
+        JSON.parse(fill(readTemplate("config.json"), values)).categories,
+      );
   const hook = removeSettingsHook();
   const registered = registerPerson(path.join(tracking.dir, "config.json"), person);
   const claimed =
     registered.id && registered.wasEmpty
       ? claimSinglePersonFiles(tracking.dir, path.join(tracking.dir, "cache"), registered.id)
       : [];
+  const computerClaim = registered.id
+    ? claimPersonFiles(tracking.dir, path.join(tracking.dir, "cache"), registered.id, machine.name)
+    : { moves: [], blocked: false };
   // The start/stop switch is gone, and a stale state.json is only there to be
   // misread as one.
   const legacyState = path.join(tracking.dir, "state.json");
@@ -576,8 +712,13 @@ function main() {
         ? `created (timeZone ${timeZone}, trackFrom ${trackFrom.day}, hoursMultiplier ${multiplier.value})`
         : (backfilled.error
             ? `left untouched - ${backfilled.error}`
-            : backfilled.backfilled
-              ? `already existed - added trackFrom ${trackFrom.day}`
+            : backfilled.backfilled || categories.backfilled
+              ? `already existed - added ${[
+                  backfilled.backfilled && `trackFrom ${trackFrom.day}`,
+                  categories.backfilled && "the work-type categories",
+                ]
+                  .filter(Boolean)
+                  .join(" and ")}`
               : "already existed, left untouched") +
           (multiplier.given ? ` - --multiplier ignored, edit ${trackingRel}/config.json to change it` : "")
     }`,
@@ -618,10 +759,26 @@ function main() {
   } else {
     console.log(
       `- person: ${registered.added ? "registered" : "already registered"} as ${registered.id} ` +
-        `(your files end in .${registered.id}.md)`,
+        `on this computer, ${machine.name} (your files here end in .${registered.id}.${machine.name}.md)`,
     );
   }
+  console.log(
+    `- computer: ${
+      machine.created
+        ? `named ${machine.name} - saved in ~/.claude/time-tracker/machine.json for every project`
+        : `${machine.name}${machine.ignored ? " (already named, --machine ignored)" : ""}`
+    }`,
+  );
   for (const move of claimed) console.log(`- ${trackingRel}/${move}: claimed the existing single-person timesheet`);
+  for (const [from, to] of computerClaim.moves) {
+    console.log(`- ${trackingRel}/${from} -> ${to}: your timesheet now belongs to this computer`);
+  }
+  if (computerClaim.blocked) {
+    console.log(
+      `- ${trackingRel}/: your older timesheet files were left alone - another of your computers ` +
+        "already has its own files, so it took that history first. Pull to see them.",
+    );
+  }
   if (stateRemoved) {
     console.log(`- ${trackingRel}/state.json: removed - start/stop is gone, trackFrom replaces it`);
   }
@@ -657,4 +814,5 @@ function main() {
   );
 }
 
-main();
+// Guarded so `legacyMoves` can be imported by the tests without installing anything.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

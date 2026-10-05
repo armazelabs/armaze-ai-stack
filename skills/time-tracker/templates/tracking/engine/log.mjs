@@ -2,8 +2,10 @@
 //
 //   node <tracking>/engine/log.mjs record --named 2026-09-08,2026-09-09 --session 4c11d0a
 //
-// One JSON object per line in <tracking>/log.<person>.jsonl, appended
-// newest-last - each person on the project keeps their own. It
+// One JSON object per line in <tracking>/log.<person>.<computer>.jsonl,
+// appended newest-last - each person keeps one per computer, so two computers
+// never append to the same file, and each reads commits forward from where it
+// itself left off. It
 // records the days named, the commits consumed, the session that did it and
 // the month total afterwards - an audit trail for a timesheet a client sees.
 //
@@ -123,7 +125,7 @@ export function commitsSince(sha, sinceDay, emails) {
 }
 
 /** The month's recorded total, read back from the markdown after the naming. */
-function monthTotal(month, id) {
+export function monthTotal(month, id) {
   const file = monthFilePath(month, id);
   if (!existsSync(file)) return null;
   const { days } = parseMonthFile(readFileSync(file, "utf8"));
@@ -155,11 +157,11 @@ function main() {
   const config = loadConfig();
   const person = currentPerson(config);
   const month = flag("month") ?? monthOf(named[0] ?? new Date().toISOString().slice(0, 10));
-  const previous = lastCommit(person.id);
+  const previous = lastCommit(person.fileId);
   const commits = commitsSince(previous, named[0] ?? month + "-01", person.emails);
   const head = headCommit();
 
-  const entry = appendEntry(person.id, {
+  const entry = appendEntry(person.fileId, {
     at: new Date().toLocaleString("sv", { timeZone: config.timeZone }).replace(" ", "T"),
     month,
     session: flag("session"),
@@ -169,7 +171,7 @@ function main() {
     // being stepped over.
     throughCommit: head,
     commits,
-    monthTotal: monthTotal(month, person.id),
+    monthTotal: monthTotal(month, person.fileId),
   });
 
   console.log(

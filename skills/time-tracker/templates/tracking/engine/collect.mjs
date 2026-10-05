@@ -3,10 +3,13 @@
 // Run with `node <tracking>/engine/collect.mjs`. It writes the month markdown
 // next to itself, plus an evidence file in cache/ for labelling.
 //
-// Everything is per person. The transcripts read are this machine's own, the
-// commits read are the ones this person authored, and the files written carry
-// the person's id - `2026-09.<id>.md` - so teammates sharing a checkout each
-// keep their own timesheet and never overwrite each other's days.
+// Everything is per person, per computer. The transcripts read are this
+// machine's own, the commits read are the ones this person authored, and the
+// files written carry the person's id and this computer's name -
+// `2026-09.<person>.<computer>.md` - so neither teammates sharing a checkout
+// nor one person's two computers ever overwrite each other's days. Time
+// another of the person's computers already counted is left out (see
+// `overlapCover`), so their timesheets can be summed.
 //
 // Only days from `trackFrom` onward are counted - the date written into
 // config.json when the tracker was installed. Days before it are ignored
@@ -38,9 +41,11 @@ import {
   uncoveredSeconds,
 } from "./blocks.mjs";
 import {
+  ACTIVITY_DIR,
   CACHE_DIR,
   REPO_ROOT,
   TRACKING_DIR,
+  activityPath,
   currentPerson,
   historyPath,
   loadConfig,
@@ -51,7 +56,10 @@ import {
 } from "./config.mjs";
 import {
   isPlaceholder,
+  measuredSeconds,
   needsBullets,
+  needsType,
+  overlapRoom,
   parseMonthFile,
   rebuild,
   renderMonthFile,
@@ -101,8 +109,18 @@ export function isTrackerPrompt(text) {
     .toLowerCase()
     .replace(/[\s.!?,:;]+$/, "");
   if (prompt.startsWith("/time-tracker")) return true;
-  return TRACKER_PROMPT.test(prompt);
+  return TRACKER_PROMPT.test(prompt) || MANUAL_PROMPT.test(prompt);
 }
+
+/**
+ * "log manual hours", "add manual time" - the request that opens the manual
+ * hours mode, which is tracker upkeep like an update. Anchored to the opening
+ * words rather than the whole prompt, since the hours themselves often follow
+ * in the same message ("log manual hours: 3h in Figma yesterday"). The skill
+ * gathers the rest through AskUserQuestion, whose answers are not prompts, so
+ * the stretch is not cut short by the description of the work.
+ */
+const MANUAL_PROMPT = /^(?:please\s+|pls\s+)?(?:log|add|record|enter)\s+(?:some\s+|my\s+)?manual\s+(?:hours?|time)\b/;
 
 const TRACKER_PROMPT =
   /^(?:please\s+|pls\s+)?(?:run\s+|do\s+)?(?:an?\s+|the\s+)?u[pd]{1,2}[a-z]*t[a-z]*\s*(?:the\s+|my\s+)?(?:time\s*)?(?:tr[a-z]*|timesheet|time\s*sheet)(?:\s+please|\s+pls)?$/;
@@ -369,23 +387,108 @@ function writeIfChanged(file, content) {
   return true;
 }
 
+/**
+ * The stretches of one day this computer must leave out because another of
+ * the same person's computers already counted them.
+ *
+ * Each computer commits the ranges it counted (`activity/`), so a stretch
+ * that two computers both saw is claimed by whichever recorded it first, and
+ * the other leaves it out. When both had already recorded it - each collected
+ * before pulling the other's - the computer whose name sorts first keeps it.
+ * That rule is the same seen from either side, so the stretch is never
+ * dropped by both: a computer leaves out everything an earlier-sorting
+ * computer counted, and only what it had not itself recorded from a
+ * later-sorting one.
+ *
+ * `others` is `[{ machine, ranges }]`; ranges are `{ start, end }` epoch ms.
+ */
+export function overlapCover(machine, previousMine, others) {
+  const cover = [];
+  for (const other of others) {
+    if (other.machine === machine || other.ranges.length === 0) continue;
+    if (other.machine < machine) cover.push(...other.ranges);
+    else {
+      const asBlocks = other.ranges.map((range) => ({ day: "", start: range.start, end: range.end }));
+      cover.push(...subtractBlocks(asBlocks, previousMine));
+    }
+  }
+  return cover;
+}
+
+/** A computer's counted ranges for a month, `{ day: [{ start, end }] }`; empty when it has none. */
+function readActivity(file) {
+  try {
+    const { days } = JSON.parse(readFileSync(file, "utf8"));
+    const out = {};
+    for (const [day, ranges] of Object.entries(days ?? {})) {
+      out[day] = ranges.map(([start, end]) => ({ start: Date.parse(start), end: Date.parse(end) }));
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** ISO instants, days and ranges in order, so an unchanged month writes the same bytes. */
+function renderActivity(month, days) {
+  const sorted = {};
+  for (const day of Object.keys(days).sort()) {
+    sorted[day] = [...days[day]]
+      .sort((a, b) => a.start - b.start)
+      .map((range) => [new Date(range.start).toISOString(), new Date(range.end).toISOString()]);
+  }
+  // One `[start, end]` pair to a line, so a day's diff reads as its ranges.
+  const json = JSON.stringify({ month, days: sorted }, null, 2).replace(
+    /\[\s*("[^"]+"),\s*("[^"]+")\s*\]/g,
+    "[$1, $2]",
+  );
+  return `${json}\n`;
+}
+
+/** The person's other computers' activity for `month`, `[{ machine, days }]`. */
+function otherActivity(month, person) {
+  const pattern = new RegExp(`^${month}\\.${person.id}\\.([a-z0-9-]+)\\.json$`);
+  let names = [];
+  try {
+    names = readdirSync(ACTIVITY_DIR);
+  } catch {
+    return [];
+  }
+  return names
+    .map((name) => pattern.exec(name)?.[1])
+    .filter((machine) => machine && machine !== person.machine)
+    .sort()
+    .map((machine) => ({ machine, days: readActivity(activityPath(month, `${person.id}.${machine}`)) }));
+}
+
+/**
+ * The jobs a day can still need. `names`: a placeholder row is standing.
+ * `bullets`: a named task has no outcome list yet - including days named
+ * before bullets existed, which is how an older month gets backfilled.
+ * `types`: a named task has no work type yet - the same backfill, for days
+ * named before types existed. A day still being named needs all three: every
+ * name written gets its bullets and its type in the same pass.
+ */
+export function dayNeeds(day) {
+  if (day.tasks.some((task) => isPlaceholder(task.name))) return ["names", "bullets", "types"];
+  const needs = [];
+  if (day.tasks.some(needsBullets)) needs.push("bullets");
+  if (day.tasks.some(needsType)) needs.push("types");
+  return needs;
+}
+
 function writeEvidence(month, id, file, blocks, prompts, commits, timeZone) {
   const days = file.days.map((day) => {
     const dayBlocks = blocks.filter((block) => block.day === day.date);
-    // Two jobs a day can still need. `names`: a placeholder row is standing.
-    // `bullets`: a named task has no outcome list yet - including days named
-    // before bullets existed, which is how an older month gets backfilled.
-    const needs = [];
-    // A day still being named needs both: every name written gets its bullets
-    // in the same pass.
-    if (day.tasks.some((task) => isPlaceholder(task.name))) needs.push("names", "bullets");
-    else if (day.tasks.some(needsBullets)) needs.push("bullets");
+    const needs = dayNeeds(day);
     return {
       date: day.date,
       duration: formatDuration(day.seconds),
       needs,
       tasks: day.tasks.map((task) => ({
         name: task.name,
+        ...(task.type ? { type: task.type } : {}),
+        ...(task.manual ? { manual: true } : {}),
         time: formatDuration(task.seconds),
         ...(task.details?.length > 0 ? { details: task.details } : {}),
       })),
@@ -459,6 +562,23 @@ function writeEvidence(month, id, file, blocks, prompts, commits, timeZone) {
     path.join(CACHE_DIR, `${month}.${id}.pending.json`),
     `${JSON.stringify({ month, sinceCommit: since, days: pending }, null, 2)}\n`,
   );
+}
+
+/**
+ * A type the config does not list splits the "By type" table into a row of its
+ * own, so say so - usually a typo, or a category removed after it was used.
+ */
+function warnUnknownTypes(month, file, categories) {
+  const known = new Set(categories ?? []);
+  const unknown = new Set(
+    file.days.flatMap((day) => day.tasks.map((task) => task.type).filter((type) => type && !known.has(type))),
+  );
+  if (unknown.size > 0) {
+    console.warn(
+      `Warning: ${month} uses ${[...unknown].map((type) => `"${type}"`).join(", ")}, ` +
+        "not in config.json categories. Fix the Type column or add it to the list.",
+    );
+  }
 }
 
 /**
@@ -544,10 +664,11 @@ function main() {
     else byMonth.set(month, [block]);
   }
 
-  // Rebuild any month with fresh data, plus any month already on disk, so days
-  // recorded on another machine keep rendering here.
+  // Rebuild any month with fresh data, plus any month this computer already
+  // has on disk, so a month whose transcripts have expired still re-renders.
+  // Another computer's months are its own files and are never written here.
   const months = new Set(byMonth.keys());
-  const ownMonth = monthFilePattern(person.id);
+  const ownMonth = monthFilePattern(person.fileId);
   for (const name of readdirSync(TRACKING_DIR)) {
     const found = ownMonth.exec(name);
     if (found) months.add(found[1]);
@@ -562,23 +683,69 @@ function main() {
       if (bucket) bucket.push(block);
       else byDate.set(block.day, [block]);
     }
+    const file = monthFilePath(month, person.fileId);
+    const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
+    // Days recorded before the boundary are dropped. Days after it that this
+    // machine holds no evidence for are left alone - the evidence may simply
+    // have expired, and dropping the day would delete recorded work.
+    const existing = parsed
+      ? { ...parsed, days: parsed.days.filter((day) => day.date >= trackedFrom) }
+      : null;
+
+    const activityFile = activityPath(month, person.fileId);
+    const previousActivity = readActivity(activityFile);
+    const others = otherActivity(month, person);
+    const activity = Object.fromEntries(
+      Object.entries(previousActivity).filter(([day]) => day >= trackedFrom),
+    );
+    const kept = [];
+
     const measured = [...byDate.entries()].map(([date, dayBlocks]) => {
       const dayMainBlocks = mainBlocks.filter((block) => block.day === date);
-      return {
+      const entry = {
         date,
         blocks: dayMainBlocks,
         unscaledSeconds: uncoveredSeconds(dayBlocks, dayMainBlocks),
       };
-    });
+      activity[date] = dayBlocks;
 
-    const file = monthFilePath(month, person.id);
-    const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
-    // Days recorded before the boundary are dropped. Days after it that this
-    // machine holds no evidence for are left alone - a second computer's work
-    // is still the user's work, and dropping it here would delete it.
-    const existing = parsed
-      ? { ...parsed, days: parsed.days.filter((day) => day.date >= trackedFrom) }
-      : null;
+      const cover = overlapCover(
+        person.machine,
+        previousActivity[date] ?? [],
+        others.map((other) => ({ machine: other.machine, ranges: other.days[date] ?? [] })),
+      );
+      if (cover.length === 0) return entry;
+
+      const keptBlocks = subtractBlocks(dayBlocks, cover);
+      const keptMain = subtractBlocks(dayMainBlocks, cover);
+      const raw = measuredSeconds(entry, config.hoursMultiplier);
+      const overlap =
+        raw -
+        measuredSeconds(
+          { blocks: keptMain, unscaledSeconds: uncoveredSeconds(keptBlocks, keptMain) },
+          config.hoursMultiplier,
+        );
+      if (overlap <= 0) return entry;
+
+      // Taken only out of unnamed time. What a named day already holds stays,
+      // and is said, so the person can correct it by hand if it matters.
+      const room = overlapRoom(existing?.days.find((day) => day.date === date), raw);
+      const applied = Math.min(overlap, room);
+      if (overlap - applied >= 60) {
+        const where = others.filter((other) => (other.days[date] ?? []).length > 0).map((other) => other.machine);
+        kept.push(`${date} (${formatDuration(overlap - applied)}, also on ${where.join(", ")})`);
+      }
+      // Record as counted only what this computer actually counts, so the
+      // other computer keeps the stretch it was given.
+      if (applied >= overlap - 1) activity[date] = keptBlocks;
+      return { ...entry, overlapSeconds: applied };
+    });
+    if (kept.length > 0) {
+      console.warn(
+        `Note: ${kept.join("; ")} - time also counted on another of your computers, kept here ` +
+          "because the day was already named. Correct the rows by hand if it was counted twice.",
+      );
+    }
 
     const rebuilt = rebuild(
       existing,
@@ -588,10 +755,12 @@ function main() {
       config.idleGapMinutes,
       config.hoursMultiplier,
     );
+    if (Object.keys(activity).length > 0) writeIfChanged(activityFile, renderActivity(month, activity));
     if (rebuilt.days.length === 0) continue;
 
     const changed = writeIfChanged(file, renderMonthFile(rebuilt, config.workdays));
-    writeEvidence(month, person.id, rebuilt, monthBlocks, prompts, commits, config.timeZone);
+    warnUnknownTypes(month, rebuilt, config.categories);
+    writeEvidence(month, person.fileId, rebuilt, monthBlocks, prompts, commits, config.timeZone);
 
     // Match the rounding the month file itself prints, so the two never differ.
     const total = rebuilt.days.reduce((sum, day) => sum + Math.round(day.seconds / 60) * 60, 0);

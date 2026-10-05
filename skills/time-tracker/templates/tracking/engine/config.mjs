@@ -9,9 +9,11 @@
 // Layout, from this file outwards:
 //   <repo>/<project-management>/<tracking>/engine/config.mjs   <- here
 //   <repo>/<project-management>/<tracking>/config.json
-//   <repo>/<project-management>/<tracking>/<YYYY-MM>.<person>.md
-//   <repo>/<project-management>/<tracking>/log.<person>.jsonl
+//   <repo>/<project-management>/<tracking>/<YYYY-MM>.<person>.<computer>.md
+//   <repo>/<project-management>/<tracking>/log.<person>.<computer>.jsonl
+//   <repo>/<project-management>/<tracking>/activity/<YYYY-MM>.<person>.<computer>.json
 //   <repo>/<project-management>/<tracking>/cache/
+//   ~/.claude/time-tracker/machine.json                        <- which computer this is
 
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
@@ -42,6 +44,19 @@ const DEFAULT_CONFIG = {
   hoursMultiplier: 1,
   workdays: [0, 1, 2, 3, 4, 5, 6],
   sentinel: "TIME-TRACKER-AUTOMATION",
+  // The work types a task can carry - the Type column, and the "By type" table
+  // on the PDF. A project trims or extends it in its own config.json; a fixed
+  // list keeps the per-type totals meaning the same thing month after month.
+  categories: [
+    "Design",
+    "Development",
+    "Research",
+    "Content",
+    "QA/Testing",
+    "Meetings",
+    "Project management",
+    "Other",
+  ],
   // `{ "<id>": { "emails": [...] } }` - one entry per person, written by setup.
   people: {},
 };
@@ -60,10 +75,17 @@ export function historyPath() {
   return path.join(homedir(), ".claude", "history.jsonl");
 }
 
+export const ACTIVITY_DIR = path.join(TRACKING_DIR, "activity");
+
 /**
- * One timesheet per person. Every per-person file carries the person's id as a
- * suffix - `2026-09.munawar-khel.md` - so teammates who share a checkout never
- * write to the same file, and never conflict in git.
+ * One timesheet per person per computer. Every such file carries a file id -
+ * `<person>.<computer>`, as in `2026-09.munawar-khel.studio-3f9a.md` - so
+ * neither teammates sharing a checkout nor one person's two computers ever
+ * write to the same file, and nothing they commit conflicts in git.
+ *
+ * A file id with no computer part is a timesheet from before computers had
+ * names. It is still read wherever timesheets are merged; setup hands it to
+ * the first computer that is upgraded.
  */
 export function monthFilePath(month, id) {
   return path.join(TRACKING_DIR, `${month}.${id}.md`);
@@ -76,6 +98,59 @@ export function monthFilePattern(id) {
 
 export function logPath(id) {
   return path.join(TRACKING_DIR, `log.${id}.jsonl`);
+}
+
+/**
+ * The stretches of time a computer counted, per day - committed so each of a
+ * person's other computers can leave them out instead of counting them twice.
+ */
+export function activityPath(month, id) {
+  return path.join(ACTIVITY_DIR, `${month}.${id}.json`);
+}
+
+/** `munawar-khel.studio-3f9a` -> its person and computer; a legacy id has no computer. */
+export function splitFileId(id) {
+  const dot = id.indexOf(".");
+  return dot === -1 ? { person: id, machine: null } : { person: id.slice(0, dot), machine: id.slice(dot + 1) };
+}
+
+/**
+ * Every file id with a timesheet for `month` - everyone's, every computer's,
+ * legacy ones included. Found from the file names, so a new computer never has
+ * to be registered anywhere a teammate could also be writing.
+ */
+export function monthFileIds(month, dir = TRACKING_DIR) {
+  const pattern = new RegExp(`^${month}\\.([a-z0-9-]+(?:\\.[a-z0-9-]+)?)\\.md$`);
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    // No tracking folder yet - nothing recorded.
+  }
+  return names
+    .map((name) => pattern.exec(name)?.[1])
+    .filter(Boolean)
+    .sort();
+}
+
+/** One person's file ids for `month`: each of their computers, plus a legacy file if one is left. */
+export function personFileIds(month, personId, dir = TRACKING_DIR) {
+  return monthFileIds(month, dir).filter((id) => splitFileId(id).person === personId);
+}
+
+/** Where this computer's name is kept - once per computer, for every project it tracks. */
+export function machinePath() {
+  return path.join(homedir(), ".claude", "time-tracker", "machine.json");
+}
+
+/** This computer's name, as setup wrote it, or null when setup has not named it yet. */
+export function machineName() {
+  try {
+    const name = JSON.parse(readFileSync(machinePath(), "utf8")).name;
+    return typeof name === "string" && /^[a-z0-9][a-z0-9-]*$/.test(name) ? name : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The git identity of whoever is running this, or null where there is none. */
@@ -111,7 +186,16 @@ export function currentPerson(config) {
   const wanted = email.toLowerCase();
   for (const [id, person] of Object.entries(config.people ?? {})) {
     const emails = (person?.emails ?? []).map((value) => String(value).toLowerCase());
-    if (emails.includes(wanted)) return { id, emails: new Set(emails) };
+    if (emails.includes(wanted)) {
+      const machine = machineName();
+      if (!machine) {
+        throw new Error(
+          `This computer has no name yet (${machinePath()}), so there is no way to keep its ` +
+            "timesheet apart from your other computers'. Re-run the time-tracker setup here.",
+        );
+      }
+      return { id, machine, fileId: `${id}.${machine}`, emails: new Set(emails) };
+    }
   }
   throw new Error(
     `${email} is not registered in ${CONFIG_PATH}. Re-run the time-tracker setup to add ` +
