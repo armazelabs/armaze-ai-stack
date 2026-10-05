@@ -2,6 +2,18 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.8.0 - 2026-10-05
+
+### Added
+
+- **time-tracker** says what kind of work each task was. Every task carries a work type — Design, Development, Research, Content, QA/Testing, Meetings, Project management or Other by default, from a `categories` list in `config.json` that each project can edit. The labelling pass picks the type from the same commits and prompts it names the task from. Every PDF shows the type next to each task and a new **By type** table with how much of each type was logged by hand. Days named before this get their types on the next "update tracker"; a missing type only warns.
+- **time-tracker** records manual hours. Work done away from Claude Code — an afternoon in Figma, a sketch on paper — can't be measured from transcripts, so every "update tracker" now asks whether there was any. Describe it in your own words; Claude works out the date, type, task and hours, shows them back, and records them once you confirm. Say "log manual hours" to add some without an update, or ask to change or remove one. Manual hours are recorded exactly as given (the multiplier never applies), never trimmed by later updates, and tagged **Manual** on every PDF, client one included. Each one is logged with your own description.
+
+### Changed
+
+- **time-tracker** keeps one timesheet per person per computer. Setup names each computer once (kept in `~/.claude/time-tracker/machine.json`, for every project), and every file it writes carries the person and the computer — `2026-10.<person>.<computer>.md` — so using the tracker on two computers no longer causes git conflicts or overwrites one computer's hours with the other's. Each computer commits the time it counted (`activity/`), and an hour with Claude running on two of your computers at once is counted once. Your personal PDF adds all your computers together, and a day still unnamed on another computer holds it back, naming that computer. The first computer to re-run setup takes your existing timesheet; upgrade one computer, push, and pull on the others before running setup there.
+- **time-tracker** client PDF merges the same task on the same day only when its work type matches too; a row pooling manual and measured hours is tagged **Partly manual**.
+
 ## 0.7.1 - 2026-10-01
 
 ### Fixed
