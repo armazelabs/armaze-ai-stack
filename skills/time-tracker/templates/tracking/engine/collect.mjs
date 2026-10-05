@@ -239,7 +239,7 @@ export function readTimestamps(dir, sentinel, exclusions = new Map()) {
     if (existsSync(agentDir)) {
       for (const agent of readdirSync(agentDir, { withFileTypes: true })) {
         if (!agent.isFile() || !agent.name.endsWith(".jsonl")) continue;
-        subagents.push(...instantsOf(path.join(agentDir, agent.name)));
+        for (const instant of instantsOf(path.join(agentDir, agent.name))) subagents.push(instant);
       }
     }
 
@@ -250,12 +250,17 @@ export function readTimestamps(dir, sentinel, exclusions = new Map()) {
   const result = { main: [], all: [], holes, sessions: new Map() };
   const shared = exclusions.get("*")?.stretches ?? [];
   for (const [id, session] of sessions) {
-    result.main.push(...session.main);
-    result.all.push(...session.main, ...session.subagents);
+    // Loops, not spreads: a long session holds more instants than a call can take as arguments.
+    for (const instant of session.main) {
+      result.main.push(instant);
+      result.all.push(instant);
+    }
+    for (const instant of session.subagents) result.all.push(instant);
     result.sessions.set(id, [...session.main, ...session.subagents]);
 
     const own = exclusions.get(id)?.stretches ?? [];
-    const last = Math.max(...session.main, ...session.subagents, 0);
+    const latest = (max, instant) => (instant > max ? instant : max);
+    const last = session.subagents.reduce(latest, session.main.reduce(latest, 0));
     for (const stretch of [...own, ...shared]) {
       const end = stretch.end ?? last;
       if (end > stretch.start) holes.push({ session: id, start: stretch.start, end });
@@ -288,7 +293,10 @@ export function cutHoles(blocks, holes, sessionInstants, options) {
     let found = cover.get(session);
     if (!found) {
       const others = [];
-      for (const [id, instants] of sessionInstants) if (id !== session) others.push(...instants);
+      for (const [id, instants] of sessionInstants) {
+        if (id === session) continue;
+        for (const instant of instants) others.push(instant);
+      }
       const theirHoles = holes
         .filter((hole) => hole.session !== session)
         .map((hole) => ({ day: "", start: hole.start, end: hole.end }));
@@ -406,11 +414,14 @@ export function overlapCover(machine, previousMine, others) {
   const cover = [];
   for (const other of others) {
     if (other.machine === machine || other.ranges.length === 0) continue;
-    if (other.machine < machine) cover.push(...other.ranges);
-    else {
-      const asBlocks = other.ranges.map((range) => ({ day: "", start: range.start, end: range.end }));
-      cover.push(...subtractBlocks(asBlocks, previousMine));
-    }
+    const ranges =
+      other.machine < machine
+        ? other.ranges
+        : subtractBlocks(
+            other.ranges.map((range) => ({ day: "", start: range.start, end: range.end })),
+            previousMine,
+          );
+    for (const range of ranges) cover.push(range);
   }
   return cover;
 }
@@ -654,7 +665,8 @@ function main() {
     inRange,
   );
 
-  const commits = readCommits(Math.min(...all), person.emails);
+  const earliest = all.reduce((min, instant) => (instant < min ? instant : min), Infinity);
+  const commits = readCommits(earliest, person.emails);
 
   const byMonth = new Map();
   for (const block of blocks) {
