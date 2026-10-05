@@ -2,6 +2,16 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.8.1 - 2026-10-05
+
+### Fixed
+
+- **time-tracker** no longer crashes on long sessions. A session with a very large number of timestamps made "update tracker" fail with `RangeError: Maximum call stack size exceeded`. It now completes, with exactly the same hours as before.
+
+### Added
+
+- **time-tracker** has a plain-language `README.md` explaining what it does, how to set it up and what to say to it.
+
 ## 0.8.0 - 2026-10-05
 
 ### Added
