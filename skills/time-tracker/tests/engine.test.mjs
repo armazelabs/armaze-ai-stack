@@ -435,6 +435,61 @@ test("readTimestamps reads subagents, skips tracker-only sessions and cuts track
   }
 });
 
+test("turns a finished agent wakes are agent time, not main-session time", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-"));
+  try {
+    const at = (m) => new Date(T0 + m * MINUTE).toISOString();
+    const human = (m, text) =>
+      `{"type":"user","message":{"role":"user","content":"${text}"},"origin":{"kind":"human"},"timestamp":"${at(m)}"}\n`;
+    const notified = (m) =>
+      `{"type":"queue-operation","operation":"enqueue","timestamp":"${at(m)}","content":"<task-notification>\\n<task-id>a1</task-id>"}\n` +
+      `{"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>a1</task-id>"},"origin":{"kind":"task-notification"},"timestamp":"${at(m)}"}\n`;
+    // Transcripts from before Claude Code wrote `origin` carry only the tag.
+    const legacyNotified = (m) =>
+      `{"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>a2</task-id>"},"timestamp":"${at(m)}"}\n`;
+    const assistant = (m) => `{"type":"assistant","message":{"content":[]},"timestamp":"${at(m)}"}\n`;
+    const toolResult = (m) =>
+      `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]},"timestamp":"${at(m)}"}\n`;
+    const meta = (m) =>
+      `{"type":"user","isMeta":true,"message":{"role":"user","content":"Base directory for this skill"},"timestamp":"${at(m)}"}\n`;
+
+    // One prompt starts a background agent and the person walks away. Each
+    // time the agent reports back, the main session wakes and runs a turn on
+    // its own - 15 minutes apart, inside the idle gap. Then the person returns.
+    writeFileSync(
+      path.join(dir, "s.jsonl"),
+      human(0, "build the footer") +
+        assistant(2) +
+        notified(15) +
+        assistant(16) +
+        meta(16) +
+        toolResult(17) +
+        legacyNotified(30) +
+        assistant(31) +
+        notified(45) +
+        assistant(46) +
+        human(50, "looks good, ship it") +
+        assistant(52),
+    );
+    mkdirSync(path.join(dir, "s", "subagents"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "s", "subagents", "agent-1.jsonl"),
+      [2, 10, 15, 22, 30, 38, 45].map((m) => `{"type":"assistant","timestamp":"${at(m)}"}\n`).join(""),
+    );
+
+    const result = readTimestamps(dir, "SENTINEL");
+    const minutes = (list) => [...list].map((ms) => (ms - T0) / MINUTE).sort((a, b) => a - b);
+    assert.deepEqual(minutes(result.main), [0, 2, 50, 52]);
+    // The woken turns still count as agent time - only the multiplier differs.
+    assert.deepEqual(
+      minutes(result.all),
+      [0, 2, 2, 10, 15, 15, 15, 16, 16, 17, 22, 30, 30, 31, 38, 45, 45, 45, 46, 50, 52],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("an open-ended stretch runs to the end of the session", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-"));
   try {

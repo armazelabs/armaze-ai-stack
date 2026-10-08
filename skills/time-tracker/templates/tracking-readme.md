@@ -118,7 +118,10 @@ written with.
 Subagents count at their own multiplier, `subagentMultiplier` (1.2 by
 default). A background agent working while its main session is idle adds the
 time it worked, times 1.2. Where it overlaps a main session, only the main
-session's time counts.
+session's time counts. When an agent reports back and the main session
+picks the result up on its own, with no prompt from you, that turn counts as
+agent time too: it is not you working, even though it shows up in the main
+session.
 
 All seven days count, weekends included.
 

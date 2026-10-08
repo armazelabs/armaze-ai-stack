@@ -182,11 +182,60 @@ export function trackerStretches(prompts) {
   return exclusions;
 }
 
+const NOTIFICATION = "<task-notification>";
+
+/**
+ * What a main-transcript line says about who is driving the session.
+ *
+ * When a background agent finishes, Claude Code queues a task notification
+ * and the main session runs a turn on it with nobody at the keyboard. Those
+ * turns land in the main transcript, so an agent reporting back every few
+ * minutes kept the main session's blocks open for the agent's whole run and
+ * billed it at the main multiplier. Telling the turns apart puts that time
+ * back with the agent's, where it counts at the subagent multiplier.
+ *
+ * - `"prompt"`: a turn started by the person - typed, a slash command, an
+ *   interrupt.
+ * - `"notification"`: a turn started by a task notification. Newer transcripts
+ *   say so in `origin.kind`; older ones only carry the tag in the prompt.
+ * - `"arrival"`: a notification entering or leaving the queue. Not a turn,
+ *   and not the person, whatever turn it lands in.
+ * - `"typed"`: the person queueing a prompt while a turn runs - they are
+ *   there even if the turn is an agent's.
+ *
+ * Anything else (assistant output, tool results, hook and meta lines)
+ * returns `null` and belongs to the turn it sits in. So does a line that
+ * does not parse: the rule only ever moves time from the main session to the
+ * agents when the transcript says an agent caused it.
+ */
+export function lineKind(line) {
+  if (!line.includes('"type":"user"') && !line.includes('"type":"queue-operation"')) return null;
+  let entry;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (entry.type === "queue-operation") {
+    if (entry.operation !== "enqueue" && entry.operation !== "remove") return null;
+    if (typeof entry.content !== "string") return null;
+    if (entry.content.startsWith(NOTIFICATION)) return "arrival";
+    return entry.operation === "enqueue" ? "typed" : null;
+  }
+  if (entry.type !== "user" || entry.isMeta) return null;
+  const content = entry.message?.content;
+  if (Array.isArray(content) && content.some((part) => part?.type === "tool_result")) return null;
+  if (entry.origin?.kind) return entry.origin.kind === "task-notification" ? "notification" : "prompt";
+  if (typeof content === "string" && content.startsWith(NOTIFICATION)) return "notification";
+  return "prompt";
+}
+
 /**
  * Collect every event instant from this project's transcripts.
  *
  * Returns `{ main, all, holes, sessions }`. `main` holds the instants of the top-level
- * session transcripts; `all` adds each session's `subagents/*.jsonl`. A
+ * session transcripts, less the turns an agent's report started (`lineKind`);
+ * `all` adds those back along with each session's `subagents/*.jsonl`. A
  * background agent keeps working after its parent falls idle, and that work
  * is only in the subagent file - reading the parent alone drops it. The two
  * lists let the caller multiply main-session time and credit agent time at
@@ -240,12 +289,22 @@ export function readTimestamps(dir, sentinel, exclusions = new Map()) {
     }
 
     const main = [];
-    for (const match of content.matchAll(TIMESTAMP)) {
-      const parsed = Date.parse(match[1]);
-      if (!Number.isNaN(parsed)) main.push(parsed);
+    const subagents = [];
+    // A turn the main session ran because an agent reported back is agent
+    // time, not the person's: see `lineKind`. Outside such a turn only a
+    // notification can change anything, so the rest skip the parse.
+    let woken = false;
+    for (const line of content.split("\n")) {
+      const kind = woken || line.includes(NOTIFICATION) ? lineKind(line) : null;
+      if (kind === "prompt") woken = false;
+      if (kind === "notification") woken = true;
+      const bucket = kind === "typed" || (!woken && kind !== "arrival") ? main : subagents;
+      for (const match of line.matchAll(TIMESTAMP)) {
+        const parsed = Date.parse(match[1]);
+        if (!Number.isNaN(parsed)) bucket.push(parsed);
+      }
     }
 
-    const subagents = [];
     const agentDir = path.join(dir, id, "subagents");
     if (existsSync(agentDir)) {
       for (const agent of readdirSync(agentDir, { withFileTypes: true })) {

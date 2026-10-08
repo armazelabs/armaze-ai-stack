@@ -261,7 +261,8 @@ session that only asked for an update, and in a mixed session the stretch from
 timesheet work ("Timesheet update", "Hours recorded and named" or similar) -
 the PDF drops such rows anyway, so one only makes the day's rows stop adding
 up. Subagent time is counted at `subagentMultiplier` (1.2), not the main
-multiplier, wherever no main session covered it.
+multiplier, wherever no main session covered it. A main-session turn started
+by an agent's task notification rather than a prompt is agent time as well.
 
 **Today gets named like any other day.** With nothing running in the background
 there is no later pass to defer to, so a day left as `In progress` would just

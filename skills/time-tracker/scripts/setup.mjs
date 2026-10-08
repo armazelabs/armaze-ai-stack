@@ -735,13 +735,15 @@ function main() {
       // Also stale: a readme from before per-computer files, or from before
       // per-person ones, which documents one shared `<YYYY-MM>.md` and
       // `log.jsonl` that no longer exist - or from
-      // before subagent time and tracker updates were measured as they are now,
+      // before subagent time and tracker updates were measured as they are now
+      // (including the turns an agent's report wakes the main session for),
       // or from before tasks carried a work type and manual hours existed.
       const text = readFileSync(readmePath, "utf8");
       return (
         /track\.mjs|state\.json/.test(text) ||
         !text.includes("<YYYY-MM>.<person>.<computer>.md") ||
         !text.includes("Subagents count at their own multiplier") ||
+        !text.includes("picks the result up on its own") ||
         !text.includes("check time tracker") ||
         !text.includes("manual.mjs")
       );
