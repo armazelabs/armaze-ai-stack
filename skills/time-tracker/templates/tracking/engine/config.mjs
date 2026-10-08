@@ -41,7 +41,14 @@ const DEFAULT_CONFIG = {
   // the project has ever produced.
   trackFrom: null,
   idleGapMinutes: 20,
-  hoursMultiplier: 1,
+  hoursMultiplier: 1.5,
+  // Agent work no main session covered - a background subagent running while
+  // its session sat idle. Scaled on its own, lighter than the main multiplier.
+  subagentMultiplier: 1.2,
+  // The project's hours per month, shared by everyone on it. A week may use a
+  // quarter of it and the month never more than all of it - see budget.mjs.
+  // Null means no budget: nothing is checked or blocked.
+  monthlyHours: null,
   workdays: [0, 1, 2, 3, 4, 5, 6],
   sentinel: "TIME-TRACKER-AUTOMATION",
   // The work types a task can carry - the Type column, and the "By type" table

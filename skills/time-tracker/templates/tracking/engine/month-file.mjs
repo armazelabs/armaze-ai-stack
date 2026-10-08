@@ -303,13 +303,16 @@ function reconcileTasks(existing, seconds, pending, tailSeconds) {
 
 /**
  * A day's measured time, scaled: main-session blocks times the multiplier,
- * plus agent time no session covered at its actual length. Scaled here, once,
- * so every downstream consumer - reconciliation, the rendered markdown, the
- * PDF - sees the same already scaled seconds rather than each having to
- * remember to apply it.
+ * plus agent time no session covered times the subagent multiplier. Scaled
+ * here, once, so every downstream consumer - reconciliation, the rendered
+ * markdown, the PDF - sees the same already scaled seconds rather than each
+ * having to remember to apply it.
  */
-export function measuredSeconds(entry, hoursMultiplier = 1) {
-  return totalSeconds(mergeBlocks(entry.blocks)) * hoursMultiplier + (entry.unscaledSeconds ?? 0);
+export function measuredSeconds(entry, hoursMultiplier = 1, subagentMultiplier = 1) {
+  return (
+    totalSeconds(mergeBlocks(entry.blocks)) * hoursMultiplier +
+    (entry.unscaledSeconds ?? 0) * subagentMultiplier
+  );
 }
 
 /**
@@ -337,7 +340,7 @@ export function overlapRoom(previousDay, measured) {
  * means an hour of measured activity is written down as an hour and a half.
  * It applies to `entry.blocks`, the main-session time. An entry may also
  * carry `unscaledSeconds` - subagent time no main-session block covered -
- * which is added at its actual length, never multiplied.
+ * which is scaled by `subagentMultiplier` instead (1.2 by default).
  *
  * `overlapSeconds` is time another of the person's computers already counted,
  * already scaled and capped to the day's unnamed time (`overlapRoom`); it
@@ -348,11 +351,19 @@ export function overlapRoom(previousDay, measured) {
  * against the measured rows alone, and the manual ones are carried across
  * untouched, their time added on top of the day's measured total.
  */
-export function rebuild(existing, month, measured, todayDay, idleGapMinutes, hoursMultiplier = 1) {
+export function rebuild(
+  existing,
+  month,
+  measured,
+  todayDay,
+  idleGapMinutes,
+  hoursMultiplier = 1,
+  subagentMultiplier = 1,
+) {
   const days = new Map((existing?.days ?? []).map((day) => [day.date, day]));
 
   for (const entry of measured) {
-    const raw = measuredSeconds(entry, hoursMultiplier);
+    const raw = measuredSeconds(entry, hoursMultiplier, subagentMultiplier);
     if (raw <= 0) continue;
     // What this computer counts once time another of the person's computers
     // already counted is left out. The guards below compare `raw` - this

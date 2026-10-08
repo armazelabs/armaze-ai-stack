@@ -35,6 +35,7 @@ import {
   IN_PROGRESS,
   UNLABELLED,
   addManualTask,
+  measuredSeconds,
   overlapRoom,
   parseMonthFile,
   rebuild,
@@ -50,7 +51,15 @@ import {
   typeRollup,
   withoutTrackerRows,
 } from "../templates/tracking/engine/report.mjs";
-import { legacyMoves } from "../scripts/setup.mjs";
+import { legacyMoves, withTrackerHooks } from "../scripts/setup.mjs";
+import { engineDrift } from "../scripts/check.mjs";
+import {
+  budgetFrom,
+  recordedDays,
+  roomProblem,
+  weekOf,
+} from "../templates/tracking/engine/budget.mjs";
+import { promptExempt } from "../templates/tracking/engine/hooks.mjs";
 
 const DAY = "2026-09-14";
 const TODAY = "2026-09-30";
@@ -116,15 +125,16 @@ test("a fully named past day that measures lower keeps its recorded total", () =
   }
 });
 
-test("main-session time is multiplied, agent-only time is added at its actual length", () => {
+test("main-session time takes the main multiplier, agent-only time the subagent one", () => {
   const mainBlocks = [block(0, 60)];
   const allBlocks = mergeBlocks([...mainBlocks, block(120, 150)]);
   const measured = [
     { date: DAY, blocks: mainBlocks, unscaledSeconds: uncoveredSeconds(allBlocks, mainBlocks) },
   ];
-  const { days } = rebuild(null, "2026-09", measured, TODAY, 20, 1.5);
-  // 60 min x 1.5 = 90 min, plus 30 min of agent work unmultiplied.
-  assert.equal(days[0].seconds, 90 * 60 + 30 * 60);
+  const { days } = rebuild(null, "2026-09", measured, TODAY, 20, 1.5, 1.2);
+  // 60 min x 1.5 = 90 min, plus 30 min of agent work x 1.2 = 36 min.
+  assert.equal(days[0].seconds, 90 * 60 + 36 * 60);
+  assert.equal(measuredSeconds(measured[0], 1.5, 1.2), 126 * 60);
 });
 
 test("agent time fully inside a main block adds nothing", () => {
@@ -612,4 +622,152 @@ test("a manual row is found on whichever of the person's computers holds it", ()
   ];
   assert.equal(findManualOwner(files, DAY, "Figma"), "ann.laptop");
   assert.equal(findManualOwner(files, DAY, "Sketches"), null);
+});
+
+// --- the hour budget -------------------------------------------------------
+
+const HOUR = 3600;
+const BUDGET = { monthlyHours: 160 };
+
+test("a week runs Monday to Sunday, across a month's edge", () => {
+  assert.deepEqual(weekOf("2026-10-01"), { start: "2026-09-28", end: "2026-10-04" });
+  assert.deepEqual(weekOf("2026-10-05"), { start: "2026-10-05", end: "2026-10-11" });
+  assert.deepEqual(weekOf("2026-10-11"), { start: "2026-10-05", end: "2026-10-11" });
+});
+
+test("no monthlyHours means no budget", () => {
+  assert.equal(budgetFrom(new Map(), {}, "2026-10-05"), null);
+  assert.equal(budgetFrom(new Map(), { monthlyHours: null }, "2026-10-05"), null);
+});
+
+test("a week gets a quarter of the month, counted across the month's edge", () => {
+  // Mon 28 Sep - Sun 4 Oct: September's three days count toward the week, not October.
+  const totals = new Map([
+    ["2026-09-28", 15 * HOUR],
+    ["2026-09-30", 15 * HOUR],
+    ["2026-10-01", 6 * HOUR],
+  ]);
+  const budget = budgetFrom(totals, BUDGET, "2026-10-01");
+  assert.equal(budget.week.cap, 40 * HOUR);
+  assert.equal(budget.week.used, 36 * HOUR);
+  assert.equal(budget.month.used, 6 * HOUR);
+  assert.equal(budget.left, 4 * HOUR);
+  assert.equal(budget.exhausted, false);
+  assert.deepEqual(budget.over, []);
+});
+
+test("a used-up week closes until next Monday", () => {
+  const totals = new Map([["2026-10-06", 25 * HOUR], ["2026-10-07", 16 * HOUR]]);
+  const budget = budgetFrom(totals, BUDGET, "2026-10-07");
+  assert.equal(budget.exhausted, true);
+  assert.deepEqual(budget.over, ["week"]);
+  assert.equal(budget.reopens, "2026-10-12");
+});
+
+test("in a five-week month the month's cap closes the last week early", () => {
+  // Four full weeks of 40h in October leave nothing for 26-31 Oct.
+  const totals = new Map([
+    ["2026-10-01", 40 * HOUR],
+    ["2026-10-08", 40 * HOUR],
+    ["2026-10-15", 40 * HOUR],
+    ["2026-10-22", 40 * HOUR],
+  ]);
+  const budget = budgetFrom(totals, BUDGET, "2026-10-27");
+  assert.equal(budget.week.used, 0);
+  assert.equal(budget.month.left, 0);
+  assert.equal(budget.exhausted, true);
+  assert.equal(budget.reopens, "2026-11-01");
+});
+
+test("every person's timesheet counts toward the one budget", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-budget-"));
+  try {
+    const month = (days) =>
+      renderMonthFile({ month: "2026-10", days: days.map(([date, seconds]) => ({ date, seconds, tasks: [{ name: "Work", type: "Development", seconds }] })) });
+    writeFileSync(path.join(dir, "2026-10.ann.desk-1a2b.md"), month([["2026-10-05", 10 * HOUR]]));
+    writeFileSync(path.join(dir, "2026-10.bob.lap-9f9f.md"), month([["2026-10-05", 5 * HOUR], ["2026-10-06", 2 * HOUR]]));
+    const onDisk = recordedDays(["2026-10"], { dir });
+    assert.equal(onDisk.get("2026-10-05"), 15 * HOUR);
+    assert.equal(onDisk.get("2026-10-06"), 2 * HOUR);
+
+    // A computer's freshly measured month replaces what its file says.
+    const fresh = { id: "ann.desk-1a2b", months: new Map([["2026-10", { month: "2026-10", days: [{ date: "2026-10-05", seconds: 12 * HOUR, tasks: [] }] }]]) };
+    assert.equal(recordedDays(["2026-10"], { dir, fresh }).get("2026-10-05"), 17 * HOUR);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("manual hours that would go over the budget are refused, shorter ones fit", () => {
+  const budget = budgetFrom(new Map([["2026-10-05", 38 * HOUR]]), BUDGET, "2026-10-06");
+  assert.equal(roomProblem(budget, 2 * HOUR), null);
+  assert.match(roomProblem(budget, 3 * HOUR), /only 2h of the hour budget is left/);
+  // Shortening a row always goes through, even over budget.
+  const over = budgetFrom(new Map([["2026-10-05", 45 * HOUR]]), BUDGET, "2026-10-06");
+  assert.equal(roomProblem(over, -HOUR), null);
+});
+
+test("tracker requests and the override get past a used-up budget, work does not", () => {
+  assert.equal(promptExempt("update tracker", {}), true);
+  assert.equal(promptExempt("log manual hours: 2h in Figma", {}), true);
+  assert.equal(promptExempt("fix the checkout bug", {}), false);
+  assert.equal(promptExempt("fix the checkout bug", { TIME_TRACKER_OVERRIDE: "1" }), true);
+});
+
+test("setup's hooks replace its own, keep everyone else's, and settle", () => {
+  const settings = {
+    permissions: { allow: ["Bash(ls)"] },
+    hooks: {
+      SessionStart: [
+        { hooks: [{ type: "command", command: "node project-management/tracking/engine/session-start.mjs" }] },
+        { matcher: "startup", hooks: [{ type: "command", command: "echo hello" }] },
+      ],
+    },
+  };
+  const once = withTrackerHooks(settings, "project-management/tracking/engine");
+  assert.deepEqual(once.permissions, settings.permissions);
+  assert.deepEqual(once.hooks.SessionStart, [
+    { matcher: "startup", hooks: [{ type: "command", command: "echo hello" }] },
+    { hooks: [{ type: "command", command: 'node "$CLAUDE_PROJECT_DIR/project-management/tracking/engine/hooks.mjs" session-start' }] },
+  ]);
+  assert.match(once.hooks.SessionEnd[0].hooks[0].command, /hooks\.mjs" session-end$/);
+  assert.match(once.hooks.UserPromptSubmit[0].hooks[0].command, /hooks\.mjs" prompt$/);
+  assert.deepEqual(withTrackerHooks(once, "project-management/tracking/engine"), once);
+});
+
+// --- check time tracker ----------------------------------------------------
+
+test("checking or updating the tracker's setup is upkeep, not work", () => {
+  for (const prompt of [
+    "check time tracker",
+    "Check the time tracker.",
+    "update time tracker setup",
+    "upgrade my time-tracker setup",
+    "set up time tracking",
+  ]) {
+    assert.equal(isTrackerPrompt(prompt), true, prompt);
+  }
+  for (const prompt of ["check the checkout tracker bug", "update time tracker setup and fix the login"]) {
+    assert.equal(isTrackerPrompt(prompt), false, prompt);
+  }
+});
+
+test("engineDrift lists changed, missing and left-over engine files", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "time-tracker-drift-"));
+  try {
+    const templates = path.join(root, "templates");
+    const engine = path.join(root, "engine");
+    mkdirSync(templates);
+    mkdirSync(engine);
+    for (const name of ["a.mjs", "b.mjs", "c.mjs"]) writeFileSync(path.join(templates, name), name);
+    for (const name of ["a.mjs", "b.mjs", "c.mjs"]) writeFileSync(path.join(engine, name), name);
+    assert.deepEqual(engineDrift(templates, engine), { changed: [], missing: [], extra: [] });
+
+    writeFileSync(path.join(engine, "b.mjs"), "edited");
+    rmSync(path.join(engine, "c.mjs"));
+    writeFileSync(path.join(engine, "track.mjs"), "old");
+    assert.deepEqual(engineDrift(templates, engine), { changed: ["b.mjs"], missing: ["c.mjs"], extra: ["track.mjs"] });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -4,6 +4,32 @@ Hours worked on {{PROJECT_NAME}}, measured from Claude Code session activity.
 There is no timer to remember - the record is built from the session
 transcripts this machine already keeps.
 
+## Getting started
+
+**New on this project?** Install the skill and set yourself up - each person
+does this once per computer:
+
+1. In the project's folder, in the terminal: `aistack add time-tracker`
+2. In Claude Code, say **"set up time tracking"** and answer its questions
+   (the monthly hours are already set for this project, so usually it only
+   asks what to call your computer).
+3. It checks itself at the end. Look for **"All good - time tracking is
+   working."**
+
+**A new version came out?** Each person, on each computer:
+
+1. In the project's folder, in the terminal: `aistack update`
+2. In Claude Code, say **"update time tracker setup"**. It moves this project
+   to the new version, asks for anything new it needs, and checks everything.
+3. Look for **"All good - time tracking is working."**, then commit what
+   changed (`.claude/settings.json` and this folder) so teammates get it.
+
+**Not sure it's working?** Say **"check time tracker"**. It checks the
+version, the settings, that the session hooks are installed and run, that
+hours measure and the budget shows, and that PDFs can be made - and fixes
+what it can on the spot. Checking is not counted as work, and it works even
+when the hours have run out.
+
 ## One timesheet per person, per computer
 
 Everyone on the project keeps their own timesheet, side by side in this folder -
@@ -31,14 +57,43 @@ counts - the day this was installed - and every day from then on is counted.
 Days before it are ignored even though their transcripts exist. To count earlier
 work, back-date that one line.
 
-Nothing runs in the background: no hook, no scheduled collection. The timesheet
-moves only when you ask for it.
+## The hour budget
+
+`monthlyHours` in `config.json` is the project's hours for a month - shared by
+everyone on it, not per person. A week (Monday to Sunday, even where it crosses
+into the next month) may use a quarter of it - **{{WEEKLY_HOURS}}** hours - and
+the month never more than all of it. In a five-week month, the last week gets
+whatever the month has left.
+
+What counts is what the timesheets record: everyone's, measured and manual,
+after the multipliers - the hours the client PDF shows. Only the timesheets in
+your checkout count, so a teammate's hours count once they push and you pull.
+
+- **Every session checks in.** When a Claude Code session starts, the hours
+  are re-measured and you see how much of the week and the month is used and
+  left. When it ends, they are re-measured again, so the timesheet is current.
+- **Prompts stop when the budget is used up.** Each prompt re-measures the
+  hours first; once this week or this month is used up, the prompt is refused
+  until the week (or the month) opens again. "update tracker" and "check time
+  tracker" still work, so the days can be named, the PDFs sent and the
+  tracker repaired. To work anyway, start Claude Code
+  with `TIME_TRACKER_OVERRIDE=1`.
+- **Nothing is trimmed.** If a session runs past the budget before it is
+  stopped, the hours are recorded as measured, a collect warns, and the log
+  notes it once for that week or month.
+- **Manual hours that would go over are refused**, with how much is left.
+
+Check where you stand at any time with `node {{ENGINE_REL}}/budget.mjs`.
+
+The hooks live in the project's `.claude/settings.json` and run
+`{{ENGINE_REL}}/hooks.mjs`. They only measure and check - naming the days and
+rendering the PDFs is still "update tracker".
 
 ## The files
 
 | File | What it is |
 | --- | --- |
-| `config.json` | Shared: first day counted, timezone, idle gap, hours multiplier, work types (`categories`), and who is who (`people`). |
+| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, work types (`categories`), and who is who (`people`). |
 | `<YYYY-MM>.<person>.<computer>.md` | One person's month on one computer: a total per day, the tasks it split into, and what each task delivered. |
 | `<YYYY-MM>.<person>.pdf` | The person's month as a PDF - all their computers merged. |
 | `weekly/<YYYY-MM>/<first day>.<person>.pdf` | One PDF per Monday-to-Sunday week, split at the month's edge. |
@@ -60,9 +115,10 @@ recorded - that is `hoursMultiplier` in `config.json`. Changing it applies to
 days measured from then on; days already recorded keep the number they were
 written with.
 
-Subagents count without the multiplier. A background agent working while its
-main session is idle adds the time it worked, at its actual length. Where it
-overlaps a main session, only the main session's time counts.
+Subagents count at their own multiplier, `subagentMultiplier` (1.2 by
+default). A background agent working while its main session is idle adds the
+time it worked, times 1.2. Where it overlaps a main session, only the main
+session's time counts.
 
 All seven days count, weekends included.
 
@@ -118,7 +174,8 @@ Manual rows are marked `· manual` in the Type column, and tagged **Manual** on
 both PDFs - on the client one too, so nobody has to ask where those hours came
 from. They are recorded exactly as given, never multiplied, and no collect
 ever trims or regrows them: the day's total is what was measured plus what you
-logged. A day can hold only manual hours.
+logged. A day can hold only manual hours. They count against the hour budget,
+and an entry that would take its week or month over it is refused.
 
 They are written by `{{ENGINE_REL}}/manual.mjs`, never by hand, so the row and the
 day's total move together and every change leaves a line in your log with your

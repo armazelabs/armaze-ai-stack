@@ -116,18 +116,28 @@ function detectProjectName() {
 
 /**
  * `--multiplier <n>` scales measured hours before they are recorded: 2 writes
- * an hour of measured activity down as two. Only meaningful on a first
- * install - once config.json exists it owns the value.
+ * an hour of measured activity down as two. 1.5 unless given. Only meaningful
+ * on a first install - once config.json exists it owns the value.
  */
 function parseMultiplier() {
-  const args = process.argv.slice(2);
-  const flag = args.indexOf("--multiplier");
-  if (flag === -1) return { value: 1, given: false };
+  return parsePositive("--multiplier", 1.5);
+}
 
-  const raw = args[flag + 1];
+/**
+ * `--monthly-hours <n>` is the project's hour budget for a month, shared by
+ * everyone on it - a quarter of it per week. Required on a first install; on
+ * a re-run it sets the value, and without it the config keeps its own.
+ */
+function parseMonthlyHours() {
+  return parsePositive("--monthly-hours", null);
+}
+
+function parsePositive(name, fallback) {
+  const raw = flagValue(name);
+  if (raw == null) return { value: fallback, given: false };
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
-    console.error(`time-tracker setup: --multiplier expects a positive number, got ${JSON.stringify(raw)}.`);
+    console.error(`time-tracker setup: ${name} expects a positive number, got ${JSON.stringify(raw)}.`);
     process.exit(1);
   }
   return { value, given: true };
@@ -244,7 +254,7 @@ function flagValue(name) {
  * miss it and build a second, empty tracker beside the real one, so look for
  * the install itself first and only fall back to the name.
  */
-function findInstalledTrackingDir() {
+export function findInstalledTrackingDir() {
   for (const entry of entries(TARGET_ROOT)) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
     const parent = path.join(TARGET_ROOT, entry.name);
@@ -358,48 +368,63 @@ function mergePackageScripts(engineRel) {
   return { applicable: true, added, skipped };
 }
 
+/** Which hook runs which mode of `engine/hooks.mjs`. */
+const HOOK_EVENTS = {
+  SessionStart: "session-start",
+  SessionEnd: "session-end",
+  UserPromptSubmit: "prompt",
+};
+
+/** A hook this skill wrote: today's `engine/hooks.mjs`, or the old `session-start.mjs`. */
+function isOurHook(hook) {
+  return /engine\/hooks\.mjs|session-start\.m[jt]s/.test(hook?.command ?? "");
+}
+
 /**
- * Remove the SessionStart hook a previous version of this skill installed.
- *
- * The tracker no longer runs in the background: it measures and labels only
- * when the user asks for it. A leftover hook would keep collecting on every
- * session start, so an upgrade has to take it out rather than merely stop
- * shipping it.
+ * The hooks in `settings`, with this skill's own replaced by the current ones
+ * for `engineRel`. Everyone else's hooks are kept exactly as they are, and a
+ * group emptied by the removal goes.
  */
-function removeSettingsHook() {
+export function withTrackerHooks(settings, engineRel) {
+  const next = { ...settings, hooks: { ...(settings?.hooks ?? {}) } };
+  for (const [event, mode] of Object.entries(HOOK_EVENTS)) {
+    const kept = [];
+    for (const group of Array.isArray(next.hooks[event]) ? next.hooks[event] : []) {
+      const hooks = (group?.hooks ?? []).filter((hook) => !isOurHook(hook));
+      if (hooks.length > 0) kept.push({ ...group, hooks });
+    }
+    // $CLAUDE_PROJECT_DIR keeps the command right wherever the checkout lives,
+    // and on every teammate's computer.
+    const script = `$CLAUDE_PROJECT_DIR/${engineRel.split(path.sep).join("/")}/hooks.mjs`;
+    kept.push({ hooks: [{ type: "command", command: `node "${script}" ${mode}` }] });
+    next.hooks[event] = kept;
+  }
+  return next;
+}
+
+/**
+ * Wire the tracker into every session: SessionStart and SessionEnd re-measure
+ * the hours, UserPromptSubmit stops prompts once the hour budget is used up.
+ * Written to the project's own .claude/settings.json, which is committed, so
+ * every teammate gets them. Also replaces the SessionStart hook an older
+ * version of this skill installed.
+ */
+function installSettingsHooks(engineRel) {
   const file = path.join(TARGET_ROOT, ".claude", "settings.json");
-  if (!existsSync(file)) return { removed: false };
-
-  let settings;
-  try {
-    settings = JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return { removed: false, error: ".claude/settings.json is not valid JSON - fix it and re-run." };
+  let settings = {};
+  if (existsSync(file)) {
+    try {
+      settings = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      return { changed: false, error: ".claude/settings.json is not valid JSON - fix it and re-run." };
+    }
   }
-
-  const groups = settings?.hooks?.SessionStart;
-  if (!Array.isArray(groups)) return { removed: false };
-
-  let removed = false;
-  const kept = [];
-  for (const group of groups) {
-    const hooks = (group?.hooks ?? []).filter((hook) => {
-      const ours = /session-start\.m[jt]s/.test(hook?.command ?? "");
-      if (ours) removed = true;
-      return !ours;
-    });
-    // A group emptied by the removal goes too; a group that held other hooks
-    // as well keeps them.
-    if (hooks.length > 0) kept.push({ ...group, hooks });
-  }
-  if (!removed) return { removed: false };
-
-  if (kept.length > 0) settings.hooks.SessionStart = kept;
-  else delete settings.hooks.SessionStart;
-  if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
-
-  writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
-  return { removed: true };
+  const next = withTrackerHooks(settings, engineRel);
+  const json = `${JSON.stringify(next, null, 2)}\n`;
+  if (existsSync(file) && readFileSync(file, "utf8") === json) return { changed: false };
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, json);
+  return { changed: true };
 }
 
 /**
@@ -483,6 +508,45 @@ function backfillCategories(configPath, categories) {
   const { people, ...rest } = config;
   writeConfig(configPath, people === undefined ? { ...rest, categories } : { ...rest, categories, people });
   return { backfilled: true };
+}
+
+/**
+ * Bring an existing config.json up to the hour budget: add
+ * `subagentMultiplier` if it is missing, and set `monthlyHours` when
+ * `--monthly-hours` was given. Reports whether `monthlyHours` is still unset,
+ * so the skill knows to ask.
+ */
+function backfillBudget(configPath, monthlyHours) {
+  let config;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return { added: [], missing: false };
+  }
+  const added = [];
+  const next = {};
+  // Insert after hoursMultiplier, where the template puts them.
+  for (const [key, value] of Object.entries(config)) {
+    next[key] = value;
+    if (key !== "hoursMultiplier") continue;
+    if (!("subagentMultiplier" in config)) {
+      next.subagentMultiplier = 1.2;
+      added.push("subagentMultiplier 1.2");
+    }
+    if (!("monthlyHours" in config)) next.monthlyHours = null;
+  }
+  if (!("subagentMultiplier" in next)) {
+    next.subagentMultiplier = 1.2;
+    added.push("subagentMultiplier 1.2");
+  }
+  if (!("monthlyHours" in next)) next.monthlyHours = null;
+  if (monthlyHours.given && next.monthlyHours !== monthlyHours.value) {
+    next.monthlyHours = monthlyHours.value;
+    added.push(`monthlyHours ${monthlyHours.value}`);
+  }
+  const changed = JSON.stringify(next) !== JSON.stringify(config);
+  if (changed) writeConfig(configPath, next);
+  return { added, missing: next.monthlyHours == null };
 }
 
 /** Keep short number arrays like `workdays` on one line, as the template writes them. */
@@ -608,6 +672,7 @@ function main() {
   const machine = resolveMachine();
   const timeZone = detectTimeZone();
   const multiplier = parseMultiplier();
+  const monthlyHours = parseMonthlyHours();
   const todayDay = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -616,6 +681,15 @@ function main() {
   }).format(new Date());
 
   const installed = findInstalledTrackingDir();
+  // The hour budget is the one thing a first install cannot default, so it
+  // stops before creating anything, like an unnamed computer does.
+  if (!monthlyHours.given && !(installed && existsSync(path.join(installed.dir, "config.json")))) {
+    console.error("time-tracker setup: how many hours a month does this project have? The whole team");
+    console.error("shares them, a quarter per week (160 -> 40 a week). Re-run with:");
+    console.error("");
+    console.error("  --monthly-hours <hours>");
+    process.exit(2);
+  }
   const pm = resolveProjectManagementDir(installed);
   const tracking = resolveTrackingDir(pm.dir, installed);
   const trackingRel = path.relative(TARGET_ROOT, tracking.dir);
@@ -627,6 +701,8 @@ function main() {
     PROJECT_NAME: project.name,
     TIMEZONE: timeZone,
     HOURS_MULTIPLIER: multiplier.value,
+    MONTHLY_HOURS: monthlyHours.value ?? "null",
+    WEEKLY_HOURS: monthlyHours.value == null ? "a quarter of `monthlyHours`" : `${monthlyHours.value / 4}`,
     TRACK_FROM: trackFrom.day,
     ENGINE_REL: engineRel,
     CMD_COLLECT: `node ${shellPath(`${engineRel}/collect.mjs`)}`,
@@ -665,7 +741,8 @@ function main() {
       return (
         /track\.mjs|state\.json/.test(text) ||
         !text.includes("<YYYY-MM>.<person>.<computer>.md") ||
-        !text.includes("Subagents count without the multiplier") ||
+        !text.includes("Subagents count at their own multiplier") ||
+        !text.includes("check time tracker") ||
         !text.includes("manual.mjs")
       );
     } catch {
@@ -686,7 +763,10 @@ function main() {
         path.join(tracking.dir, "config.json"),
         JSON.parse(fill(readTemplate("config.json"), values)).categories,
       );
-  const hook = removeSettingsHook();
+  const budget = configCreated
+    ? { added: [], missing: false }
+    : backfillBudget(path.join(tracking.dir, "config.json"), monthlyHours);
+  const hook = installSettingsHooks(engineRel);
   const registered = registerPerson(path.join(tracking.dir, "config.json"), person);
   const claimed =
     registered.id && registered.wasEmpty
@@ -709,13 +789,15 @@ function main() {
   console.log(
     `- ${trackingRel}/config.json: ${
       configCreated
-        ? `created (timeZone ${timeZone}, trackFrom ${trackFrom.day}, hoursMultiplier ${multiplier.value})`
+        ? `created (timeZone ${timeZone}, trackFrom ${trackFrom.day}, hoursMultiplier ${multiplier.value}, ` +
+          `subagentMultiplier 1.2, monthlyHours ${monthlyHours.value} - ${monthlyHours.value / 4} a week)`
         : (backfilled.error
             ? `left untouched - ${backfilled.error}`
-            : backfilled.backfilled || categories.backfilled
+            : backfilled.backfilled || categories.backfilled || budget.added.length > 0
               ? `already existed - added ${[
                   backfilled.backfilled && `trackFrom ${trackFrom.day}`,
                   categories.backfilled && "the work-type categories",
+                  ...budget.added,
                 ]
                   .filter(Boolean)
                   .join(" and ")}`
@@ -746,12 +828,18 @@ function main() {
     );
   }
   if (hook.error) {
-    console.log(`- .claude/settings.json: left alone - ${hook.error}`);
+    console.log(`- .claude/settings.json: hooks not installed - ${hook.error}`);
   } else {
     console.log(
-      `- .claude/settings.json SessionStart hook: ${
-        hook.removed ? "removed - the tracker no longer runs in the background" : "none to remove"
+      `- .claude/settings.json hooks (SessionStart, SessionEnd, UserPromptSubmit): ${
+        hook.changed ? "installed" : "already installed"
       }`,
+    );
+  }
+  if (budget.missing) {
+    console.log(
+      `- monthlyHours: not set - this project has no hour budget yet. Ask how many hours a month it has, ` +
+        `then re-run setup with --monthly-hours <hours>.`,
     );
   }
   if (registered.error) {

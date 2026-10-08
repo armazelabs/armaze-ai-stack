@@ -3,6 +3,8 @@
   "trackFrom": "{{TRACK_FROM}}",
   "idleGapMinutes": 20,
   "hoursMultiplier": {{HOURS_MULTIPLIER}},
+  "subagentMultiplier": 1.2,
+  "monthlyHours": {{MONTHLY_HOURS}},
   "workdays": [0, 1, 2, 3, 4, 5, 6],
   "sentinel": "TIME-TRACKER-AUTOMATION",
   "categories": [

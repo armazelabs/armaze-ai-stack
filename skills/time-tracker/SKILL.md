@@ -6,23 +6,32 @@ description: >
   with a work type (design, development, research...) and plain-language
   outcome bullets under every task, plus manual hours for work done away from
   Claude Code, tagged as manual. One timesheet per person per computer, so it
-  works for teams and for one person on several computers. One command brings it fully up to date: remeasure the hours, name and
+  works for teams and for one person on several computers. Each project has a
+  monthly hours budget, a quarter of it per week: every session start and end
+  re-measures and reports it, and prompts stop once the week or month is used
+  up. One command brings it fully up to date: remeasure the hours, name and
   type every unnamed day, ask about manual hours, re-render the monthly and
   weekly PDFs - personal ones, and one merged, anonymous client PDF for the
   whole team. Sets itself up in any project, in any language - no package.json or build tooling needed - inside
   <project-management>/tracking/. Use for "set up time tracking", "add a time
   tracker", "update tracker", "update tracking", "updatetracking", "how many
   hours have I worked", "label my time", "time tracking report", "log manual
-  hours", "add 2h of design yesterday", or the /time-tracker command.
+  hours", "add 2h of design yesterday", "check time tracker", "update time
+  tracker setup", "is time tracking working", or the /time-tracker command.
 ---
 
 Time is measured after the fact, from the session transcripts Claude Code
 already writes, and each day is named from the commits and prompts that landed
 in it. There is no timer, no stopwatch and no on/off switch.
 
-**Nothing here runs in the background.** No hook, no automatic collection. The
-timesheet moves only when the user asks it to, which is what **Update tracker**
-does. Between asks it sits still and slightly stale, and that is correct.
+**Hooks measure, people name.** Setup installs three Claude Code hooks in the
+project's `.claude/settings.json`, all running `<engine>/hooks.mjs`: SessionStart
+and SessionEnd re-measure the hours (a plain collect) and SessionStart shows the
+hour budget; UserPromptSubmit refuses prompts once the budget is used up (see
+**The hour budget**). Naming days, manual hours and PDFs need Claude, so they
+still move only when the user asks - which is what **Update tracker** does.
+Between asks, the hours are current and the names slightly behind, and that is
+correct.
 
 The one boundary is `trackFrom` in `<tracking>/config.json` - the day the
 tracker was installed. Every day from then on counts; days before it are
@@ -60,6 +69,7 @@ subtracted - two people are two people.
 | The user wants | Mode |
 | --- | --- |
 | tracking set up here, installed, added | **Setup** |
+| "check time tracker", "update time tracker setup", is it working, after installing a new version | **Check** |
 | "update tracker", the timesheet current, hours + labels + PDF | **Update tracker** |
 | hours so far, what's tracked, is it current | **Status** |
 | the days named and nothing else | **Label** |
@@ -77,14 +87,18 @@ engine is `<tracking>/engine/*.mjs`; below, `<engine>` means that path.
 
 ## Setup
 
-**Ask about the multiplier first**, before running anything - but only on a
-first install (no `<tracking>/config.json` yet). The multiplier scales measured
-hours before they are recorded: `2` writes an hour of measured activity down as
-two. Ask with AskUserQuestion, offering `1` (record exactly what is measured),
-`1.5`, `2` (an hour of measured activity counts as two), and let them type their
-own. Do not guess it and do not skip the question - it is the one setting nobody
-can infer, and changing it later does not retroactively rescale days already
-recorded.
+**Ask for the project's monthly hours first**, before running anything - on a
+first install (no `<tracking>/config.json` yet), and on a re-run whose config has
+no `monthlyHours` (setup says so). Ask with AskUserQuestion: "How many hours a
+month does this project have?", offering `160` (40 a week), `120` (30 a week),
+`80` (20 a week), and let them type their own. It is the whole team's budget,
+not each person's; a week gets a quarter of it. Do not guess it - it is the one
+setting nobody can infer.
+
+The multipliers are not asked. Measured hours are recorded at
+`hoursMultiplier` **1.5**, and subagent time no main session covered at
+`subagentMultiplier` **1.2**. To change either, edit `<tracking>/config.json`;
+a change does not retroactively rescale days already named.
 
 **Name the computer** if it has no name yet - when
 `~/.claude/time-tracker/machine.json` does not exist. Ask with AskUserQuestion,
@@ -96,23 +110,23 @@ is asked once per computer, for every project; never ask when the file exists.
 Then run, from the project root:
 
 ```
-node <skill_dir>/scripts/setup.mjs --multiplier <their answer> --machine <their name>
+node <skill_dir>/scripts/setup.mjs --monthly-hours <their answer> --machine <their name>
 ```
 
 Without a name and without `--machine`, setup stops with exit code 2 and
-prints the name it suggests - ask, then run it again. It also stops if the
+prints the name it suggests - ask, then run it again. On a first install
+without `--monthly-hours` it stops the same way. It also stops if the
 checkout has no `git config user.name` or `user.email` and prints the commands
-to set them; relay those. Omit the flag only if they
-explicitly want the default of 1. On a re-run, where
-`config.json` already exists, skip the question entirely - the file owns the
-value, and `--multiplier` is ignored. To change it later, edit `hoursMultiplier`
-in `<tracking>/config.json`.
+to set them; relay those. On a re-run, where `config.json` already exists,
+`--monthly-hours` sets the budget only when given - pass it when the config has
+none or the person asked to change it.
 
 `<skill_dir>` is the folder holding this file. The script is idempotent and does
 all the file work: finding or creating the project-management folder, creating
 `tracking/` inside it, syncing the engine, writing `config.json` with today as
-`trackFrom`, writing a readme if absent, gitignoring the cache, and adding npm
-scripts **only if** the project happens to have a `package.json`.
+`trackFrom`, writing a readme if absent, gitignoring the cache, installing the
+hooks in `.claude/settings.json` (keeping any hooks the project already has),
+and adding npm scripts **only if** the project happens to have a `package.json`.
 
 It never requires a manifest. A docs repo, a design repo, a Python or Go or Rust
 project all set up the same way - the project's name is read from whatever
@@ -120,8 +134,9 @@ manifest exists and falls back to the folder name. Node is the only dependency,
 and Claude Code ships with it. If the script reports something missing, report
 that, but never treat "no package.json" as a reason to stop.
 
-**Re-running setup migrates an older install.** It removes the SessionStart
-hook, deletes `state.json`, prunes the engine files that are gone, and backfills
+**Re-running setup migrates an older install.** It replaces the old
+SessionStart hook with the current three, adds `subagentMultiplier`, deletes
+`state.json`, prunes the engine files that are gone, and backfills
 `trackFrom` from the earliest day the old switch ever tracked - so a timesheet
 that already exists survives intact. An install from before per-person files
 has one shared `<month>.md` and `log.jsonl`; the first person to re-run setup
@@ -139,13 +154,54 @@ claimed but the first person's, and only from a single-person install. The same
 person on a new computer is already registered: setup only names the computer,
 and its timesheet starts beside the others.
 
-Tell the user tracking counts from today onward, and give them the phrase
-**"update tracker"**.
+**Then always run the check** - **Check** below, from step 2 - so a new setup
+ends by proving it works.
+
+Tell the user tracking counts from today onward, the weekly and monthly hours,
+that prompts stop when they run out, and give them the phrases
+**"update tracker"** and **"check time tracker"**. Mention that
+`.claude/settings.json` changed - the hooks reach teammates once it is
+committed.
+
+## Check
+
+"check time tracker", "update time tracker setup", "is time tracking
+working" - and the step a member takes after `aistack update` brings in a new
+version of this skill. It checks the project and fixes what it can, without
+asking: the fix is setup run again.
+
+1. From the project root:
+
+   ```
+   node <skill_dir>/scripts/check.mjs --fix
+   ```
+
+2. **Exit 2** means it needs an answer first, one `needs:` line each:
+   `needs: monthly-hours` - ask as in **Setup** (160 / 120 / 80 / their own);
+   `needs: machine <suggested>` - ask the computer's name, offering the
+   suggestion first. Then run it again with `--monthly-hours <n>` and/or
+   `--machine <name>` added. This also installs the tracker in a project that
+   has none.
+3. **Relay the result** in plain words: what was fixed, each line that is
+   still `✘` or `!` and what it means, and the budget line. Exit 0 is "all
+   good". Exit 1 means something setup cannot fix - a config.json or
+   .claude/settings.json that will not parse, no git email - say what to do
+   and do not edit those by hand unasked. A `!` about PDFs is a warning: hours
+   are still recorded.
+4. If it installed the hooks, say they start with the next Claude Code session,
+   and that `.claude/settings.json` and the `tracking/` folder need committing
+   for teammates to get them.
+
+The check runs the hooks, a collect and the budget - it does not name days or
+render PDFs. Like an update, the time spent on it is not billed, and it still
+works when prompts are blocked.
 
 ## Update tracker
 
 The one command. Triggered by "update tracker", "update tracking",
-"updatetracking", "update my timesheet". Five steps, in order, all of them:
+"updatetracking", "update my timesheet". If `config.json` has no
+`monthlyHours`, ask for it first (as in **Setup**) and re-run setup with
+`--monthly-hours`. Then five steps, in order, all of them:
 
 1. **Measure.** `node <engine>/collect.mjs` - rescan the transcripts, rewrite
    the month markdown, and build the work list.
@@ -191,7 +247,9 @@ The one command. Triggered by "update tracker", "update tracking",
    done. Pass the session id from this session's transcript path if you have
    it; omit `--session` rather than inventing one.
 
-Then report the days you named, any manual hours added, the month total, where the PDFs landed - the
+Then report the days you named, any manual hours added, the month total, the
+hour budget (`node <engine>/budget.mjs` - used and left this week and this
+month, and say plainly if either is over), where the PDFs landed - the
 client PDF first, since it is the one that gets sent - and whose timesheets it
 merged. If no
 Chromium-based browser is found the hours are still recorded and the markdown is
@@ -202,8 +260,8 @@ session that only asked for an update, and in a mixed session the stretch from
 "update tracker" to the next unrelated prompt. Never write a task row for
 timesheet work ("Timesheet update", "Hours recorded and named" or similar) -
 the PDF drops such rows anyway, so one only makes the day's rows stop adding
-up. Subagent time is counted at its actual length, without the multiplier,
-wherever no main session covered it.
+up. Subagent time is counted at `subagentMultiplier` (1.2), not the main
+multiplier, wherever no main session covered it.
 
 **Today gets named like any other day.** With nothing running in the background
 there is no later pass to defer to, so a day left as `In progress` would just
@@ -259,8 +317,37 @@ hours", "that Friday sketch was 2h, not 1.5h").
 
 Manual hours are recorded exactly as given: the multiplier never applies, and
 nothing checks them against measured time - the person's word is the record.
+They do count against the hour budget: `manual.mjs` refuses an `add`, or a
+`set` that lengthens a row, when it would take that day's week or month past
+it, and says how much is left. Relay that and ask how they want to adjust -
+never split an entry across days or shave it to squeeze it in unasked.
 They show as `<Type> · manual` in the month file and carry a **Manual** tag on
 both PDFs, client one included. No collect ever trims or regrows them.
+
+## The hour budget
+
+`monthlyHours` in `config.json` is the project's budget for a month, shared by
+everyone on it. A Monday-to-Sunday week - even one that crosses into the next
+month - may use a quarter of it; the month never more than all of it. It counts
+recorded hours: every timesheet in the checkout, measured and manual, after the
+multipliers, the same hours the client PDF shows. `node <engine>/budget.mjs`
+prints where this week and month stand.
+
+- **SessionStart** re-measures and tells the session (and the person) the
+  week's and month's hours used and left.
+- **UserPromptSubmit** re-measures in memory and refuses the prompt once the
+  week or the month is used up, until the week or the month reopens. Tracker
+  requests ("update tracker", "log manual hours", "check time tracker",
+  "update time tracker setup", `/time-tracker`) still go through, and `TIME_TRACKER_OVERRIDE=1` in the environment lets everything
+  through.
+- **SessionEnd** re-measures so the record is current.
+- **Over budget is recorded, not trimmed.** A collect that finds the week or
+  month over prints a warning and logs one `"kind": "over-budget"` line per
+  week or month that crossed. Report it; never trim rows to fit.
+
+If the session context says the budget is used up, tell the person before
+starting any work. Never set `TIME_TRACKER_OVERRIDE`, edit `monthlyHours`, or
+touch the hooks to get past a block - those are the person's call.
 
 ## The log and the watermark
 
@@ -376,8 +463,9 @@ then renders, so reach for this mode on its own for a *different* month.
   edited is not one.
 - **The engine is generated.** Do not hand-edit `<engine>/*.mjs`; change the
   skill's templates and re-run setup instead.
-- **Never wire this to a hook or an automation on your own.** It runs when
-  asked, and putting it back in the background undoes the point of the design.
+- **The hooks are setup's, not yours.** Setup installs the three hooks; never
+  add others, remove them, or wire naming or rendering to a hook or an
+  automation on your own - naming needs a person's evidence read deliberately.
 - **Never commit anything this skill writes.** No `git add`, no `git commit`,
   no `git push` - not for the month markdown, the PDF or the config, and not as
   a tidy-up at the end of an update. The engine itself only ever reads git

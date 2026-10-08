@@ -25,6 +25,10 @@
 // together, and appends a line to the person's log saying what changed, in
 // their own words (`--note`). Manual hours are recorded as given - the
 // multiplier scales measured activity, not effort the person stated directly.
+//
+// They do count against the project's hour budget (budget.mjs): an `add`, or
+// a `set` that makes a row longer, is refused when it would take its day's
+// week or month past the budget, and says how much is left.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, existsSync, writeFileSync } from "node:fs";
@@ -41,6 +45,7 @@ import {
   personFileIds,
   splitFileId,
 } from "./config.mjs";
+import { budgetFor, roomProblem } from "./budget.mjs";
 import { appendEntry, monthTotal } from "./log.mjs";
 import {
   addManualTask,
@@ -218,6 +223,17 @@ function main() {
   }
   const parsed = read(target);
   const current = parsed.month ? parsed : { ...parsed, month };
+
+  // The hour budget. Only time being added is checked - shortening or
+  // removing a row always goes through, even on a week already over.
+  if (seconds != null && action !== "remove") {
+    const existingRow = current.days
+      .find((day) => day.date === date)
+      ?.tasks.find((row) => row.manual && row.name === task);
+    const extra = action === "add" ? seconds : seconds - (existingRow?.seconds ?? 0);
+    const over = roomProblem(budgetFor(config, date), extra);
+    if (over) throw new Error(over);
+  }
 
   let next;
   if (action === "add") {

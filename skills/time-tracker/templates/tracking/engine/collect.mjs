@@ -65,6 +65,7 @@ import {
   renderMonthFile,
 } from "./month-file.mjs";
 import { lastCommit } from "./log.mjs";
+import { budgetFor, describeBudget, noteOverBudget } from "./budget.mjs";
 
 const TIMESTAMP = /"timestamp":"([^"]+)"/g;
 /**
@@ -109,7 +110,7 @@ export function isTrackerPrompt(text) {
     .toLowerCase()
     .replace(/[\s.!?,:;]+$/, "");
   if (prompt.startsWith("/time-tracker")) return true;
-  return TRACKER_PROMPT.test(prompt) || MANUAL_PROMPT.test(prompt);
+  return TRACKER_PROMPT.test(prompt) || MANUAL_PROMPT.test(prompt) || SETUP_PROMPT.test(prompt);
 }
 
 /**
@@ -121,6 +122,16 @@ export function isTrackerPrompt(text) {
  * the stretch is not cut short by the description of the work.
  */
 const MANUAL_PROMPT = /^(?:please\s+|pls\s+)?(?:log|add|record|enter)\s+(?:some\s+|my\s+)?manual\s+(?:hours?|time)\b/;
+
+/**
+ * "check time tracker", "update time tracker setup", "set up time tracking" -
+ * checking, upgrading or installing the tracker itself. Upkeep like an update,
+ * so it is not billed and gets past a used-up hour budget: without that, a
+ * project out of hours could not even repair its tracker. Whole-prompt
+ * anchored, and it must say "time", so "check the checkout tracker bug" is work.
+ */
+const SETUP_PROMPT =
+  /^(?:please\s+|pls\s+)?(?:(?:check|test|verify)\s+(?:the\s+|my\s+)?time[\s-]*tr[a-z]*(?:\s+set\s*up)?|(?:update|upgrade|fix|repair)\s+(?:the\s+|my\s+)?time[\s-]*tr[a-z]*\s+set\s*up|set\s*up\s+(?:the\s+|my\s+)?time[\s-]*tr[a-z]*)$/;
 
 const TRACKER_PROMPT =
   /^(?:please\s+|pls\s+)?(?:run\s+|do\s+)?(?:an?\s+|the\s+)?u[pd]{1,2}[a-z]*t[a-z]*\s*(?:the\s+|my\s+)?(?:time\s*)?(?:tr[a-z]*|timesheet|time\s*sheet)(?:\s+please|\s+pls)?$/;
@@ -613,22 +624,33 @@ function isNewCommit(sha, since) {
   }
 }
 
-function main() {
+/**
+ * Measure this computer's transcripts and rebuild its month files.
+ *
+ * `write: false` measures and rebuilds in memory only - nothing on disk
+ * changes and nothing is printed. The prompt hook uses it to check the hour
+ * budget on every prompt without rewriting the timesheet each time.
+ *
+ * Returns this computer's rebuilt months (`Map<month, file>`), keyed for
+ * `budgetFor`'s `fresh` option, or null when there is nothing to measure.
+ */
+export function collect({ write = true } = {}) {
   const config = loadConfig();
   const person = currentPerson(config);
   const todayDay = toLocalDay(Date.now(), config.timeZone);
+  const say = write ? console.log : () => {};
 
   // The boundary. Absent means the tracker was never set up here, and a run
   // with no boundary would sweep in every transcript this project has ever
   // had - so it stops rather than guessing.
   const trackedFrom = config.trackFrom;
   if (!trackedFrom) {
-    console.log("No trackFrom date in config.json - the tracker is not set up here.");
-    console.log(`Set one (a YYYY-MM-DD day) in ${path.join(TRACKING_DIR, "config.json")}.`);
-    return;
+    say("No trackFrom date in config.json - the tracker is not set up here.");
+    say(`Set one (a YYYY-MM-DD day) in ${path.join(TRACKING_DIR, "config.json")}.`);
+    return null;
   }
 
-  mkdirSync(CACHE_DIR, { recursive: true });
+  if (write) mkdirSync(CACHE_DIR, { recursive: true });
 
   // Time spent updating the tracker is not work. The prompts say when each
   // update began, so those stretches are taken out before anything is
@@ -644,8 +666,8 @@ function main() {
     exclusions,
   );
   if (all.length === 0) {
-    console.log(`No transcripts found under ${transcriptDir()}.`);
-    return;
+    say(`No transcripts found under ${transcriptDir()}.`);
+    return { config, person, todayDay, months: new Map() };
   }
 
   const options = { idleGapMinutes: config.idleGapMinutes, timeZone: config.timeZone };
@@ -659,7 +681,7 @@ function main() {
   // their subagents - and is what the evidence and the day grouping use.
   // `mainBlocks` is the sessions alone: the time the multiplier applies to.
   // What `blocks` holds beyond `mainBlocks` is agent work no session covered,
-  // credited at its actual length.
+  // credited at the subagent multiplier.
   const blocks = cutHoles(buildBlocks(all, options), holes, sessions, options).filter(inRange);
   const mainBlocks = cutHoles(buildBlocks(mainInstants, options), holes, sessions, options).filter(
     inRange,
@@ -686,6 +708,7 @@ function main() {
     if (found) months.add(found[1]);
   }
 
+  const rebuiltMonths = new Map();
   for (const month of [...months].sort()) {
     const monthBlocks = byMonth.get(month) ?? [];
 
@@ -730,12 +753,13 @@ function main() {
 
       const keptBlocks = subtractBlocks(dayBlocks, cover);
       const keptMain = subtractBlocks(dayMainBlocks, cover);
-      const raw = measuredSeconds(entry, config.hoursMultiplier);
+      const raw = measuredSeconds(entry, config.hoursMultiplier, config.subagentMultiplier);
       const overlap =
         raw -
         measuredSeconds(
           { blocks: keptMain, unscaledSeconds: uncoveredSeconds(keptBlocks, keptMain) },
           config.hoursMultiplier,
+          config.subagentMultiplier,
         );
       if (overlap <= 0) return entry;
 
@@ -752,7 +776,7 @@ function main() {
       if (applied >= overlap - 1) activity[date] = keptBlocks;
       return { ...entry, overlapSeconds: applied };
     });
-    if (kept.length > 0) {
+    if (kept.length > 0 && write) {
       console.warn(
         `Note: ${kept.join("; ")} - time also counted on another of your computers, kept here ` +
           "because the day was already named. Correct the rows by hand if it was counted twice.",
@@ -766,7 +790,10 @@ function main() {
       todayDay,
       config.idleGapMinutes,
       config.hoursMultiplier,
+      config.subagentMultiplier,
     );
+    rebuiltMonths.set(month, rebuilt);
+    if (!write) continue;
     if (Object.keys(activity).length > 0) writeIfChanged(activityFile, renderActivity(month, activity));
     if (rebuilt.days.length === 0) continue;
 
@@ -781,6 +808,21 @@ function main() {
       `${month}: ${formatDuration(total)} across ${count} tracked ${count === 1 ? "day" : "days"}` +
         `${changed ? "" : " (unchanged)"}`,
     );
+  }
+
+  return { config, person, todayDay, months: rebuiltMonths };
+}
+
+function main() {
+  const result = collect();
+  if (!result) return;
+  // The hour budget. Over it, the hours are still recorded as measured - the
+  // record is never trimmed - but it is said, and logged once per week or
+  // month that crossed it.
+  const budget = budgetFor(result.config, result.todayDay);
+  if (budget && budget.over.length > 0) {
+    console.warn(`Warning: ${describeBudget(budget)}`);
+    noteOverBudget(result.person.fileId, result.config, budget);
   }
 }
 

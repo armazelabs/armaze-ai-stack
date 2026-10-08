@@ -64,7 +64,7 @@ const CHROME_CANDIDATES = [
   "/usr/bin/microsoft-edge",
 ];
 
-function findChrome() {
+export function findChrome() {
   for (const candidate of CHROME_CANDIDATES) {
     if (candidate && existsSync(candidate)) return candidate;
   }
