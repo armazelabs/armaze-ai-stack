@@ -3,13 +3,16 @@
 // Run with `node <tracking>/engine/collect.mjs`. It writes the month markdown
 // next to itself, plus an evidence file in cache/ for labelling.
 //
-// Everything is per person, per computer. The transcripts read are this
-// machine's own, the commits read are the ones this person authored, and the
-// files written carry the person's id and this computer's name -
-// `2026-09.<person>.<computer>.md` - so neither teammates sharing a checkout
-// nor one person's two computers ever overwrite each other's days. Time
-// another of the person's computers already counted is left out (see
-// `overlapCover`), so their timesheets can be summed.
+// Everything is per computer. The transcripts read are this machine's own,
+// the commits read are the ones made on it (its git reflog), and the files
+// written carry its name - `2026-09.<computer>.md` - so no two computers ever
+// overwrite each other's days. Each computer counts in full: two computers
+// working at the same time are two workers, and their timesheets add up.
+//
+// Every block knows the sessions it came from. The month file records them -
+// each task's clock times and sessions, and a legend naming each session by
+// its opening prompt - so the computer's own PDF can say when and where each
+// task was done.
 //
 // Only days from `trackFrom` onward are counted - the date written into
 // config.json when the tracker was installed. Days before it are ignored
@@ -32,21 +35,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  attachSessions,
   buildBlocks,
   formatDuration,
   isWorkday,
+  sessionRef,
   subtractBlocks,
   toLocalDay,
   toLocalTime,
+  toMinutes,
   uncoveredSeconds,
 } from "./blocks.mjs";
 import {
-  ACTIVITY_DIR,
   CACHE_DIR,
   REPO_ROOT,
   TRACKING_DIR,
-  activityPath,
-  currentPerson,
+  currentComputer,
   historyPath,
   loadConfig,
   monthFilePath,
@@ -55,16 +59,17 @@ import {
   transcriptDir,
 } from "./config.mjs";
 import {
+  FALLBACK_NAME,
   isPlaceholder,
-  measuredSeconds,
   needsBullets,
+  needsTimes,
   needsType,
-  overlapRoom,
   parseMonthFile,
   rebuild,
   renderMonthFile,
+  whenCell,
 } from "./month-file.mjs";
-import { lastCommit } from "./log.mjs";
+import { lastCommit, localCommits } from "./log.mjs";
 import { budgetFor, describeBudget, noteOverBudget } from "./budget.mjs";
 
 const TIMESTAMP = /"timestamp":"([^"]+)"/g;
@@ -81,6 +86,8 @@ const MAX_PROMPT_LENGTH = 200;
  * work list.
  */
 const MAX_BODY_LENGTH = 600;
+/** A session's label is its opening prompt, cut to this - enough to recognise it on a PDF line. */
+const MAX_LABEL_LENGTH = 60;
 
 /**
  * Match the sentinel only where a prompt *begins* with it.
@@ -233,7 +240,7 @@ export function lineKind(line) {
 /**
  * Collect every event instant from this project's transcripts.
  *
- * Returns `{ main, all, holes, sessions }`. `main` holds the instants of the top-level
+ * Returns `{ main, all, holes, sessions, openers }`. `main` holds the instants of the top-level
  * session transcripts, less the turns an agent's report started (`lineKind`);
  * `all` adds those back along with each session's `subagents/*.jsonl`. A
  * background agent keeps working after its parent falls idle, and that work
@@ -250,13 +257,15 @@ export function lineKind(line) {
  * minutes between the last event before the update and the update itself
  * still count - dropping the instants would lose them, or let the idle gap
  * bridge the hole. `sessions` maps each session to its instants, which is
- * what lets that cut spare another session's concurrent work.
+ * what lets that cut spare another session's concurrent work, and what tells
+ * each block which sessions it holds. `openers` maps each session to the
+ * first thing the person typed in it, for the session's label.
  *
  * A missing transcript folder is empty, not an error: the shape stays the
  * same so the caller can destructure it.
  */
 export function readTimestamps(dir, sentinel, exclusions = new Map()) {
-  if (!existsSync(dir)) return { main: [], all: [], holes: [], sessions: new Map() };
+  if (!existsSync(dir)) return { main: [], all: [], holes: [], sessions: new Map(), openers: new Map() };
 
   const pattern = sentinelPattern(sentinel);
   const sessions = new Map();
@@ -290,11 +299,16 @@ export function readTimestamps(dir, sentinel, exclusions = new Map()) {
 
     const main = [];
     const subagents = [];
+    let opener = null;
     // A turn the main session ran because an agent reported back is agent
     // time, not the person's: see `lineKind`. Outside such a turn only a
     // notification can change anything, so the rest skip the parse.
     let woken = false;
     for (const line of content.split("\n")) {
+      if (opener === null && line.includes('"type":"user"') && lineKind(line) === "prompt") {
+        const text = sessionLabel(promptText(line));
+        if (text && !isTrackerPrompt(text)) opener = text;
+      }
       const kind = woken || line.includes(NOTIFICATION) ? lineKind(line) : null;
       if (kind === "prompt") woken = false;
       if (kind === "notification") woken = true;
@@ -313,11 +327,11 @@ export function readTimestamps(dir, sentinel, exclusions = new Map()) {
       }
     }
 
-    sessions.set(id, { main, subagents });
+    sessions.set(id, { main, subagents, opener });
   }
 
   const holes = [];
-  const result = { main: [], all: [], holes, sessions: new Map() };
+  const result = { main: [], all: [], holes, sessions: new Map(), openers: new Map() };
   const shared = exclusions.get("*")?.stretches ?? [];
   for (const [id, session] of sessions) {
     // Loops, not spreads: a long session holds more instants than a call can take as arguments.
@@ -327,6 +341,7 @@ export function readTimestamps(dir, sentinel, exclusions = new Map()) {
     }
     for (const instant of session.subagents) result.all.push(instant);
     result.sessions.set(id, [...session.main, ...session.subagents]);
+    if (session.opener) result.openers.set(id, session.opener);
 
     const own = exclusions.get(id)?.stretches ?? [];
     const latest = (max, instant) => (instant > max ? instant : max);
@@ -407,46 +422,59 @@ export function readPrompts(file = historyPath(), repoRoot = REPO_ROOT) {
   return prompts;
 }
 
-/**
- * This person's commits, for the labelling evidence. Read-only, and the only
- * git this tracker ever runs - nothing here stages, commits or pushes anything.
- * The timesheet is left in the working tree for its owner to commit when they
- * choose. A project with no git history, or no git at all, contributes none.
- *
- * Only commits authored under one of the person's own emails count. A
- * teammate's commit landing inside your hours is not evidence of what *you*
- * did, and naming your day from it would put their work on your timesheet.
- * Matched in code rather than with `--author`, which is a regex and would
- * misread the `.` and `+` that real addresses carry.
- */
-function readCommits(sinceMs, emails) {
+/** The text of a prompt line in a transcript, or null. */
+function promptText(line) {
   try {
-    const out = execFileSync(
-      "git",
-      [
-        "log",
-        `--since=${new Date(sinceMs).toISOString()}`,
-        "--format=%x1e%ct%x09%h%x09%ae%x09%s%x09%b",
-      ],
-      { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 },
-    );
-    return out
-      .split("\x1e")
-      .filter((record) => record.trim())
-      .map((record) => {
-        const [seconds, sha, email, subject, ...body] = record.split("\t");
-        return {
-          at: Number(seconds) * 1000,
-          sha,
-          email: (email ?? "").toLowerCase(),
-          subject: subject ?? "",
-          body: body.join("\t").replace(/\s+/g, " ").trim().slice(0, MAX_BODY_LENGTH),
-        };
-      })
-      .filter((commit) => emails.has(commit.email));
+    const content = JSON.parse(line).message?.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .filter((part) => part?.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join(" ");
+    }
   } catch {
-    return [];
+    // Not a line worth a label.
   }
+  return null;
+}
+
+/**
+ * A prompt as a one-line session label: a slash command as `/name args`,
+ * markup stripped, whitespace collapsed, a `|` (which would break the month
+ * file's table) turned to `/`, and cut to {@link MAX_LABEL_LENGTH}. Null for
+ * nothing worth showing - a caveat Claude Code injects, an empty prompt.
+ */
+export function sessionLabel(text) {
+  if (typeof text !== "string") return null;
+  const command = /<command-name>\s*\/?([^<]+?)\s*<\/command-name>/.exec(text);
+  const args = /<command-args>([^<]*)<\/command-args>/.exec(text);
+  let label = command ? `/${command[1]} ${args?.[1] ?? ""}` : text;
+  label = label
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\|/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!label || /^caveat:/i.test(label)) return null;
+  return label.length > MAX_LABEL_LENGTH ? `${label.slice(0, MAX_LABEL_LENGTH - 1).trimEnd()}…` : label;
+}
+
+/**
+ * Each session's label: the first prompt typed in it that is not a tracker
+ * request - from the prompt history, which keeps what was typed, else from
+ * the transcript itself. A session that never had a prompt (a scheduled run,
+ * one resumed for a moment) is left out; the caller names it by its ref.
+ */
+export function sessionLabels(prompts, openers = new Map()) {
+  const labels = new Map();
+  const sorted = [...prompts].sort((a, b) => a.at - b.at);
+  for (const prompt of sorted) {
+    if (!prompt.session || labels.has(prompt.session) || isTrackerPrompt(prompt.text)) continue;
+    const label = sessionLabel(prompt.text);
+    if (label) labels.set(prompt.session, label);
+  }
+  for (const [id, opener] of openers) if (!labels.has(id)) labels.set(id, opener);
+  return labels;
 }
 
 /**
@@ -466,102 +494,58 @@ function writeIfChanged(file, content) {
 }
 
 /**
- * The stretches of one day this computer must leave out because another of
- * the same person's computers already counted them.
- *
- * Each computer commits the ranges it counted (`activity/`), so a stretch
- * that two computers both saw is claimed by whichever recorded it first, and
- * the other leaves it out. When both had already recorded it - each collected
- * before pulling the other's - the computer whose name sorts first keeps it.
- * That rule is the same seen from either side, so the stretch is never
- * dropped by both: a computer leaves out everything an earlier-sorting
- * computer counted, and only what it had not itself recorded from a
- * later-sorting one.
- *
- * `others` is `[{ machine, ranges }]`; ranges are `{ start, end }` epoch ms.
- */
-export function overlapCover(machine, previousMine, others) {
-  const cover = [];
-  for (const other of others) {
-    if (other.machine === machine || other.ranges.length === 0) continue;
-    const ranges =
-      other.machine < machine
-        ? other.ranges
-        : subtractBlocks(
-            other.ranges.map((range) => ({ day: "", start: range.start, end: range.end })),
-            previousMine,
-          );
-    for (const range of ranges) cover.push(range);
-  }
-  return cover;
-}
-
-/** A computer's counted ranges for a month, `{ day: [{ start, end }] }`; empty when it has none. */
-function readActivity(file) {
-  try {
-    const { days } = JSON.parse(readFileSync(file, "utf8"));
-    const out = {};
-    for (const [day, ranges] of Object.entries(days ?? {})) {
-      out[day] = ranges.map(([start, end]) => ({ start: Date.parse(start), end: Date.parse(end) }));
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-/** ISO instants, days and ranges in order, so an unchanged month writes the same bytes. */
-function renderActivity(month, days) {
-  const sorted = {};
-  for (const day of Object.keys(days).sort()) {
-    sorted[day] = [...days[day]]
-      .sort((a, b) => a.start - b.start)
-      .map((range) => [new Date(range.start).toISOString(), new Date(range.end).toISOString()]);
-  }
-  // One `[start, end]` pair to a line, so a day's diff reads as its ranges.
-  const json = JSON.stringify({ month, days: sorted }, null, 2).replace(
-    /\[\s*("[^"]+"),\s*("[^"]+")\s*\]/g,
-    "[$1, $2]",
-  );
-  return `${json}\n`;
-}
-
-/** The person's other computers' activity for `month`, `[{ machine, days }]`. */
-function otherActivity(month, person) {
-  const pattern = new RegExp(`^${month}\\.${person.id}\\.([a-z0-9-]+)\\.json$`);
-  let names = [];
-  try {
-    names = readdirSync(ACTIVITY_DIR);
-  } catch {
-    return [];
-  }
-  return names
-    .map((name) => pattern.exec(name)?.[1])
-    .filter((machine) => machine && machine !== person.machine)
-    .sort()
-    .map((machine) => ({ machine, days: readActivity(activityPath(month, `${person.id}.${machine}`)) }));
-}
-
-/**
  * The jobs a day can still need. `names`: a placeholder row is standing.
- * `bullets`: a named task has no outcome list yet - including days named
- * before bullets existed, which is how an older month gets backfilled.
- * `types`: a named task has no work type yet - the same backfill, for days
- * named before types existed. A day still being named needs all three: every
- * name written gets its bullets and its type in the same pass.
+ * `bullets`: a measured task has fewer than two outcome bullets - including
+ * days named before bullets existed, which is how an older month gets
+ * backfilled. `types`: a named task has no work type yet - the same backfill,
+ * for days named before types existed. `times`: a measured task has no clock
+ * times yet - asked only while the transcripts to read them from are still
+ * here (`hasEvidence`), and not before `timesFrom`, the day every computer
+ * started counting in full. A day still being named needs all four: every
+ * name written gets its bullets, its type and its times in the same pass.
  */
-export function dayNeeds(day) {
-  if (day.tasks.some((task) => isPlaceholder(task.name))) return ["names", "bullets", "types"];
+export function dayNeeds(day, { hasEvidence = true, timesFrom = null } = {}) {
+  if (day.tasks.some((task) => isPlaceholder(task.name))) return ["names", "bullets", "types", "times"];
   const needs = [];
   if (day.tasks.some(needsBullets)) needs.push("bullets");
   if (day.tasks.some(needsType)) needs.push("types");
+  if (hasEvidence && !(timesFrom && day.date < timesFrom) && day.tasks.some(needsTimes)) needs.push("times");
   return needs;
 }
 
-function writeEvidence(month, id, file, blocks, prompts, commits, timeZone) {
+/**
+ * Named rows whose `When` falls outside anything measured that day, or whose
+ * `Session` is not in the day's legend - a slip in the naming, said so it
+ * can be fixed before it reaches a PDF. The idle gap is allowed either side,
+ * since a block's edges are the last events, not the last minute worked.
+ */
+export function spanProblems(day, ranges, idleGapMinutes) {
+  const problems = [];
+  const known = new Set((day.sessions ?? []).map((session) => session.ref));
+  const measured = ranges.map((range) => ({
+    start: toMinutes(range.start) - idleGapMinutes,
+    end: toMinutes(range.end) + idleGapMinutes,
+  }));
+  for (const task of day.tasks) {
+    if (isPlaceholder(task.name) || task.manual) continue;
+    for (const range of task.when ?? []) {
+      const start = toMinutes(range.start);
+      const end = toMinutes(range.end);
+      if (end < start || !measured.some((span) => start >= span.start && end <= span.end)) {
+        problems.push(`"${task.name}" ${range.start}-${range.end} is outside the measured time`);
+      }
+    }
+    for (const ref of task.sessions ?? []) {
+      if (known.size > 0 && !known.has(ref)) problems.push(`"${task.name}" names session ${ref}, not one of the day's`);
+    }
+  }
+  return problems;
+}
+
+function writeEvidence(month, id, file, blocks, prompts, commits, timeZone, timesFrom) {
   const days = file.days.map((day) => {
     const dayBlocks = blocks.filter((block) => block.day === day.date);
-    const needs = dayNeeds(day);
+    const needs = dayNeeds(day, { hasEvidence: dayBlocks.length > 0, timesFrom });
     return {
       date: day.date,
       duration: formatDuration(day.seconds),
@@ -570,12 +554,22 @@ function writeEvidence(month, id, file, blocks, prompts, commits, timeZone) {
         name: task.name,
         ...(task.type ? { type: task.type } : {}),
         ...(task.manual ? { manual: true } : {}),
+        ...(task.when ? { when: whenCell(task) } : {}),
+        ...(task.sessions ? { sessions: task.sessions } : {}),
         time: formatDuration(task.seconds),
         ...(task.details?.length > 0 ? { details: task.details } : {}),
       })),
+      // Who each ref is: the session's opening prompt.
+      ...(day.sessions?.length > 0 ? { sessions: day.sessions } : {}),
       blocks: dayBlocks.map((block) => ({
         range: `${toLocalTime(block.start, timeZone)}-${toLocalTime(block.end, timeZone)}`,
         duration: formatDuration((block.end - block.start) / 1000),
+        // The sessions working in this block and when - what a task's When
+        // and Session cells are read from.
+        sessions: (block.sessions ?? []).map((session) => ({
+          ref: sessionRef(session.id),
+          range: `${toLocalTime(session.start, timeZone)}-${toLocalTime(session.end, timeZone)}`,
+        })),
         // Each prompt and commit carries its local time so a long block can be
         // split by when topics actually changed, rather than by guesswork.
         prompts: prompts
@@ -583,6 +577,7 @@ function writeEvidence(month, id, file, blocks, prompts, commits, timeZone) {
           .slice(0, MAX_PROMPTS_PER_BLOCK)
           .map((prompt) => ({
             at: toLocalTime(prompt.at, timeZone),
+            ...(prompt.session ? { session: sessionRef(prompt.session) } : {}),
             text: prompt.text.replace(/\s+/g, " ").slice(0, MAX_PROMPT_LENGTH),
           })),
         commits: commits
@@ -695,7 +690,7 @@ function isNewCommit(sha, since) {
  */
 export function collect({ write = true } = {}) {
   const config = loadConfig();
-  const person = currentPerson(config);
+  const computer = currentComputer();
   const todayDay = toLocalDay(Date.now(), config.timeZone);
   const say = write ? console.log : () => {};
 
@@ -719,14 +714,14 @@ export function collect({ write = true } = {}) {
   const exclusions = trackerStretches(allPrompts);
   const prompts = allPrompts.filter((prompt) => !isTrackerPrompt(prompt.text));
 
-  const { main: mainInstants, all, holes, sessions } = readTimestamps(
+  const { main: mainInstants, all, holes, sessions, openers } = readTimestamps(
     transcriptDir(),
     config.sentinel,
     exclusions,
   );
   if (all.length === 0) {
     say(`No transcripts found under ${transcriptDir()}.`);
-    return { config, person, todayDay, months: new Map() };
+    return { config, computer, todayDay, months: new Map() };
   }
 
   const options = { idleGapMinutes: config.idleGapMinutes, timeZone: config.timeZone };
@@ -737,17 +732,22 @@ export function collect({ write = true } = {}) {
     isWorkday(block.day, config.workdays) && block.day >= trackedFrom && block.day <= todayDay;
 
   // Two timelines over the same days. `blocks` is everything - sessions and
-  // their subagents - and is what the evidence and the day grouping use.
-  // `mainBlocks` is the sessions alone: the time the multiplier applies to.
-  // What `blocks` holds beyond `mainBlocks` is agent work no session covered,
-  // credited at the subagent multiplier.
-  const blocks = cutHoles(buildBlocks(all, options), holes, sessions, options).filter(inRange);
+  // their subagents - and is what the evidence, the day grouping and the
+  // clock times use; each block carries the sessions it holds. `mainBlocks`
+  // is the sessions alone: the time the multiplier applies to. What `blocks`
+  // holds beyond `mainBlocks` is agent work no session covered, credited at
+  // the subagent multiplier.
+  const blocks = attachSessions(
+    cutHoles(buildBlocks(all, options), holes, sessions, options).filter(inRange),
+    sessions,
+  );
   const mainBlocks = cutHoles(buildBlocks(mainInstants, options), holes, sessions, options).filter(
     inRange,
   );
+  const labels = sessionLabels(prompts, openers);
 
   const earliest = all.reduce((min, instant) => (instant < min ? instant : min), Infinity);
-  const commits = readCommits(earliest, person.emails);
+  const commits = localCommits(earliest, MAX_BODY_LENGTH);
 
   const byMonth = new Map();
   for (const block of blocks) {
@@ -761,13 +761,15 @@ export function collect({ write = true } = {}) {
   // has on disk, so a month whose transcripts have expired still re-renders.
   // Another computer's months are its own files and are never written here.
   const months = new Set(byMonth.keys());
-  const ownMonth = monthFilePattern(person.fileId);
+  const ownMonth = monthFilePattern(computer.fileId);
   for (const name of readdirSync(TRACKING_DIR)) {
     const found = ownMonth.exec(name);
     if (found) months.add(found[1]);
   }
 
+  const clock = (instant) => toLocalTime(instant, config.timeZone);
   const rebuiltMonths = new Map();
+  const unnamed = [];
   for (const month of [...months].sort()) {
     const monthBlocks = byMonth.get(month) ?? [];
 
@@ -777,7 +779,7 @@ export function collect({ write = true } = {}) {
       if (bucket) bucket.push(block);
       else byDate.set(block.day, [block]);
     }
-    const file = monthFilePath(month, person.fileId);
+    const file = monthFilePath(month, computer.fileId);
     const parsed = existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : null;
     // Days recorded before the boundary are dropped. Days after it that this
     // machine holds no evidence for are left alone - the evidence may simply
@@ -786,61 +788,27 @@ export function collect({ write = true } = {}) {
       ? { ...parsed, days: parsed.days.filter((day) => day.date >= trackedFrom) }
       : null;
 
-    const activityFile = activityPath(month, person.fileId);
-    const previousActivity = readActivity(activityFile);
-    const others = otherActivity(month, person);
-    const activity = Object.fromEntries(
-      Object.entries(previousActivity).filter(([day]) => day >= trackedFrom),
-    );
-    const kept = [];
-
+    const ranges = new Map();
     const measured = [...byDate.entries()].map(([date, dayBlocks]) => {
       const dayMainBlocks = mainBlocks.filter((block) => block.day === date);
-      const entry = {
+      const ids = [];
+      for (const block of dayBlocks) {
+        for (const session of block.sessions) if (!ids.includes(session.id)) ids.push(session.id);
+      }
+      const dayRanges = dayBlocks.map((block) => ({
+        start: clock(block.start),
+        end: clock(block.end),
+        sessions: block.sessions.map((session) => sessionRef(session.id)),
+      }));
+      ranges.set(date, dayRanges);
+      return {
         date,
         blocks: dayMainBlocks,
         unscaledSeconds: uncoveredSeconds(dayBlocks, dayMainBlocks),
+        ranges: dayRanges,
+        sessions: ids.map((id) => ({ ref: sessionRef(id), label: labels.get(id) ?? `session ${sessionRef(id)}` })),
       };
-      activity[date] = dayBlocks;
-
-      const cover = overlapCover(
-        person.machine,
-        previousActivity[date] ?? [],
-        others.map((other) => ({ machine: other.machine, ranges: other.days[date] ?? [] })),
-      );
-      if (cover.length === 0) return entry;
-
-      const keptBlocks = subtractBlocks(dayBlocks, cover);
-      const keptMain = subtractBlocks(dayMainBlocks, cover);
-      const raw = measuredSeconds(entry, config.hoursMultiplier, config.subagentMultiplier);
-      const overlap =
-        raw -
-        measuredSeconds(
-          { blocks: keptMain, unscaledSeconds: uncoveredSeconds(keptBlocks, keptMain) },
-          config.hoursMultiplier,
-          config.subagentMultiplier,
-        );
-      if (overlap <= 0) return entry;
-
-      // Taken only out of unnamed time. What a named day already holds stays,
-      // and is said, so the person can correct it by hand if it matters.
-      const room = overlapRoom(existing?.days.find((day) => day.date === date), raw);
-      const applied = Math.min(overlap, room);
-      if (overlap - applied >= 60) {
-        const where = others.filter((other) => (other.days[date] ?? []).length > 0).map((other) => other.machine);
-        kept.push(`${date} (${formatDuration(overlap - applied)}, also on ${where.join(", ")})`);
-      }
-      // Record as counted only what this computer actually counts, so the
-      // other computer keeps the stretch it was given.
-      if (applied >= overlap - 1) activity[date] = keptBlocks;
-      return { ...entry, overlapSeconds: applied };
     });
-    if (kept.length > 0 && write) {
-      console.warn(
-        `Note: ${kept.join("; ")} - time also counted on another of your computers, kept here ` +
-          "because the day was already named. Correct the rows by hand if it was counted twice.",
-      );
-    }
 
     const rebuilt = rebuild(
       existing,
@@ -850,15 +818,24 @@ export function collect({ write = true } = {}) {
       config.idleGapMinutes,
       config.hoursMultiplier,
       config.subagentMultiplier,
+      { fullCountFrom: config.fullCountFrom },
     );
     rebuiltMonths.set(month, rebuilt);
+    for (const day of rebuilt.days) {
+      if (day.tasks.some((task) => isPlaceholder(task.name))) unnamed.push(day.date);
+    }
     if (!write) continue;
-    if (Object.keys(activity).length > 0) writeIfChanged(activityFile, renderActivity(month, activity));
     if (rebuilt.days.length === 0) continue;
 
     const changed = writeIfChanged(file, renderMonthFile(rebuilt, config.workdays));
     warnUnknownTypes(month, rebuilt, config.categories);
-    writeEvidence(month, person.fileId, rebuilt, monthBlocks, prompts, commits, config.timeZone);
+    const slips = rebuilt.days.flatMap((day) =>
+      ranges.has(day.date)
+        ? spanProblems(day, ranges.get(day.date), config.idleGapMinutes).map((problem) => `${day.date} ${problem}`)
+        : [],
+    );
+    if (slips.length > 0) console.warn(`Warning: ${slips.join("; ")}. Fix the When/Session cells.`);
+    writeEvidence(month, computer.fileId, rebuilt, monthBlocks, prompts, commits, config.timeZone, config.fullCountFrom);
 
     // Match the rounding the month file itself prints, so the two never differ.
     const total = rebuilt.days.reduce((sum, day) => sum + Math.round(day.seconds / 60) * 60, 0);
@@ -869,7 +846,16 @@ export function collect({ write = true } = {}) {
     );
   }
 
-  return { config, person, todayDay, months: rebuiltMonths };
+  // Unnamed time is counted and goes on the PDFs as research - it is real
+  // time - but a client reads it as less than a named task, so say which
+  // days still have some.
+  if (write && unnamed.length > 0) {
+    console.warn(
+      `Unnamed: ${unnamed.join(", ")} - shown on PDFs as "${FALLBACK_NAME}" until named ("update tracker").`,
+    );
+  }
+
+  return { config, computer, todayDay, months: rebuiltMonths };
 }
 
 function main() {
@@ -881,12 +867,12 @@ function main() {
   const budget = budgetFor(result.config, result.todayDay);
   if (budget && budget.over.length > 0) {
     console.warn(`Warning: ${describeBudget(budget)}`);
-    noteOverBudget(result.person.fileId, result.config, budget);
+    noteOverBudget(result.computer.fileId, result.config, budget);
   }
 }
 
-// Not being registered, or having no git identity, is an ordinary condition
-// with a one-line fix, so it prints as a sentence rather than a stack trace.
+// A computer with no name yet is an ordinary condition with a one-line fix,
+// so it prints as a sentence rather than a stack trace.
 // Guarded so the pure parts above can be imported by tests without a run.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

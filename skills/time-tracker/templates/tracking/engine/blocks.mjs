@@ -186,6 +186,78 @@ export function uncoveredSeconds(blocks, cover) {
   return totalSeconds(subtractBlocks(blocks, mergeBlocks(cover)));
 }
 
+/**
+ * Which sessions each block holds, as `sessions: [{ id, start, end }]` - each
+ * session's first and last instant inside the block. Runs after every cut,
+ * since `subtractBlocks` keeps only `day`, `start` and `end`.
+ *
+ * `sessions` maps a session id to its instants, in any order.
+ */
+export function attachSessions(blocks, sessions) {
+  const sorted = [...sessions].map(([id, instants]) => [id, [...instants].sort((a, b) => a - b)]);
+  return blocks.map((block) => {
+    const found = [];
+    for (const [id, instants] of sorted) {
+      let low = 0;
+      let high = instants.length;
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if (instants[middle] < block.start) low = middle + 1;
+        else high = middle;
+      }
+      if (low === instants.length || instants[low] > block.end) continue;
+      let last = low;
+      while (last + 1 < instants.length && instants[last + 1] <= block.end) last += 1;
+      found.push({ id, start: instants[low], end: instants[last] });
+    }
+    found.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+    return { ...block, sessions: found };
+  });
+}
+
+/**
+ * The short form of a session id the timesheet carries - the transcript's
+ * file name is a UUID, and its first eight characters are what Claude Code's
+ * own session list shows.
+ */
+export function sessionRef(id) {
+  return String(id).slice(0, 8);
+}
+
+/** `09:10` -> 550. */
+export function toMinutes(clock) {
+  const [hours, minutes] = clock.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+/** 550 -> `09:10`. */
+export function fromMinutes(total) {
+  const hours = Math.floor(total / 60);
+  return `${String(hours).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The parts of `ranges` that no range in `cut` covers, on one day's clock.
+ * Both are `{ start, end }` in minutes of the day; anything else a range
+ * carries (its sessions) stays with every piece cut from it.
+ */
+export function subtractRanges(ranges, cut) {
+  const pieces = [];
+  const sortedCut = [...cut].sort((a, b) => a.start - b.start);
+  for (const range of ranges) {
+    let cursor = range.start;
+    for (const hole of sortedCut) {
+      if (hole.end <= cursor) continue;
+      if (hole.start >= range.end) break;
+      if (hole.start > cursor) pieces.push({ ...range, start: cursor, end: hole.start });
+      cursor = Math.max(cursor, hole.end);
+      if (cursor >= range.end) break;
+    }
+    if (cursor < range.end) pieces.push({ ...range, start: cursor, end: range.end });
+  }
+  return pieces;
+}
+
 /** Whole seconds of activity across a set of blocks. */
 export function totalSeconds(blocks) {
   return blocks.reduce((sum, block) => sum + (block.end - block.start) / 1000, 0);

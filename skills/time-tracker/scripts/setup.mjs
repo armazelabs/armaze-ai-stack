@@ -11,12 +11,16 @@
 // clobbered. There is no on/off switch: setup writes today's date into
 // config.json as `trackFrom`, and every day from then on counts.
 //
-// Each person on a project keeps their own timesheet, one per computer. Setup
-// registers whoever runs it - by `git config user.name` and `user.email` -
-// under an id, and names the computer it runs on once (kept in
-// ~/.claude/time-tracker/machine.json, for every project). Both suffix the
-// files (`2026-09.<id>.<computer>.md`), so neither teammates nor one person's
-// two computers ever share a file.
+// Each computer keeps its own timesheet. Setup names the computer it runs on
+// once (kept in ~/.claude/time-tracker/machine.json, for every project), and
+// that name suffixes its files (`2026-09.<computer>.md`), so no two computers
+// ever share a file. No git identity is needed: a computer is a worker, and
+// the commits that name its work are the ones made on it.
+//
+// Re-run on an install from before that - one timesheet per person per
+// computer, `2026-09.<person>.<computer>.md` - it renames this computer's
+// files, drops the overlap records nothing reads any more, and writes
+// `fullCountFrom` so the weeks already reported keep their hours.
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -175,24 +179,6 @@ function gitConfig(key) {
 }
 
 /**
- * Who is running setup. Both halves are required: the name becomes the id on
- * the file names, and the email is how the engine recognises this person and
- * picks out their commits. Neither is ever printed on the PDF.
- */
-function detectPerson() {
-  const name = gitConfig("user.name");
-  const email = gitConfig("user.email");
-  if (name && email) return { name, email };
-
-  console.error("time-tracker setup: each person gets their own timesheet, keyed by their git identity,");
-  console.error("and this checkout has none. Set it, then re-run setup:");
-  console.error("");
-  if (!name) console.error('  git config user.name "Your Name"');
-  if (!email) console.error('  git config user.email "you@example.com"');
-  process.exit(1);
-}
-
-/**
  * This computer's name, from machine.json, or made now from `--machine`.
  *
  * Asked once per computer, not per project: the same laptop is the same
@@ -230,6 +216,14 @@ function resolveMachine() {
     `${JSON.stringify({ name, chosen, hostname: hostname(), created: new Date().toISOString() }, null, 2)}\n`,
   );
   return { name, created: true, ignored: false };
+}
+
+function readJson(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
 }
 
 function flagValue(name) {
@@ -452,7 +446,7 @@ function resolveTrackFrom(trackingDir, todayDay) {
 
   const recorded = [];
   for (const name of entries(trackingDir)) {
-    if (!/^\d{4}-\d{2}(\.[^.]+)?\.md$/.test(name.name)) continue;
+    if (!/^\d{4}-\d{2}(\.[^.]+){0,2}\.md$/.test(name.name)) continue;
     try {
       const text = readFileSync(path.join(trackingDir, name.name), "utf8");
       for (const [, day] of text.matchAll(/^##\s+(\d{4}-\d{2}-\d{2})/gm)) recorded.push(day);
@@ -558,117 +552,183 @@ function writeConfig(configPath, config) {
 }
 
 /**
- * Add the person to `people` in config.json, or find them there.
+ * How an install from before per-computer timesheets becomes one, as file
+ * renames. `names` is the tracking folder's file names; `legacyPerson` is who
+ * this computer's files belonged to, where that can be told.
  *
- * The email decides who someone is: a person already registered under this
- * email keeps their id even if their display name has changed since. A new
- * email under a name already taken by someone else gets a numbered id rather
- * than being merged into a stranger's timesheet. A second address for the same
- * person is added by hand to their `emails` list.
+ * - `<month>.<person>.<machine>.md` and `log.<person>.<machine>.jsonl` - this
+ *   computer's timesheet - become `<month>.<machine>.md` and
+ *   `log.<machine>.jsonl`.
+ * - `<month>.<person>.md` and `log.<person>.jsonl`, from before computers had
+ *   names, are taken for `legacyPerson` - unless another computer of theirs
+ *   already has files, which means it took that history first.
+ * - `<month>.md` and `log.jsonl`, from before per-person files, are taken
+ *   only when no other timesheet exists at all.
+ *
+ * A rename whose target exists, or that two files want - two people who
+ * shared this computer - is a conflict: both stay where they are, to merge by
+ * hand. The personal PDFs keep their old names; new ones are written beside
+ * them.
  */
-function registerPerson(configPath, person) {
+export function legacyMoves(names, machine, legacyPerson = null) {
+  const MONTH = /^(\d{4}-\d{2})\.([a-z0-9-]+)(?:\.([a-z0-9-]+))?\.md$/;
+  const LOG = /^log\.([a-z0-9-]+)(?:\.([a-z0-9-]+))?\.jsonl$/;
+  const present = new Set(names);
+  const wanted = new Map();
+  const moves = [];
+  const conflicts = [];
+  const want = (from, to) => {
+    if (present.has(to) || wanted.has(to)) {
+      conflicts.push([from, to]);
+      const earlier = moves.findIndex(([, target]) => target === to);
+      if (earlier !== -1) conflicts.push(moves.splice(earlier, 1)[0]);
+      return;
+    }
+    wanted.set(to, from);
+    moves.push([from, to]);
+  };
+  const parse = (name) => {
+    const month = MONTH.exec(name);
+    if (month) return { kind: "month", month: month[1], person: month[3] ? month[2] : null, id: month[3] ?? month[2] };
+    const log = LOG.exec(name);
+    if (log) return { kind: "log", person: log[2] ? log[1] : null, id: log[2] ?? log[1] };
+    return null;
+  };
+  const target = (file) => (file.kind === "month" ? `${file.month}.${machine}.md` : `log.${machine}.jsonl`);
+
+  // This computer's own files.
+  for (const name of names) {
+    const file = parse(name);
+    if (file?.person && file.id === machine) want(name, target(file));
+  }
+
+  // A person's files from before computers had names.
+  let blocked = false;
+  if (legacyPerson && legacyPerson !== machine) {
+    const theirs = names.map((name) => [name, parse(name)]).filter(([, file]) => file && !file.person && file.id === legacyPerson);
+    const elsewhere = names.some((name) => {
+      const file = parse(name);
+      return file?.person === legacyPerson && file.id !== machine;
+    });
+    if (elsewhere) blocked = theirs.length > 0;
+    else for (const [name, file] of theirs) want(name, target(file));
+  }
+
+  // The one shared timesheet from before per-person files.
+  const taken = new Set(moves.map(([from]) => from));
+  const others = names.some((name) => {
+    const file = parse(name);
+    return file?.kind === "month" && !taken.has(name) && file.id !== machine;
+  });
+  if (!others) {
+    for (const name of names) {
+      const month = /^(\d{4}-\d{2})\.md$/.exec(name);
+      if (month) want(name, `${month[1]}.${machine}.md`);
+      else if (name === "log.jsonl") want(name, `log.${machine}.jsonl`);
+    }
+  }
+  return { moves, conflicts, blocked };
+}
+
+/**
+ * Who this computer's older files belonged to: the person part of its own
+ * `<month>.<person>.<machine>.md`, else the `people` entry holding this
+ * checkout's git email. Null when neither says - there is then no older
+ * personal history to claim.
+ */
+export function legacyPersonFor(names, machine, people = {}, email = null) {
+  for (const name of names) {
+    const found = /^(?:\d{4}-\d{2}|log)\.([a-z0-9-]+)\.([a-z0-9-]+)\.(?:md|jsonl)$/.exec(name);
+    if (found && found[2] === machine) return found[1];
+  }
+  const wanted = String(email ?? "").toLowerCase();
+  if (!wanted) return null;
+  for (const [id, entry] of Object.entries(people ?? {})) {
+    if ((entry?.emails ?? []).some((value) => String(value).toLowerCase() === wanted)) return id;
+  }
+  return null;
+}
+
+/** The Monday of the week holding the 1st of `day`'s month - where full counting starts on an upgrade. */
+export function firstWeekStart(day) {
+  const first = `${day.slice(0, 7)}-01`;
+  const offset = (new Date(`${first}T00:00:00Z`).getUTCDay() + 6) % 7;
+  return new Date(Date.parse(`${first}T00:00:00Z`) - offset * 86400000).toISOString().slice(0, 10);
+}
+
+/** Whether a tracking folder holds an install from before per-computer timesheets. */
+function isPerPersonInstall(trackingDir, config) {
+  if (config && typeof config.people === "object" && config.people !== null) return true;
+  if (existsSync(path.join(trackingDir, "activity"))) return true;
+  return entries(trackingDir).some(
+    (entry) => /^(?:\d{4}-\d{2}\.[a-z0-9-]+\.[a-z0-9-]+\.md|\d{4}-\d{2}\.md|log\.jsonl)$/.test(entry.name),
+  );
+}
+
+/**
+ * Move this computer onto per-computer timesheets: rename its files, drop its
+ * overlap records and the evidence written under the old names (scratch, the
+ * next collect rebuilds it), and list the weekly PDF folders from when weeks
+ * were split at a month's edge - safe to delete, never deleted here.
+ */
+function migrateToComputer(trackingDir, cacheDir, machine, legacyPerson) {
+  const names = entries(trackingDir).filter((entry) => entry.isFile()).map((entry) => entry.name);
+  const result = legacyMoves(names, machine, legacyPerson);
+  for (const [from, to] of result.moves) renameSync(path.join(trackingDir, from), path.join(trackingDir, to));
+
+  const activityDir = path.join(trackingDir, "activity");
+  let activityRemoved = 0;
+  for (const entry of entries(activityDir)) {
+    if (entry.isFile() && entry.name.endsWith(`.${machine}.json`)) {
+      rmSync(path.join(activityDir, entry.name));
+      activityRemoved += 1;
+    }
+  }
+  if (existsSync(activityDir) && entries(activityDir).length === 0) rmSync(activityDir, { recursive: true });
+
+  const stale = new RegExp(`^[\\d-]+\\.[a-z0-9-]+\\.${machine.replace(/-/g, "\\-")}\\.`);
+  for (const entry of entries(cacheDir)) {
+    if (entry.isFile() && (stale.test(entry.name) || /^\d{4}-\d{2}\.(?:raw\.json|pending\.json|html)$/.test(entry.name))) {
+      rmSync(path.join(cacheDir, entry.name));
+    }
+  }
+
+  const oldWeekly = [path.join(trackingDir, "weekly"), path.join(trackingDir, "client", "weekly")].flatMap((dir) =>
+    entries(dir)
+      .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}$/.test(entry.name))
+      .map((entry) => path.join(dir, entry.name)),
+  );
+  return { ...result, activityRemoved, oldWeekly };
+}
+
+/**
+ * Write `fullCountFrom` into an upgraded config.json: the Monday of this
+ * month's first week. Days before it keep the hours already recorded - time
+ * shared with another computer was taken off them, and those weeks were
+ * reported. Never moved once set.
+ */
+function backfillFullCountFrom(configPath, day) {
   let config;
   try {
     config = JSON.parse(readFileSync(configPath, "utf8"));
   } catch {
-    return { error: "config.json will not parse - fix it and re-run." };
+    return { written: false };
   }
-  const people = config.people && typeof config.people === "object" ? config.people : {};
-  const wasEmpty = Object.keys(people).length === 0;
-  const email = person.email.toLowerCase();
-
-  for (const [id, entry] of Object.entries(people)) {
-    const emails = (entry?.emails ?? []).map((value) => String(value).toLowerCase());
-    if (emails.includes(email)) return { id, added: false, wasEmpty };
+  if (config.fullCountFrom) return { written: false };
+  const next = {};
+  for (const [key, value] of Object.entries(config)) {
+    next[key] = value;
+    if (key === "trackFrom") next.fullCountFrom = day;
   }
-
-  const base = slugify(person.name);
-  let id = base;
-  for (let index = 2; Object.hasOwn(people, id); index += 1) id = `${base}-${index}`;
-
-  people[id] = { emails: [person.email] };
-  config.people = people;
-  writeConfig(configPath, config);
-  return { id, added: true, wasEmpty };
-}
-
-/**
- * Hand a single-person timesheet to the first person who registers.
- *
- * Before per-person files, a project had one `2026-09.md` and one
- * `log.jsonl`. The first person to re-run setup is the one who kept them, so
- * they are renamed to that person's id rather than left to be orphaned. Stale
- * evidence in cache/ is scratch and is simply removed.
- */
-function claimSinglePersonFiles(trackingDir, cacheDir, id) {
-  const moved = [];
-  for (const entry of entries(trackingDir)) {
-    if (!entry.isFile()) continue;
-    const month = /^(\d{4}-\d{2})\.(md|pdf)$/.exec(entry.name);
-    const target = month ? `${month[1]}.${id}.${month[2]}` : entry.name === "log.jsonl" ? `log.${id}.jsonl` : null;
-    if (!target || existsSync(path.join(trackingDir, target))) continue;
-    renameSync(path.join(trackingDir, entry.name), path.join(trackingDir, target));
-    moved.push(`${entry.name} -> ${target}`);
-  }
-  for (const entry of entries(cacheDir)) {
-    if (entry.isFile() && /^\d{4}-\d{2}\.(raw\.json|pending\.json|html)$/.test(entry.name)) {
-      rmSync(path.join(cacheDir, entry.name));
-    }
-  }
-  return moved;
-}
-
-/**
- * Which of a person's timesheets from before computers had names this
- * computer takes, as `[from, to]` file names.
- *
- * The first computer upgraded takes them all - month files and the log -
- * so the history carries on under a computer's name. Once any other computer
- * of the person's has files of its own, it got there first: nothing is taken,
- * since two computers each claiming the same history would count it twice.
- * The personal PDFs keep their names; they are the person's, not a computer's.
- */
-export function legacyMoves(names, id, machine) {
-  const MONTH = /^(\d{4}-\d{2})\.([a-z0-9-]+)(?:\.([a-z0-9-]+))?\.md$/;
-  const LOG = /^log\.([a-z0-9-]+)(?:\.([a-z0-9-]+))?\.jsonl$/;
-  const present = new Set(names);
-  let blocked = false;
-  const moves = [];
-  for (const name of names) {
-    const month = MONTH.exec(name);
-    const log = LOG.exec(name);
-    const [person, computer] = month ? [month[2], month[3]] : log ? [log[1], log[2]] : [null, null];
-    if (person !== id) continue;
-    if (computer && computer !== machine) blocked = true;
-    if (computer) continue;
-    const target = month ? `${month[1]}.${id}.${machine}.md` : `log.${id}.${machine}.jsonl`;
-    if (!present.has(target)) moves.push([name, target]);
-  }
-  return { moves: blocked ? [] : moves, blocked: blocked && moves.length > 0 };
-}
-
-function claimPersonFiles(trackingDir, cacheDir, id, machine) {
-  const { moves, blocked } = legacyMoves(
-    entries(trackingDir).filter((entry) => entry.isFile()).map((entry) => entry.name),
-    id,
-    machine,
-  );
-  for (const [from, to] of moves) renameSync(path.join(trackingDir, from), path.join(trackingDir, to));
-  // Evidence written under the old id is scratch; the next collect rebuilds it.
-  if (moves.length > 0) {
-    const stale = new RegExp(`^\\d{4}-\\d{2}\\.${id}\\.(raw\\.json|pending\\.json|html)$`);
-    for (const entry of entries(cacheDir)) {
-      if (entry.isFile() && stale.test(entry.name)) rmSync(path.join(cacheDir, entry.name));
-    }
-  }
-  return { moves, blocked };
+  if (!("fullCountFrom" in next)) next.fullCountFrom = day;
+  writeConfig(configPath, next);
+  return { written: true };
 }
 
 // --- main ----------------------------------------------------------------
 
 function main() {
   const project = detectProjectName();
-  const person = detectPerson();
   const machine = resolveMachine();
   const timeZone = detectTimeZone();
   const multiplier = parseMultiplier();
@@ -681,6 +741,10 @@ function main() {
   }).format(new Date());
 
   const installed = findInstalledTrackingDir();
+  // Read before anything is written: an install from before per-computer
+  // timesheets is what gets migrated, and what gets `fullCountFrom`.
+  const priorConfig = installed ? readJson(path.join(installed.dir, "config.json")) : undefined;
+  const perPerson = installed ? isPerPersonInstall(installed.dir, priorConfig) : false;
   // The hour budget is the one thing a first install cannot default, so it
   // stops before creating anything, like an unnamed computer does.
   if (!monthlyHours.given && !(installed && existsSync(path.join(installed.dir, "config.json")))) {
@@ -732,16 +796,17 @@ function main() {
   const readmeContent = fill(readTemplate("tracking-readme.md"), values);
   const readmeStale = (() => {
     try {
-      // Also stale: a readme from before per-computer files, or from before
-      // per-person ones, which documents one shared `<YYYY-MM>.md` and
-      // `log.jsonl` that no longer exist - or from
+      // Also stale: a readme from before per-computer files, which documents
+      // per-person ones (or one shared `<YYYY-MM>.md`) that no longer exist,
+      // or from before unnamed time went on the PDFs as research - or from
       // before subagent time and tracker updates were measured as they are now
       // (including the turns an agent's report wakes the main session for),
       // or from before tasks carried a work type and manual hours existed.
       const text = readFileSync(readmePath, "utf8");
       return (
         /track\.mjs|state\.json/.test(text) ||
-        !text.includes("<YYYY-MM>.<person>.<computer>.md") ||
+        !text.includes("<YYYY-MM>.<computer>.md") ||
+        !text.includes("Research & exploration") ||
         !text.includes("Subagents count at their own multiplier") ||
         !text.includes("picks the result up on its own") ||
         !text.includes("check time tracker") ||
@@ -769,14 +834,21 @@ function main() {
     ? { added: [], missing: false }
     : backfillBudget(path.join(tracking.dir, "config.json"), monthlyHours);
   const hook = installSettingsHooks(engineRel);
-  const registered = registerPerson(path.join(tracking.dir, "config.json"), person);
-  const claimed =
-    registered.id && registered.wasEmpty
-      ? claimSinglePersonFiles(tracking.dir, path.join(tracking.dir, "cache"), registered.id)
-      : [];
-  const computerClaim = registered.id
-    ? claimPersonFiles(tracking.dir, path.join(tracking.dir, "cache"), registered.id, machine.name)
-    : { moves: [], blocked: false };
+  const migration = migrateToComputer(
+    tracking.dir,
+    path.join(tracking.dir, "cache"),
+    machine.name,
+    legacyPersonFor(
+      entries(tracking.dir).map((entry) => entry.name),
+      machine.name,
+      priorConfig?.people,
+      priorConfig?.people ? gitConfig("user.email") : null,
+    ),
+  );
+  const fullCount =
+    perPerson && !configCreated
+      ? { ...backfillFullCountFrom(path.join(tracking.dir, "config.json"), firstWeekStart(todayDay)), day: firstWeekStart(todayDay) }
+      : { written: false };
   // The start/stop switch is gone, and a stale state.json is only there to be
   // misread as one.
   const legacyState = path.join(tracking.dir, "state.json");
@@ -844,29 +916,49 @@ function main() {
         `then re-run setup with --monthly-hours <hours>.`,
     );
   }
-  if (registered.error) {
-    console.log(`- person: not registered - ${registered.error}`);
-  } else {
-    console.log(
-      `- person: ${registered.added ? "registered" : "already registered"} as ${registered.id} ` +
-        `on this computer, ${machine.name} (your files here end in .${registered.id}.${machine.name}.md)`,
-    );
-  }
   console.log(
     `- computer: ${
       machine.created
         ? `named ${machine.name} - saved in ~/.claude/time-tracker/machine.json for every project`
         : `${machine.name}${machine.ignored ? " (already named, --machine ignored)" : ""}`
-    }`,
+    } (its files here end in .${machine.name}.md)`,
   );
-  for (const move of claimed) console.log(`- ${trackingRel}/${move}: claimed the existing single-person timesheet`);
-  for (const [from, to] of computerClaim.moves) {
-    console.log(`- ${trackingRel}/${from} -> ${to}: your timesheet now belongs to this computer`);
+  for (const [from, to] of migration.moves) {
+    console.log(`- ${trackingRel}/${from} -> ${to}: now this computer's timesheet`);
   }
-  if (computerClaim.blocked) {
+  for (const [from, to] of migration.conflicts) {
     console.log(
-      `- ${trackingRel}/: your older timesheet files were left alone - another of your computers ` +
-        "already has its own files, so it took that history first. Pull to see them.",
+      `- ${trackingRel}/${from}: left as it is - ${to} is wanted by another file too. ` +
+        "Two timesheets belong to this computer; merge their days into one by hand.",
+    );
+  }
+  if (migration.blocked) {
+    console.log(
+      `- ${trackingRel}/: older personal timesheet files were left alone - another computer ` +
+        "already took that history. Pull to see it.",
+    );
+  }
+  if (migration.activityRemoved > 0) {
+    console.log(
+      `- ${trackingRel}/activity/: removed this computer's overlap records - every computer now counts in full`,
+    );
+  }
+  if (fullCount.written) {
+    console.log(
+      `- ${trackingRel}/config.json: added fullCountFrom ${fullCount.day} - days before it keep the hours ` +
+        "already recorded; from it on, every computer counts in full",
+    );
+  }
+  for (const dir of migration.oldWeekly) {
+    console.log(
+      `- ${path.relative(TARGET_ROOT, dir)}/: weekly PDFs from when weeks were cut at the month's edge - ` +
+        "safe to delete, weeks are now whole (weekly/<first day>.<computer>.pdf)",
+    );
+  }
+  if (priorConfig?.people) {
+    console.log(
+      `- ${trackingRel}/config.json: "people" is no longer used - remove it once every computer on the ` +
+        "project has upgraded (a computer on the older version still reads it)",
     );
   }
   if (stateRemoved) {
@@ -904,5 +996,5 @@ function main() {
   );
 }
 
-// Guarded so `legacyMoves` can be imported by the tests without installing anything.
+// Guarded so `legacyMoves` and friends can be imported by the tests without installing anything.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

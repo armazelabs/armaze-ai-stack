@@ -11,11 +11,35 @@
 // Rendering is a pure function of the data, with no generation timestamp, so
 // re-running the collector on unchanged input produces a byte-identical file
 // and leaves the working tree clean.
+//
+// A day is a heading, a table, the outcome bullets and a legend of the
+// sessions that worked on it:
+//
+//   ## 2026-10-05 (Mon) - 4h 45m
+//
+//   | Task | Type | When | Session | Time |
+//   | ---- | ---- | ---- | ------- | ---- |
+//   | Checkout form validation | Development | 09:10-11:20 | 4c11d0a2 | 3h 15m |
+//   | Payment provider comparison | Research · manual, 1h given | - | - | 1h 30m |
+//
+//   - Checkout form validation
+//     - Every checkout field shows a clear error before payment
+//
+//   > Sessions
+//   > 4c11d0a2 · fix checkout validation bug
+//
+// `When` is the local clock time the task happened, `Session` the sessions it
+// happened in, by the first eight characters of their id. `Time` is what is
+// recorded - the multiplier already applied - so it is not the length of
+// `When`. The legend is written by the collector, never by hand.
 
 import {
   formatDuration,
+  fromMinutes,
   mergeBlocks,
   parseDuration,
+  subtractRanges,
+  toMinutes,
   totalSeconds,
   weekdayOf,
 } from "./blocks.mjs";
@@ -43,6 +67,22 @@ const PLACEHOLDERS = new Set([UNLABELLED, IN_PROGRESS]);
 export const UNATTRIBUTED = "Unattributed work";
 
 /**
+ * The work type manual hours always carry. Work done away from Claude Code -
+ * a Figma afternoon, a paper sketch, reading - is research by the time it
+ * reaches a timesheet, and one fixed type keeps every computer's manual rows
+ * adding up under the same heading.
+ */
+export const MANUAL_TYPE = "Research";
+
+/**
+ * What an unnamed stretch reads as on a PDF. Unnamed time is real time, so
+ * it is counted and shown rather than holding the PDF back - under a neutral
+ * name, with no bullets, since nothing on record says what it delivered.
+ */
+export const FALLBACK_NAME = "Research & exploration";
+export const FALLBACK_TYPE = MANUAL_TYPE;
+
+/**
  * How far a re-measured day may fall below the recorded one before it is read
  * as lost evidence rather than arithmetic.
  *
@@ -60,15 +100,21 @@ const SHRINK_TOLERANCE_SECONDS = 60;
 const ZERO_ROW_SECONDS = 30;
 
 /**
- * Marks a row as manual in the Type column: `Design · manual`. Manual hours are
- * work that never touched a transcript - a Figma afternoon, a paper sketch - so
- * no collect can measure them. The marker is what tells a rebuild to leave the
- * row alone and to count it on top of what it measures.
+ * Marks a row as manual in the Type column. Manual hours are work that never
+ * touched a transcript - a Figma afternoon, a paper sketch - so no collect can
+ * measure them. The marker is what tells a rebuild to leave the row alone and
+ * to count it on top of what it measures.
+ *
+ * `Research · manual, 2h given` is an entry scaled by the hours multiplier:
+ * two hours given, recorded in the Time column as three. `Design · manual`,
+ * with nothing given, is an entry from before manual hours were scaled,
+ * recorded as given and never rescaled.
  */
 export const MANUAL_MARK = "manual";
 const TYPE_SEPARATOR = " · ";
-/** The Type cell of a row nobody has typed yet, and of the placeholders. */
+/** An empty cell: a row nobody has typed yet, a placeholder, a row with no times. */
 const NO_TYPE = "-";
+const MANUAL_CELL = /^(.*?)\s*·\s*manual(?:\s*,\s*(.+?)\s+given)?\s*$/i;
 
 function sumSeconds(tasks) {
   return tasks.reduce((sum, task) => sum + task.seconds, 0);
@@ -82,10 +128,22 @@ export function isPlaceholder(name) {
 /**
  * Whether a named task still needs its outcome bullets - the plain-language
  * list of what the time actually delivered, which is what the PDF shows under
- * each task.
+ * each task. Two at least, so every measured task says more than its name.
+ * Manual rows are the person's own word, and their bullets are optional.
  */
 export function needsBullets(task) {
-  return !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !(task.details?.length > 0);
+  return (
+    !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !task.manual && (task.details?.length ?? 0) < 2
+  );
+}
+
+/**
+ * Whether a named, measured task still needs its `When` - the clock times it
+ * happened, which the computer's own PDF prints under it. Manual rows have no
+ * transcript to read times from.
+ */
+export function needsTimes(task) {
+  return !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !task.manual && !(task.when?.length > 0);
 }
 
 /**
@@ -97,24 +155,62 @@ export function needsType(task) {
   return !isPlaceholder(task.name) && task.name !== UNATTRIBUTED && !task.type;
 }
 
-/** `Design`, `Design · manual`, or `-` - the Type cell as the markdown spells it. */
+/** `Development`, `Research · manual, 2h given`, `Design · manual`, or `-`. */
 export function typeCell(task) {
   const type = task.type || NO_TYPE;
-  return task.manual ? `${type}${TYPE_SEPARATOR}${MANUAL_MARK}` : type;
+  if (!task.manual) return type;
+  const given = task.givenSeconds != null ? `, ${formatDuration(task.givenSeconds)} given` : "";
+  return `${type}${TYPE_SEPARATOR}${MANUAL_MARK}${given}`;
 }
 
 function parseTypeCell(cell) {
-  const marker = `${TYPE_SEPARATOR}${MANUAL_MARK}`;
-  const manual = cell.toLowerCase().endsWith(marker);
-  const type = (manual ? cell.slice(0, -marker.length) : cell).trim();
-  return { type: type && type !== NO_TYPE ? type : null, manual };
+  const manual = MANUAL_CELL.exec(cell);
+  const type = (manual ? manual[1] : cell).trim();
+  const parsed = { type: type && type !== NO_TYPE ? type : null, manual: Boolean(manual) };
+  if (manual?.[2]) parsed.givenSeconds = parseDuration(manual[2]);
+  return parsed;
+}
+
+/** `09:10-11:20, 13:05-14:05`, or `-` when the task has no times. */
+export function whenCell(task) {
+  return task.when?.length > 0 ? task.when.map((range) => `${range.start}-${range.end}`).join(", ") : NO_TYPE;
+}
+
+const CLOCK_RANGE = /^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/;
+
+/** The When cell back to `[{ start, end }]`, or null for `-` or anything that does not read as times. */
+export function parseWhenCell(cell) {
+  if (!cell || cell.trim() === NO_TYPE) return null;
+  const ranges = [];
+  for (const part of cell.split(",")) {
+    const match = CLOCK_RANGE.exec(part.trim());
+    if (!match) return null;
+    const clock = (hours, minutes) => `${hours.padStart(2, "0")}:${minutes}`;
+    ranges.push({ start: clock(match[1], match[2]), end: clock(match[3], match[4]) });
+  }
+  return ranges.length > 0 ? ranges : null;
+}
+
+/** `4c11d0a2, 9be0f113`, or `-`. */
+export function sessionCell(task) {
+  return task.sessions?.length > 0 ? task.sessions.join(", ") : NO_TYPE;
+}
+
+function parseSessionCell(cell) {
+  if (!cell || cell.trim() === NO_TYPE) return null;
+  const refs = cell.split(/[,\s]+/).filter(Boolean);
+  return refs.length > 0 ? refs : null;
+}
+
+/** A table row's cells, or null when the line is not one. */
+function tableCells(line) {
+  if (!/^\|.*\|\s*$/.test(line)) return null;
+  return line.trim().slice(1, -1).split("|").map((cell) => cell.trim());
 }
 
 const DAY_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s+\([A-Za-z]{3}\)\s+-\s+(.+?)\s*$/;
-/** `| Task | Time |` - files written before tasks carried a type. */
-const TABLE_ROW = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
-/** `| Task | Type | Time |` - tried first, since the two-column pattern would swallow it. */
-const TYPED_ROW = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
+/** `> 4c11d0a2 · fix checkout validation bug` - one entry of a day's session legend. */
+const SESSION_LINE = /^>\s+([0-9A-Za-z-]+)\s+·\s+(.+?)\s*$/;
 const MONTH_HEADING = /^#\s+Time tracking\s+-\s+(\d{4}-\d{2})\s*$/;
 /** `- Task name` - selects which task the indented bullets below belong to. */
 const DETAIL_TASK = /^-\s+(.+?)\s*$/;
@@ -154,6 +250,12 @@ export function parseMonthFile(markdown) {
 
     if (!current) continue;
 
+    const sessionMatch = SESSION_LINE.exec(line);
+    if (sessionMatch) {
+      (current.sessions ??= []).push({ ref: sessionMatch[1], label: sessionMatch[2] });
+      continue;
+    }
+
     // Outcome bullets live in a list after the day's table, keyed by task name,
     // so the table itself stays two columns and every older file still parses.
     // Bullets under a name the table does not hold are dropped: the table is
@@ -172,17 +274,29 @@ export function parseMonthFile(markdown) {
       continue;
     }
 
-    // A two-column row is an older file: it parses with no type, and the
-    // next render writes it back with a Type column for the labeller to fill.
-    const typedMatch = TYPED_ROW.exec(line);
-    const rowMatch = typedMatch ?? TABLE_ROW.exec(line);
-    if (rowMatch) {
-      const name = rowMatch[1];
-      const time = typedMatch ? typedMatch[3] : rowMatch[2];
+    // Five columns is today's file. Two (Task, Time) and three (Task, Type,
+    // Time) are older ones: they parse with what they have, and the next
+    // render writes them back with every column for the labeller to fill.
+    const cells = tableCells(line);
+    if (cells && [2, 3, 5].includes(cells.length)) {
+      const name = cells[0];
       // Skip the header row and its `| ---- |` separator.
       if (name === "Task" || /^-+$/.test(name)) continue;
-      const { type, manual } = typedMatch ? parseTypeCell(typedMatch[2]) : { type: null, manual: false };
-      current.tasks.push({ name, type, manual, seconds: parseDuration(time) });
+      const task = {
+        name,
+        ...(cells.length > 2 ? parseTypeCell(cells[1]) : { type: null, manual: false }),
+        seconds: parseDuration(cells[cells.length - 1]),
+      };
+      if (cells.length === 5) {
+        const when = parseWhenCell(cells[2]);
+        const sessions = parseSessionCell(cells[3]);
+        if (when) task.when = when;
+        if (sessions) task.sessions = sessions;
+      }
+      // `givenSeconds` reads after `seconds`, so a parsed row compares equal
+      // to one built the way the manual entry builds it.
+      const { givenSeconds, ...rest } = task;
+      current.tasks.push(givenSeconds != null ? { ...rest, givenSeconds } : rest);
     }
   }
 
@@ -215,10 +329,12 @@ export function renderMonthFile(file, workdays = [0, 1, 2, 3, 4, 5, 6]) {
   for (const day of [...file.days].sort((a, b) => a.date.localeCompare(b.date))) {
     out.push(`## ${day.date} (${weekdayOf(day.date)}) - ${formatDuration(day.seconds)}`);
     out.push("");
-    out.push("| Task | Type | Time |");
-    out.push("| ---- | ---- | ---- |");
+    out.push("| Task | Type | When | Session | Time |");
+    out.push("| ---- | ---- | ---- | ------- | ---- |");
     for (const task of day.tasks) {
-      out.push(`| ${task.name} | ${typeCell(task)} | ${formatDuration(task.seconds)} |`);
+      out.push(
+        `| ${task.name} | ${typeCell(task)} | ${whenCell(task)} | ${sessionCell(task)} | ${formatDuration(task.seconds)} |`,
+      );
     }
     out.push("");
 
@@ -228,6 +344,12 @@ export function renderMonthFile(file, workdays = [0, 1, 2, 3, 4, 5, 6]) {
         out.push(`- ${task.name}`);
         for (const item of task.details) out.push(`  - ${item}`);
       }
+      out.push("");
+    }
+
+    if (day.sessions?.length > 0) {
+      out.push("> Sessions");
+      for (const session of day.sessions) out.push(`> ${session.ref} · ${session.label}`);
       out.push("");
     }
   }
@@ -316,16 +438,45 @@ export function measuredSeconds(entry, hoursMultiplier = 1, subagentMultiplier =
 }
 
 /**
- * How much of a day's measured time is still unnamed, and so may be taken
- * out as overlap with another computer. Named rows are someone's accepted
- * account of the day; overlap found after they were written is reported, not
- * trimmed from them. A day with no record yet is all unnamed.
+ * A day's session legend after a re-measure: the sessions measured now, in
+ * the order they started, then any the record already named that the
+ * evidence no longer shows. A label measured now wins - it is read fresh
+ * from the transcripts.
  */
-export function overlapRoom(previousDay, measured) {
-  const named = (previousDay?.tasks ?? [])
-    .filter((task) => !task.manual && !isPlaceholder(task.name))
-    .reduce((sum, task) => sum + task.seconds, 0);
-  return Math.max(0, measured - named);
+export function mergeLegend(previous = [], measured = []) {
+  const merged = measured.map((session) => ({ ...session }));
+  for (const session of previous) {
+    if (!merged.some((known) => known.ref === session.ref)) merged.push({ ...session });
+  }
+  return merged;
+}
+
+/**
+ * Give a day's placeholder row the times and sessions nobody has named yet:
+ * the day's measured ranges less every named row's `When`. When a named row
+ * has no times there is no telling which part of the day it covers, so the
+ * placeholder gets none either - an honest `-` beats a wrong time.
+ *
+ * `ranges` is the day's measured blocks, `[{ start: "HH:MM", end: "HH:MM",
+ * sessions: [ref] }]`. A sliver under two minutes is a rounding edge, not work.
+ */
+export function placeholderSpan(tasks, ranges) {
+  const tail = tasks.find((task) => isPlaceholder(task.name));
+  if (!tail || !ranges) return tasks;
+  delete tail.when;
+  delete tail.sessions;
+  const named = tasks.filter((task) => !isPlaceholder(task.name) && !task.manual);
+  if (named.some((task) => !(task.when?.length > 0))) return tasks;
+  const minutes = (range) => ({ ...range, start: toMinutes(range.start), end: toMinutes(range.end) });
+  const rest = subtractRanges(
+    ranges.map(minutes),
+    named.flatMap((task) => task.when.map(minutes)),
+  ).filter((piece) => piece.end - piece.start >= 2);
+  if (rest.length === 0) return tasks;
+  tail.when = rest.map((piece) => ({ start: fromMinutes(piece.start), end: fromMinutes(piece.end) }));
+  const sessions = [...new Set(rest.flatMap((piece) => piece.sessions ?? []))];
+  if (sessions.length > 0) tail.sessions = sessions;
+  return tasks;
 }
 
 /**
@@ -342,9 +493,14 @@ export function overlapRoom(previousDay, measured) {
  * carry `unscaledSeconds` - subagent time no main-session block covered -
  * which is scaled by `subagentMultiplier` instead (1.2 by default).
  *
- * `overlapSeconds` is time another of the person's computers already counted,
- * already scaled and capped to the day's unnamed time (`overlapRoom`); it
- * comes off the measured total before reconciling.
+ * An entry's `ranges` (its blocks as local clock times, with their sessions)
+ * fill the placeholder's When and Session cells, and its `sessions` (`[{ ref,
+ * label }]`) the day's legend.
+ *
+ * `fullCountFrom` freezes the record before it: a day already written there
+ * is kept exactly as it is, whatever it measures now. That is the line drawn
+ * when every computer started counting in full - before it, time shared with
+ * another computer was taken off, and those weeks were already reported.
  *
  * Manual rows sit outside all of this. No transcript measured them, so no
  * transcript can grow, shrink or trim them: every guard and the reconcile run
@@ -359,19 +515,19 @@ export function rebuild(
   idleGapMinutes,
   hoursMultiplier = 1,
   subagentMultiplier = 1,
+  { fullCountFrom = null } = {},
 ) {
   const days = new Map((existing?.days ?? []).map((day) => [day.date, day]));
 
   for (const entry of measured) {
     const raw = measuredSeconds(entry, hoursMultiplier, subagentMultiplier);
-    if (raw <= 0) continue;
-    // What this computer counts once time another of the person's computers
-    // already counted is left out. The guards below compare `raw` - this
-    // machine's evidence - against the record; only the reconcile uses the
-    // reduced figure.
-    const seconds = raw - (entry.overlapSeconds ?? 0);
+    // Too short to render as a minute: rounding, not a day of work.
+    if (raw < ZERO_ROW_SECONDS) continue;
 
     const previous = days.get(entry.date);
+    if (previous && fullCountFrom && entry.date < fullCountFrom) continue;
+    const legend = mergeLegend(previous?.sessions, entry.sessions);
+    const withLegend = (day) => (legend.length > 0 ? { ...day, sessions: legend } : day);
     const manual = (previous?.tasks ?? []).filter((task) => task.manual);
     const manualSeconds = sumSeconds(manual);
     const recorded = (previous?.tasks ?? []).filter((task) => !task.manual);
@@ -393,6 +549,10 @@ export function rebuild(
       recorded.every((task) => !isPlaceholder(task.name)) &&
       raw - recordedSeconds <= SHRINK_TOLERANCE_SECONDS
     ) {
+      // Its rows stay as they are; only the legend can learn a session.
+      if (JSON.stringify(legend) !== JSON.stringify(previous.sessions ?? [])) {
+        days.set(entry.date, withLegend(previous));
+      }
       continue;
     }
 
@@ -415,31 +575,18 @@ export function rebuild(
       continue;
     }
 
-    // Everything measured here was counted on another computer first. The
-    // overlap is only ever taken out of unnamed time, so nothing named stands
-    // here: what is left is the manual rows, or no day at all.
-    if (seconds < ZERO_ROW_SECONDS) {
-      if (manual.length > 0) {
-        days.set(entry.date, { date: entry.date, seconds: manualSeconds, tasks: manual.map((task) => ({ ...task })) });
-      } else {
-        days.delete(entry.date);
-      }
-      continue;
-    }
-
-    days.set(entry.date, {
-      date: entry.date,
-      seconds: seconds + manualSeconds,
-      tasks: [
-        ...reconcileTasks(
-          recorded,
-          seconds,
-          entry.date === todayDay ? IN_PROGRESS : UNLABELLED,
-          idleGapMinutes * 60,
-        ),
-        ...manual.map((task) => ({ ...task })),
-      ],
-    });
+    const tasks = placeholderSpan(
+      reconcileTasks(recorded, raw, entry.date === todayDay ? IN_PROGRESS : UNLABELLED, idleGapMinutes * 60),
+      entry.ranges,
+    );
+    days.set(
+      entry.date,
+      withLegend({
+        date: entry.date,
+        seconds: raw + manualSeconds,
+        tasks: [...tasks, ...manual.map((task) => ({ ...task }))],
+      }),
+    );
   }
 
   return {
@@ -472,12 +619,25 @@ export function addManualTask(file, date, task) {
   return { ...file, days: days.sort((a, b) => a.date.localeCompare(b.date)) };
 }
 
+/**
+ * A manual entry's recorded time: the hours given, scaled by the same
+ * multiplier as measured time and rounded to the minute the markdown stores.
+ */
+export function scaleManual(givenSeconds, hoursMultiplier = 1) {
+  return Math.round((givenSeconds * hoursMultiplier) / 60) * 60;
+}
+
+/** `changes.seconds` with `changes.givenSeconds` re-times the row; a given time makes an older row a scaled one. */
 export function setManualTask(file, date, name, changes) {
   return editManual(file, date, name, (row) => {
     const next = { ...row };
     if (changes.rename) next.name = changes.rename;
     if (changes.type) next.type = changes.type;
-    if (changes.seconds != null) next.seconds = changes.seconds;
+    if (changes.seconds != null) {
+      delete next.givenSeconds;
+      next.seconds = changes.seconds;
+      if (changes.givenSeconds != null) next.givenSeconds = changes.givenSeconds;
+    }
     if (changes.details) next.details = changes.details;
     return next;
   });
@@ -503,4 +663,38 @@ function editManual(file, date, name, change) {
     // A day that only ever held manual time is gone once its last row is.
     .filter((candidate) => candidate.tasks.length > 0);
   return { ...file, days };
+}
+
+/**
+ * A task row that is about keeping the timesheet rather than about the
+ * project - "Timesheet update", "Hours recorded and named", "Tracker fixes".
+ * Time spent updating the tracker is left out at measurement and the
+ * labeller is told never to write such a row; this is the safety net under
+ * both, so one never reaches a client - or the hour budget - whatever an
+ * older month holds.
+ */
+const TRACKER_ROW =
+  /\b(?:time\s*sheet|time[\s-]*track(?:er|ing)?|tracker|hours\s+(?:recorded|named|logged|labell?ed)|(?:recorded|named)\s+and\s+(?:named|recorded))\b/i;
+
+export function isTrackerRow(name) {
+  return TRACKER_ROW.test(name);
+}
+
+/**
+ * Drop the timesheet rows from each day and keep the day's total equal to
+ * the rows that remain. A day with nothing else in it is dropped whole: the
+ * client did not buy an hour of bookkeeping.
+ */
+export function withoutTrackerRows(days) {
+  const kept = [];
+  for (const day of days) {
+    const tasks = day.tasks.filter((task) => !isTrackerRow(task.name));
+    if (tasks.length === day.tasks.length) {
+      kept.push(day);
+      continue;
+    }
+    if (tasks.length === 0) continue;
+    kept.push({ ...day, tasks, seconds: tasks.reduce((sum, task) => sum + task.seconds, 0) });
+  }
+  return kept;
 }

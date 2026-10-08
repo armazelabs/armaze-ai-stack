@@ -3,9 +3,10 @@
 Track the hours you spend on a project without running a timer.
 
 Claude Code already keeps a record of every session you work in. This skill
-reads those records afterwards, works out how long you worked each day, names
-the work from your git commits, and turns it into a timesheet and a PDF you can
-send to a client.
+reads those records afterwards, works out how long each computer worked each
+day, names the work from the commits made on it, and turns it into a timesheet
+and PDFs you can send to a client - week by week, with the hours done, left and
+in total.
 
 Each project has a monthly hours budget, a quarter of it per week. Every
 Claude Code session checks in when it starts and ends, and once the week's or
@@ -28,7 +29,8 @@ month's hours are used up, new prompts are stopped.
    - **The project's hours per month**, such as `160`. The whole team shares
      them, and a week gets a quarter: 160 a month is 40 a week.
    - **A name for this computer**, such as `laptop` or `studio`. You're asked
-     once per computer.
+     once per computer, and the name is what the timesheet is filed under. No
+     git name or email is needed.
 
 4. It checks itself when it's done. You should see a list of ✔ lines ending in
    **"All good - time tracking is working."**
@@ -62,7 +64,9 @@ When a new version of time-tracker comes out:
 
 3. Look for **"All good - time tracking is working."** at the end.
 4. Commit what changed (`.claude/settings.json` and the `tracking/` folder) so
-   teammates get it too. Each teammate runs steps 1-3 on their own computer.
+   teammates get it too. Each teammate runs steps 1-3 on their own computer -
+   **the same day**: a computer still on the older version can't read the
+   newer timesheets.
 
 Do this once in every project that uses time-tracker.
 
@@ -71,8 +75,8 @@ Do this once in every project that uses time-tracker.
 Say **"check time tracker"** any time. It checks that:
 
 - the project has the newest version,
-- the monthly hours and multipliers are set, and you and this computer are
-  registered,
+- the monthly hours and multipliers are set, and this computer is named and
+  its timesheet on the current file names,
 - the session hooks are installed and actually run,
 - hours can be measured, the budget shows, and a browser for PDFs is found.
 
@@ -85,11 +89,12 @@ out.
 Say **"update tracker"**. That one phrase does everything:
 
 1. Measures your hours from Claude Code's session records.
-2. Names each day's work from your commits and prompts, with a work type
-   (Design, Development, Research…) and a few plain-language bullets on what
-   was delivered.
+2. Names each day's work from this computer's commits and prompts, with a
+   work type (Design, Development, Research…), when it happened, the session
+   it was done in, and two to four plain-language bullets on what was
+   delivered.
 3. Asks whether you did any work by hand, away from Claude Code, and adds it.
-4. Writes this month's and this week's PDFs.
+4. Writes this month's and this week's PDFs (Monday to Sunday, whole).
 
 Other things you can say:
 
@@ -98,7 +103,7 @@ Other things you can say:
 | "update tracker" | Everything above |
 | "check time tracker" | Checks everything works, and fixes what it can |
 | "update time tracker setup" | After `aistack update`: moves the project to the new version |
-| "log 2h of design yesterday" | Adds manual hours without a full update |
+| "log 2h in Figma yesterday" | Adds manual hours without a full update |
 | "how many hours have I worked" | Shows the totals so far |
 | "time tracking report for August" | Writes the PDF for another month |
 
@@ -106,17 +111,32 @@ Other things you can say:
 
 Everything lives in `project-management/tracking/`:
 
-- **`2026-10.<you>.<computer>.md`**: your timesheet for the month. You can read
-  and edit it like any document.
-- **`2026-10.<you>.pdf`**: your month as a PDF, plus weekly ones in `weekly/`.
-- **`client/2026-10.pdf`**: **the one to send.** Everyone's timesheets merged
-  into one, with no names on it.
+- **`2026-10.<computer>.md`**: this computer's timesheet for the month. You can
+  read and edit it like any document.
+- **`2026-10.<computer>.pdf`**: this computer's month as a PDF, plus whole-week
+  ones in `weekly/` (`weekly/2026-10-05.<computer>.pdf` is 5-11 October).
+- **`client/2026-10.pdf`** and **`client/weekly/`**: **the ones to send.**
+  Every computer's timesheet merged into one, with no names, computers or
+  sessions on it.
 
-Each task on the PDF shows its type, its hours and what it delivered:
+Every PDF opens with the hour budget for its span - for a week: hours done
+this week, remaining, and the week's total; for a month: hours done so far,
+remaining, and the month's total. A monthly PDF then has a week-by-week table
+and the days grouped under each week. Within a day, tasks are grouped by type,
+each with its hours and what it delivered. Your own PDF also says when each
+task happened and in which session:
 
 ```
-Checkout screens in Figma   DESIGN  MANUAL ........ 3h
-  • Mobile and desktop checkout layouts
+WEEK 2 · 5 - 11 OCT ............................... 26h 30m
+Mon 5 Oct ......................................... 7h 15m
+  DEVELOPMENT                                       4h 45m
+    Checkout form validation ...................... 3h 15m
+      09:10-11:20 · studio · "fix checkout validation bug"
+      • Every checkout field shows a clear error before payment
+      • Card number and postcode are checked as they are typed
+  RESEARCH                                          2h 30m
+    Payment provider comparison  MANUAL ........... 1h 30m
+    Research & exploration ........................ 1h
 ```
 
 ## The hour budget
@@ -141,30 +161,30 @@ leaves no record to measure. Every update asks whether you have any. Describe
 it in your own words ("about 3 hours in Figma yesterday on the checkout
 screens"), check what Claude understood, and confirm.
 
-Manual hours are recorded exactly as you give them and are tagged **Manual** on
-every PDF, including the client one. They count toward the budget: an entry
-that would go over the week or month is refused, and you're told how much is
-left.
+Manual hours are always **Research**, and count like measured hours: what you
+give times the hours multiplier (2h given at 1.5× is recorded as 3h - the
+timesheet keeps both). They're tagged **Manual** on every PDF, including the
+client one. They count toward the budget: an entry that would go over the week
+or month is refused, and you're told how much is left.
 
 ## Teams and several computers
 
-- **Teams:** everyone keeps their own timesheet in the same folder. The client
-  PDF adds them all together.
-- **Shared budget:** the monthly hours are for the whole team. Your copy only
-  counts teammates' hours they've pushed, so pull often.
-- **Several computers:** each computer keeps its own timesheet, so they never
-  conflict in git. Your PDF adds them together, and an hour when Claude was
-  running on two of your computers at once is counted only once.
+- **One timesheet per computer.** Each computer keeps its own in the same
+  folder, so they never conflict in git. The client PDF adds them all together.
+- **Every computer counts in full.** Two computers working at the same time are
+  two lots of hours.
+- **Shared budget:** the monthly hours are for the whole project. Your copy only
+  counts other computers' hours they've pushed, so pull often.
 
-After an update, commit and push the `tracking/` folder so teammates and your
-other computers get it. Pull before making the client PDF.
+After an update, commit and push the `tracking/` folder so the other computers
+get it. Pull before making the client PDF.
 
 ## Good to know
 
 - **It never commits for you.** Files stay in your working tree until you
   commit them.
-- **Unnamed days block the PDF.** A client should never see "In progress", so
-  run "update tracker" first.
+- **Unnamed time still reaches the PDF**, as "Research & exploration". Run
+  "update tracker" to give it real names first.
 - **Updating the tracker isn't billed.** Time spent asking for updates is left
   out of your hours.
 - **It needs a Chromium browser for PDFs** (Chrome, Edge, Brave). Without one

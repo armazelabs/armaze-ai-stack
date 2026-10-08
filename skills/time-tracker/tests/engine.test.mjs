@@ -13,52 +13,65 @@ import path from "node:path";
 import { test } from "node:test";
 
 import {
+  attachSessions,
   buildBlocks,
   mergeBlocks,
   subtractBlocks,
   totalSeconds,
   uncoveredSeconds,
 } from "../templates/tracking/engine/blocks.mjs";
-import { monthFileIds, personFileIds, splitFileId } from "../templates/tracking/engine/config.mjs";
+import { computerLabel, monthFileIds } from "../templates/tracking/engine/config.mjs";
 import {
   cutHoles,
   dayNeeds,
   isTrackerPrompt,
-  overlapCover,
   readPrompts,
   readTimestamps,
+  sessionLabel,
+  sessionLabels,
+  spanProblems,
   trackerStretches,
 } from "../templates/tracking/engine/collect.mjs";
-import { lastCommit } from "../templates/tracking/engine/log.mjs";
+import { lastCommit, parseReflog } from "../templates/tracking/engine/log.mjs";
 import { entryProblem, findManualOwner, parseHours } from "../templates/tracking/engine/manual.mjs";
 import {
+  FALLBACK_NAME,
   IN_PROGRESS,
   UNLABELLED,
   addManualTask,
   measuredSeconds,
-  overlapRoom,
   parseMonthFile,
   rebuild,
   removeManualTask,
   renderMonthFile,
+  scaleManual,
   setManualTask,
 } from "../templates/tracking/engine/month-file.mjs";
 import {
+  groupByType,
   isTrackerRow,
   manualTag,
   mergeDays,
-  personalDays,
+  plan,
+  presentDays,
+  renderHtml,
+  spanText,
+  statsFor,
   typeRollup,
+  weekLabel,
   withoutTrackerRows,
 } from "../templates/tracking/engine/report.mjs";
-import { legacyMoves, withTrackerHooks } from "../scripts/setup.mjs";
-import { engineDrift } from "../scripts/check.mjs";
+import { firstWeekStart, legacyMoves, legacyPersonFor, withTrackerHooks } from "../scripts/setup.mjs";
+import { engineDrift, timesheetNames } from "../scripts/check.mjs";
 import {
   budgetFrom,
   recordedDays,
   roomProblem,
   weekOf,
+  weekRows,
+  weeksOverlapping,
 } from "../templates/tracking/engine/budget.mjs";
+import { CACHE_DIR, TRACKING_DIR } from "../templates/tracking/engine/config.mjs";
 import { promptExempt } from "../templates/tracking/engine/hooks.mjs";
 
 const DAY = "2026-09-14";
@@ -155,22 +168,25 @@ Total: 6h 30m across 1 tracked day.
 
 ## 2026-09-14 (Mon) - 6h 30m
 
-| Task | Type | Time |
-| ---- | ---- | ---- |
-| Checkout form validation | Development | 3h 30m |
-| Checkout screens in Figma | Design · manual | 3h |
+| Task | Type | When | Session | Time |
+| ---- | ---- | ---- | ------- | ---- |
+| Checkout form validation | Development | 09:10-11:20, 13:00-13:40 | 4c11d0a2 | 3h 30m |
+| Checkout screens in Figma | Design · manual | - | - | 3h |
 
 - Checkout form validation
   - Clear error messages on every field
 - Checkout screens in Figma
   - Mobile and desktop checkout layouts
+
+> Sessions
+> 4c11d0a2 · fix checkout validation bug
 `;
 
 function manualRow(name, seconds, type = "Design") {
   return { name, type, manual: true, seconds };
 }
 
-test("an old two-column file parses untyped and re-renders with a Type column", () => {
+test("an old two-column file parses untyped and re-renders with every column", () => {
   const old = [
     "# Time tracking - 2026-09",
     "",
@@ -183,19 +199,45 @@ test("an old two-column file parses untyped and re-renders with a Type column", 
   ].join("\n");
   const parsed = parseMonthFile(old);
   assert.deepEqual(parsed.days[0].tasks, [{ name: "Checkout", type: null, manual: false, seconds: 7200 }]);
-  assert.match(renderMonthFile(parsed), /\| Task \| Type \| Time \|\n\| ---- \| ---- \| ---- \|\n\| Checkout \| - \| 2h \|/);
+  assert.match(
+    renderMonthFile(parsed),
+    /\| Task \| Type \| When \| Session \| Time \|\n\| ---- \| ---- \| ---- \| ------- \| ---- \|\n\| Checkout \| - \| - \| - \| 2h \|/,
+  );
+  // A three-column file, from before times and sessions, parses with its type.
+  const typed = parseMonthFile(old.replace("| Task | Time |", "| Task | Type | Time |").replace("| Checkout | 2h |", "| Checkout | Design | 2h |"));
+  assert.deepEqual(typed.days[0].tasks, [{ name: "Checkout", type: "Design", manual: false, seconds: 7200 }]);
 });
 
-test("a typed file with a manual row round-trips byte for byte", () => {
+test("a file with times, sessions, a legend and a manual row round-trips byte for byte", () => {
   const parsed = parseMonthFile(TYPED_FILE);
   assert.deepEqual(
-    parsed.days[0].tasks.map(({ name, type, manual }) => ({ name, type, manual })),
+    parsed.days[0].tasks.map(({ name, type, manual, when, sessions }) => ({ name, type, manual, when, sessions })),
     [
-      { name: "Checkout form validation", type: "Development", manual: false },
-      { name: "Checkout screens in Figma", type: "Design", manual: true },
+      {
+        name: "Checkout form validation",
+        type: "Development",
+        manual: false,
+        when: [{ start: "09:10", end: "11:20" }, { start: "13:00", end: "13:40" }],
+        sessions: ["4c11d0a2"],
+      },
+      { name: "Checkout screens in Figma", type: "Design", manual: true, when: undefined, sessions: undefined },
     ],
   );
+  assert.deepEqual(parsed.days[0].sessions, [{ ref: "4c11d0a2", label: "fix checkout validation bug" }]);
   assert.equal(renderMonthFile(parsed), TYPED_FILE);
+
+  // A scaled manual row keeps the hours given beside the hours recorded.
+  const scaled = TYPED_FILE.replace("| Design · manual | - | - | 3h |", "| Research · manual, 2h given | - | - | 3h |");
+  const row = parseMonthFile(scaled).days[0].tasks[1];
+  assert.deepEqual(row, {
+    name: "Checkout screens in Figma",
+    type: "Research",
+    manual: true,
+    seconds: 3 * 3600,
+    givenSeconds: 2 * 3600,
+    details: ["Mobile and desktop checkout layouts"],
+  });
+  assert.equal(renderMonthFile(parseMonthFile(scaled)), scaled);
 });
 
 test("a re-measure leaves manual rows alone and counts them on top", () => {
@@ -229,13 +271,33 @@ test("a manual-only day survives a collect with no evidence for it", () => {
   assert.deepEqual(days, existing.days);
 });
 
-test("the multiplier scales measured time, never manual hours", () => {
+test("a re-measure never rescales a manual row - its size was set when it was logged", () => {
   const existing = { month: "2026-09", days: [{ date: TODAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }] };
   const measured = [{ date: TODAY, blocks: [block(0, 60, TODAY)] }];
   const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 2);
-  // An hour measured counts as two; the hour logged by hand stays one.
+  // An hour measured counts as two; the older manual row stays as recorded.
   assert.equal(days[0].seconds, 3 * 3600);
   assert.deepEqual(days[0].tasks, [{ name: IN_PROGRESS, seconds: 2 * 3600 }, manualRow("Figma", 3600)]);
+});
+
+test("new manual hours are scaled like measured time and keep what was given", () => {
+  assert.equal(scaleManual(2 * 3600, 1.5), 3 * 3600);
+  assert.equal(scaleManual(50 * 60, 1.5), 75 * 60);
+  let file = addManualTask({ month: "2026-09", days: [] }, DAY, {
+    name: "Pricing research",
+    type: "Research",
+    seconds: scaleManual(2 * 3600, 1.5),
+    givenSeconds: 2 * 3600,
+  });
+  assert.equal(file.days[0].seconds, 3 * 3600);
+  assert.match(renderMonthFile(file), /\| Pricing research \| Research · manual, 2h given \| - \| - \| 3h \|/);
+
+  // A new --hours re-times it, and turns an older unscaled row into a scaled one.
+  file = setManualTask(file, DAY, "Pricing research", { seconds: scaleManual(3600, 1.5), givenSeconds: 3600 });
+  assert.equal(file.days[0].seconds, 90 * 60);
+  const legacy = { month: "2026-09", days: [{ date: DAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }] };
+  const rescaled = setManualTask(legacy, DAY, "Figma", { seconds: scaleManual(3600, 1.5), givenSeconds: 3600 });
+  assert.deepEqual(rescaled.days[0].tasks[0], { ...manualRow("Figma", 90 * 60), givenSeconds: 3600 });
 });
 
 test("adding, changing and removing a manual row moves the day total with it", () => {
@@ -259,13 +321,12 @@ test("adding, changing and removing a manual row moves the day total with it", (
   assert.equal(empty.days.length, 0);
 });
 
-test("manual entries are checked against trackFrom, today and the categories", () => {
-  const config = { trackFrom: "2026-09-01", categories: ["Design", "Development"] };
-  const ok = { date: "2026-09-14", type: "Design", seconds: 3600 };
+test("manual entries are checked against trackFrom, today and a sane length", () => {
+  const config = { trackFrom: "2026-09-01" };
+  const ok = { date: "2026-09-14", seconds: 3600 };
   assert.equal(entryProblem(ok, config, TODAY), null);
   assert.match(entryProblem({ ...ok, date: "2026-08-31" }, config, TODAY), /before trackFrom/);
   assert.match(entryProblem({ ...ok, date: "2026-10-01" }, config, TODAY), /future/);
-  assert.match(entryProblem({ ...ok, type: "Coding" }, config, TODAY), /not a category/);
   assert.match(entryProblem({ ...ok, seconds: null }, config, TODAY), /--hours/);
   assert.match(entryProblem({ ...ok, seconds: 25 * 3600 }, config, TODAY), /--hours/);
 });
@@ -287,12 +348,22 @@ test("manual log lines leave the commit watermark where it was", () => {
   assert.equal(lastCommit("nobody", entries), "abc123");
 });
 
-test("a named day with no work type needs types, and a placeholder day needs everything", () => {
-  assert.deepEqual(dayNeeds({ tasks: [{ name: "Checkout", seconds: 60, details: ["Done"] }] }), ["types"]);
-  assert.deepEqual(dayNeeds({ tasks: [{ name: "Checkout", type: "Development", seconds: 60 }] }), ["bullets"]);
-  assert.deepEqual(dayNeeds({ tasks: [{ name: UNLABELLED, seconds: 60 }] }), ["names", "bullets", "types"]);
+test("a named day says what it lacks, and a placeholder day needs everything", () => {
+  const timed = { when: [{ start: "09:00", end: "10:00" }] };
+  const two = ["Done", "Shipped"];
+  assert.deepEqual(dayNeeds({ date: DAY, tasks: [{ name: "Checkout", seconds: 60, details: two, ...timed }] }), ["types"]);
+  assert.deepEqual(dayNeeds({ date: DAY, tasks: [{ name: "Checkout", type: "Development", seconds: 60, ...timed }] }), ["bullets"]);
+  // One bullet is not enough for a measured task; a manual row needs none.
+  assert.deepEqual(dayNeeds({ date: DAY, tasks: [{ name: "Checkout", type: "Development", seconds: 60, details: ["Done"], ...timed }] }), ["bullets"]);
+  assert.deepEqual(dayNeeds({ date: DAY, tasks: [manualRow("Figma", 60)] }), []);
+  assert.deepEqual(dayNeeds({ date: DAY, tasks: [{ name: UNLABELLED, seconds: 60 }] }), ["names", "bullets", "types", "times"]);
+  const untimed = { date: DAY, tasks: [{ name: "Checkout", type: "Development", seconds: 60, details: two }] };
+  assert.deepEqual(dayNeeds(untimed), ["times"]);
+  // Times are only asked while the transcripts are here, and not before full counting began.
+  assert.deepEqual(dayNeeds(untimed, { hasEvidence: false }), []);
+  assert.deepEqual(dayNeeds(untimed, { timesFrom: "2026-09-28" }), []);
   assert.deepEqual(
-    dayNeeds({ tasks: [{ name: "Checkout", type: "Development", seconds: 60, details: ["Done"] }] }),
+    dayNeeds({ date: DAY, tasks: [{ name: "Checkout", type: "Development", seconds: 60, details: two, ...timed }] }),
     [],
   );
 });
@@ -570,113 +641,321 @@ test("a mixed day's PDF total equals its visible rows", () => {
 
 // --- one timesheet per computer --------------------------------------------
 
-function range(startMinutes, endMinutes) {
-  return { start: T0 + startMinutes * MINUTE, end: T0 + endMinutes * MINUTE };
-}
-
-function covered(cover) {
-  return totalSeconds(subtractBlocks([block(0, 24 * 60)], [])) - totalSeconds(subtractBlocks([block(0, 24 * 60)], cover));
-}
-
-test("a computer leaves out what an earlier-sorting computer counted", () => {
-  // laptop sorts after desk: it drops desk's 10:00-11:00 even having recorded it.
-  const cover = overlapCover("laptop", [range(60, 120)], [{ machine: "desk", ranges: [range(60, 120)] }]);
-  assert.equal(covered(cover), 3600);
-});
-
-test("a computer keeps what it recorded first when the other sorts later", () => {
-  // desk recorded 10:00-11:00 before laptop did: tie or not, desk keeps it.
-  assert.deepEqual(overlapCover("desk", [range(60, 120)], [{ machine: "laptop", ranges: [range(60, 120)] }]), []);
-  // ...but leaves out laptop's stretch it had not recorded itself.
-  const cover = overlapCover("desk", [range(60, 120)], [{ machine: "laptop", ranges: [range(90, 180)] }]);
-  assert.equal(covered(cover), 3600);
-});
-
-test("overlap only comes out of unnamed time", () => {
-  const named = { date: DAY, seconds: 3 * 3600, tasks: [{ name: "Checkout", seconds: 2 * 3600 }, { name: UNLABELLED, seconds: 3600 }] };
-  assert.equal(overlapRoom(named, 3 * 3600), 3600);
-  assert.equal(overlapRoom({ ...named, tasks: [{ name: "Checkout", seconds: 3 * 3600 }] }, 3 * 3600), 0);
-  // Manual rows are not measured, so they never make room.
-  assert.equal(overlapRoom({ date: DAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }, 1800), 1800);
-  assert.equal(overlapRoom(undefined, 5400), 5400);
-});
-
-test("rebuild takes overlap off the unnamed tail and leaves named rows", () => {
-  const existing = { month: "2026-09", days: [namedDay(4 * 3600, [["Checkout", 2 * 3600], [UNLABELLED, 2 * 3600]])] };
-  const measured = [{ date: DAY, blocks: [block(0, 4 * 60)], overlapSeconds: 3600 }];
-  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
-  assert.equal(days[0].seconds, 3 * 3600);
-  assert.deepEqual(days[0].tasks, [{ name: "Checkout", seconds: 2 * 3600 }, { name: UNLABELLED, seconds: 3600 }]);
-});
-
-test("a day counted wholly on another computer keeps only its manual rows", () => {
-  const existing = { month: "2026-09", days: [{ date: TODAY, seconds: 2 * 3600, tasks: [{ name: IN_PROGRESS, seconds: 3600 }, manualRow("Figma", 3600)] }] };
-  const measured = [{ date: TODAY, blocks: [block(0, 60, TODAY)], overlapSeconds: 3600 }];
-  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
-  assert.deepEqual(days, [{ date: TODAY, seconds: 3600, tasks: [manualRow("Figma", 3600)] }]);
-  const { days: none } = rebuild(null, "2026-09", measured, TODAY, 20, 1);
-  assert.deepEqual(none, []);
-});
-
-test("a person's computers merge into one personal timesheet", () => {
-  const desk = [{ date: DAY, seconds: 3600, tasks: [{ name: "Checkout", type: "Development", seconds: 3600 }] }];
-  const laptop = [{ date: DAY, seconds: 1800, tasks: [{ name: "Checkout", type: "Development", seconds: 1800 }] }];
-  const [day] = personalDays([{ id: "ann.desk", days: desk }, { id: "ann.laptop", days: laptop }], "ann.desk");
-  assert.equal(day.seconds, 5400);
-  assert.equal(day.tasks.length, 1);
-  assert.equal(day.tasks[0].seconds, 5400);
-  // One computer passes through untouched.
-  assert.equal(personalDays([{ id: "ann.desk", days: desk }], "ann.desk"), desk);
-});
-
-test("a day unnamed on another computer blocks the personal PDF and names that computer", () => {
-  const laptop = [{ date: DAY, seconds: 1800, tasks: [{ name: UNLABELLED, seconds: 1800 }] }];
-  assert.throws(
-    () => personalDays([{ id: "ann.desk", days: [] }, { id: "ann.laptop-1a2b", days: laptop }], "ann.desk"),
-    /2026-09-14 on laptop-1a2b/,
-  );
-  // This computer's own unnamed day is left for the usual check.
-  assert.doesNotThrow(() => personalDays([{ id: "ann.desk", days: laptop }], "ann.desk"));
-});
-
-test("timesheets are found per person and per computer, legacy ones included", () => {
+test("timesheets are found per computer, not-yet-upgraded ones included", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-ids-"));
   try {
-    for (const name of ["2026-10.ann.md", "2026-10.ann.lap-1a2b.md", "2026-10.bob.desk-9f9f.md", "2026-10.ann.pdf", "2026-09.ann.md"]) {
+    for (const name of ["2026-10.desk-1a2b.md", "2026-10.ann.lap-9f9f.md", "2026-10.desk-1a2b.pdf", "2026-09.desk-1a2b.md"]) {
       writeFileSync(path.join(dir, name), "");
     }
-    assert.deepEqual(monthFileIds("2026-10", dir), ["ann", "ann.lap-1a2b", "bob.desk-9f9f"]);
-    assert.deepEqual(personFileIds("2026-10", "ann", dir), ["ann", "ann.lap-1a2b"]);
-    assert.deepEqual(splitFileId("ann.lap-1a2b"), { person: "ann", machine: "lap-1a2b" });
+    assert.deepEqual(monthFileIds("2026-10", dir), ["ann.lap-9f9f", "desk-1a2b"]);
+    assert.equal(computerLabel("studio-3f9a"), "studio");
+    assert.equal(computerLabel("studio"), "studio");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("the first computer upgraded takes the older timesheet, a later one does not", () => {
-  const legacy = ["2026-09.ann.md", "2026-09.ann.pdf", "log.ann.jsonl", "2026-09.bob.md", "config.json"];
-  assert.deepEqual(legacyMoves(legacy, "ann", "desk-1a2b"), {
+test("upgrading renames this computer's files and claims older history only when nobody else has", () => {
+  const names = ["2026-09.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl", "2026-09.bob.lap-9f9f.md", "2026-09.ann.pdf", "config.json"];
+  assert.deepEqual(legacyMoves(names, "desk-1a2b", "ann"), {
     moves: [
-      ["2026-09.ann.md", "2026-09.ann.desk-1a2b.md"],
-      ["log.ann.jsonl", "log.ann.desk-1a2b.jsonl"],
+      ["2026-09.ann.desk-1a2b.md", "2026-09.desk-1a2b.md"],
+      ["log.ann.desk-1a2b.jsonl", "log.desk-1a2b.jsonl"],
     ],
+    conflicts: [],
     blocked: false,
   });
-  assert.deepEqual(legacyMoves([...legacy, "2026-10.ann.lap-9f9f.md"], "ann", "desk-1a2b"), { moves: [], blocked: true });
-  // Re-running on the computer that took it moves nothing more.
-  assert.deepEqual(legacyMoves(["2026-09.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl"], "ann", "desk-1a2b"), {
+  // Files from before computers had names go to the first computer upgraded...
+  assert.deepEqual(legacyMoves(["2026-08.ann.md", "log.ann.jsonl"], "desk-1a2b", "ann").moves, [
+    ["2026-08.ann.md", "2026-08.desk-1a2b.md"],
+    ["log.ann.jsonl", "log.desk-1a2b.jsonl"],
+  ]);
+  // ...unless another of the person's computers took them first.
+  assert.deepEqual(legacyMoves(["2026-08.ann.md", "2026-09.ann.lap-9f9f.md"], "desk-1a2b", "ann"), {
     moves: [],
-    blocked: false,
+    conflicts: [],
+    blocked: true,
   });
+  // The one shared timesheet is claimed only where there is no other.
+  assert.deepEqual(legacyMoves(["2026-07.md", "log.jsonl"], "desk-1a2b").moves, [
+    ["2026-07.md", "2026-07.desk-1a2b.md"],
+    ["log.jsonl", "log.desk-1a2b.jsonl"],
+  ]);
+  assert.deepEqual(legacyMoves(["2026-07.md", "2026-07.lap-9f9f.md"], "desk-1a2b").moves, []);
+  // Two people on one computer both want the same file: neither moves.
+  const shared = legacyMoves(["2026-09.ann.desk-1a2b.md", "2026-09.bob.desk-1a2b.md"], "desk-1a2b", "ann");
+  assert.deepEqual(shared.moves, []);
+  assert.equal(shared.conflicts.length, 2);
+  // Re-running after the rename moves nothing.
+  assert.deepEqual(legacyMoves(["2026-09.desk-1a2b.md", "log.desk-1a2b.jsonl"], "desk-1a2b", "ann").moves, []);
 });
 
-test("a manual row is found on whichever of the person's computers holds it", () => {
+test("the older person is read from this computer's files, else from git email", () => {
+  assert.equal(legacyPersonFor(["2026-09.ann.desk-1a2b.md"], "desk-1a2b"), "ann");
+  const people = { ann: { emails: ["Ann@Example.com"] } };
+  assert.equal(legacyPersonFor(["2026-09.ann.md"], "desk-1a2b", people, "ann@example.com"), "ann");
+  assert.equal(legacyPersonFor([], "desk-1a2b", people, "bob@example.com"), null);
+  assert.equal(firstWeekStart("2026-10-08"), "2026-09-28");
+  assert.equal(firstWeekStart("2026-06-15"), "2026-06-01");
+});
+
+test("check names this computer's leftover files and the computers not upgraded", () => {
+  assert.deepEqual(
+    timesheetNames(["2026-10.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl", "2026-10.bob.lap-9f9f.md", "2026-10.desk-1a2b.md"], "desk-1a2b"),
+    { own: ["2026-10.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl"], others: ["bob.lap-9f9f"] },
+  );
+});
+
+test("a manual row is found on this computer first, then wherever it is", () => {
   const files = [
-    { id: "ann.desk", file: { days: [{ date: DAY, tasks: [{ name: "Figma", seconds: 60 }] }] } },
-    { id: "ann.laptop", file: { days: [{ date: DAY, tasks: [manualRow("Figma", 60)] }] } },
+    { id: "desk", file: { days: [{ date: DAY, tasks: [{ name: "Figma", seconds: 60 }] }] } },
+    { id: "laptop", file: { days: [{ date: DAY, tasks: [manualRow("Figma", 60)] }] } },
   ];
-  assert.equal(findManualOwner(files, DAY, "Figma"), "ann.laptop");
+  assert.equal(findManualOwner(files, DAY, "Figma"), "laptop");
   assert.equal(findManualOwner(files, DAY, "Sketches"), null);
+});
+
+test("full counting leaves days before fullCountFrom as recorded", () => {
+  const existing = { month: "2026-09", days: [namedDay(2 * 3600, [["Checkout", 2 * 3600]])] };
+  const measured = [{ date: DAY, blocks: [block(0, 5 * 60)] }];
+  const frozen = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, { fullCountFrom: "2026-09-28" });
+  assert.deepEqual(frozen.days, existing.days);
+  // A day after it - or with no record yet - counts in full.
+  const counted = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, { fullCountFrom: "2026-09-01" });
+  assert.equal(counted.days[0].seconds, 5 * 3600);
+  const fresh = rebuild(null, "2026-09", measured, TODAY, 20, 1, 1, { fullCountFrom: "2026-09-28" });
+  assert.equal(fresh.days[0].seconds, 5 * 3600);
+});
+
+// --- sessions and clock times ---------------------------------------------
+
+test("each block learns which sessions it holds and when", () => {
+  const sessions = new Map([
+    ["aaaa1111-x", [T0 + 50 * MINUTE, T0, T0 + 10 * MINUTE]],
+    ["bbbb2222-y", [T0 + 30 * MINUTE, T0 + 40 * MINUTE]],
+    ["cccc3333-z", [T0 + 300 * MINUTE]],
+  ]);
+  const [one] = attachSessions([block(0, 50)], sessions);
+  assert.deepEqual(one.sessions, [
+    { id: "aaaa1111-x", start: T0, end: T0 + 50 * MINUTE },
+    { id: "bbbb2222-y", start: T0 + 30 * MINUTE, end: T0 + 40 * MINUTE },
+  ]);
+  // A hole cut out of the middle leaves each piece only the sessions it still holds.
+  const pieces = attachSessions(subtractBlocks([block(0, 50)], [block(20, 45)]), sessions);
+  assert.deepEqual(pieces.map((piece) => piece.sessions.map((session) => session.id)), [["aaaa1111-x"], ["aaaa1111-x"]]);
+});
+
+test("a session is labelled by its first real prompt", () => {
+  const prompts = [
+    { at: 1, text: "update tracker", session: "s1" },
+    { at: 2, text: "fix   the checkout | validation bug", session: "s1" },
+    { at: 3, text: "and the emails", session: "s1" },
+  ];
+  const labels = sessionLabels(prompts, new Map([["s1", "ignored"], ["s2", "from the transcript"]]));
+  assert.equal(labels.get("s1"), "fix the checkout / validation bug");
+  assert.equal(labels.get("s2"), "from the transcript");
+  assert.equal(sessionLabel("<command-name>/grill-me</command-name><command-args>the plan</command-args>"), "/grill-me the plan");
+  assert.equal(sessionLabel("x".repeat(80)).length, 60);
+  assert.equal(sessionLabel("Caveat: the messages below were generated"), null);
+});
+
+test("an unnamed row gets the day's times and sessions nobody has named", () => {
+  const existing = {
+    month: "2026-09",
+    days: [
+      {
+        date: DAY,
+        seconds: 2 * 3600,
+        tasks: [{ name: "Checkout", type: "Development", seconds: 2 * 3600, when: [{ start: "09:00", end: "11:00" }], sessions: ["aaaa1111"] }],
+        sessions: [{ ref: "aaaa1111", label: "checkout" }],
+      },
+    ],
+  };
+  const measured = [
+    {
+      date: DAY,
+      blocks: [block(0, 120), block(180, 240)],
+      ranges: [
+        { start: "09:00", end: "11:00", sessions: ["aaaa1111"] },
+        { start: "12:00", end: "13:00", sessions: ["bbbb2222"] },
+      ],
+      sessions: [{ ref: "aaaa1111", label: "checkout" }, { ref: "bbbb2222", label: "emails" }],
+    },
+  ];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
+  assert.deepEqual(days[0].tasks[1], { name: UNLABELLED, seconds: 3600, when: [{ start: "12:00", end: "13:00" }], sessions: ["bbbb2222"] });
+  assert.deepEqual(days[0].sessions, [{ ref: "aaaa1111", label: "checkout" }, { ref: "bbbb2222", label: "emails" }]);
+  assert.deepEqual(spanProblems(days[0], measured[0].ranges, 20), []);
+  const slip = { ...days[0], tasks: [{ ...days[0].tasks[0], when: [{ start: "15:00", end: "16:00" }], sessions: ["zzzz9999"] }] };
+  assert.equal(spanProblems(slip, measured[0].ranges, 20).length, 2);
+});
+
+test("a settled day learns its session legend without its rows changing", () => {
+  const existing = { month: "2026-09", days: [namedDay(5 * 3600, [["Checkout", 5 * 3600]])] };
+  const measured = [{ date: DAY, blocks: [block(0, 5 * 60)], sessions: [{ ref: "aaaa1111", label: "checkout" }] }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1);
+  assert.deepEqual(days[0].tasks, existing.days[0].tasks);
+  assert.deepEqual(days[0].sessions, [{ ref: "aaaa1111", label: "checkout" }]);
+});
+
+test("commits made here are read from the reflog, others' are not", () => {
+  const record = (full, at, reflog, subject) => `\x1e${full}\t${full.slice(0, 7)}\t${at}\t${reflog}\t${subject}\tbody\n`;
+  const text = [
+    record("f".repeat(40), 500, "commit (amend): Checkout validation", "Checkout validation"),
+    record("e".repeat(40), 500, "commit: Checkout validation", "Checkout validation"),
+    record("d".repeat(40), 400, "pull: Fast-forward", "Teammate's work"),
+    record("c".repeat(40), 300, "checkout: moving from main to feature", "Old"),
+    record("b".repeat(40), 200, "commit (merge): Merge branch 'feature'", "Merge branch 'feature'"),
+    record("a".repeat(40), 100, "commit (initial): First commit", "First commit"),
+    record("9".repeat(40), 50, "cherry-pick: Borrowed", "Borrowed"),
+  ].join("");
+  assert.deepEqual(
+    parseReflog(text).map((commit) => [commit.full[0], commit.subject]),
+    [["f", "Checkout validation"], ["b", "Merge branch 'feature'"], ["a", "First commit"]],
+  );
+});
+
+// --- the PDFs ----------------------------------------------------------------
+
+test("unnamed time shows as research and keeps its hours", () => {
+  const day = { date: DAY, seconds: 3 * 3600, tasks: [{ name: "Checkout", type: "Development", seconds: 2 * 3600 }, { name: UNLABELLED, seconds: 3600, when: [{ start: "12:00", end: "13:00" }] }] };
+  const { days, unnamed } = presentDays([day]);
+  assert.deepEqual(unnamed, [DAY]);
+  assert.equal(days[0].seconds, 3 * 3600);
+  assert.deepEqual(days[0].tasks[1], { name: FALLBACK_NAME, type: "Research", seconds: 3600, when: [{ start: "12:00", end: "13:00" }], details: [], fallback: true });
+  // Two computers' unnamed time is one research row on the client PDF.
+  const [merged] = mergeDays([days, presentDays([{ ...day, tasks: [{ name: IN_PROGRESS, seconds: 1800 }], seconds: 1800 }]).days]);
+  const research = merged.tasks.find((task) => task.name === FALLBACK_NAME);
+  assert.equal(research.seconds, 5400);
+  assert.equal(research.when, undefined);
+});
+
+test("a day's tasks group by type in the config's order, timed tasks in time order", () => {
+  const tasks = [
+    { name: "C", type: "Research", seconds: 60 },
+    { name: "B", type: "Development", seconds: 60, when: [{ start: "13:00", end: "14:00" }] },
+    { name: "A", type: "Development", seconds: 60, when: [{ start: "09:00", end: "10:00" }] },
+    { name: "D", type: "Zine", seconds: 60 },
+    { name: "E", type: null, seconds: 60 },
+  ];
+  const groups = groupByType(tasks, ["Design", "Development", "Research"]);
+  assert.deepEqual(groups.map((group) => [group.type, group.tasks.map((task) => task.name)]), [
+    ["Development", ["A", "B"]],
+    ["Research", ["C"]],
+    ["Zine", ["D"]],
+    [null, ["E"]],
+  ]);
+});
+
+test("a task's line on the computer's own PDF says when, where and in which session", () => {
+  const day = { sessions: [{ ref: "4c11d0a2", label: "fix checkout validation bug" }] };
+  assert.equal(
+    spanText({ when: [{ start: "09:10", end: "11:20" }], sessions: ["4c11d0a2"] }, day, "studio"),
+    '09:10-11:20 · studio · "fix checkout validation bug"',
+  );
+  assert.equal(spanText({ manual: true, givenSeconds: 3600 }, day, "studio"), "studio · manual, 1h given");
+});
+
+test("weeks are whole Monday to Sunday, labelled across month and year edges", () => {
+  assert.deepEqual(weeksOverlapping("2026-10").map((week) => week.start), ["2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26"]);
+  assert.equal(weekLabel("2026-10-05", "2026-10-11"), "5 - 11 October 2026");
+  assert.equal(weekLabel("2026-09-28", "2026-10-04"), "28 September - 4 October 2026");
+  assert.equal(weekLabel("2026-12-28", "2027-01-03"), "28 December 2026 - 3 January 2027");
+});
+
+test("a month's week rows count their whole week, future weeks included", () => {
+  const totals = new Map([
+    ["2026-09-28", 10 * HOUR],
+    ["2026-09-30", 14 * HOUR],
+    ["2026-10-01", 6 * HOUR],
+    ["2026-10-06", 20 * HOUR],
+  ]);
+  const rows = weekRows(totals, { week: 40 * HOUR, month: 160 * HOUR }, "2026-10", new Map([["2026-10-06", 5 * HOUR]]));
+  assert.equal(rows.length, 5);
+  assert.deepEqual([rows[0].done, rows[0].left, rows[0].before], [30 * HOUR, 10 * HOUR, { start: "2026-09-28", end: "2026-09-30", seconds: 24 * HOUR }]);
+  assert.deepEqual([rows[1].done, rows[1].own, rows[1].left], [20 * HOUR, 5 * HOUR, 20 * HOUR]);
+  assert.deepEqual([rows[4].done, rows[4].left, rows[4].after.start], [0, 40 * HOUR, "2026-11-01"]);
+  // No budget: the hours, with no cap and nothing left.
+  assert.deepEqual([weekRows(totals, null, "2026-10")[1].cap, weekRows(totals, null, "2026-10")[1].left], [null, null]);
+});
+
+test("a run on the 1st writes last month too, and one PDF for the whole week", () => {
+  const relative = (job) => path.relative(TRACKING_DIR, job.pdf);
+  const jobs = plan({ today: "2026-10-01", month: "2026-10", explicit: false, allWeeks: false }, "desk-1a2b");
+  assert.deepEqual(jobs.map(relative), [
+    "2026-09.desk-1a2b.pdf",
+    "2026-10.desk-1a2b.pdf",
+    path.join("weekly", "2026-09-28.desk-1a2b.pdf"),
+    path.join("client", "2026-09.pdf"),
+    path.join("client", "2026-10.pdf"),
+    path.join("client", "weekly", "2026-09-28.pdf"),
+  ]);
+  assert.equal(jobs[2].period, "Week of 28 September - 4 October 2026");
+  assert.ok(jobs.every((job) => job.html.startsWith(CACHE_DIR)));
+  // Every week begun so far, once each.
+  const all = plan({ today: "2026-10-08", month: "2026-10", explicit: false, allWeeks: true }, "desk-1a2b", () => false);
+  assert.deepEqual(all.filter((job) => !job.team).map(relative), [
+    "2026-10.desk-1a2b.pdf",
+    path.join("weekly", "2026-09-28.desk-1a2b.pdf"),
+    path.join("weekly", "2026-10-05.desk-1a2b.pdf"),
+  ]);
+});
+
+test("the stat boxes show done, left and the total, own hours first on a computer's PDF", () => {
+  const labels = (stats) => stats.map((entry) => `${entry.value} ${entry.label}`);
+  const week = { done: 26.5 * HOUR, cap: 40 * HOUR, left: 13.5 * HOUR };
+  assert.deepEqual(labels(statsFor({ kind: "week", own: false, figures: week, total: 26.5 * HOUR, dayCount: 4 })), [
+    "26h 30m Done this week",
+    "13h 30m Remaining",
+    "40h Week total",
+  ]);
+  assert.deepEqual(labels(statsFor({ kind: "week", own: true, figures: week, total: 18 * HOUR, dayCount: 3 })), [
+    "18h This computer",
+    "26h 30m of 40h Project done",
+    "13h 30m Project left",
+  ]);
+  assert.deepEqual(
+    labels(statsFor({ kind: "month", own: false, figures: { done: 170 * HOUR, cap: 160 * HOUR, left: -10 * HOUR }, total: 170 * HOUR, dayCount: 20 })),
+    ["170h Done so far", "10h Over budget by", "160h Month total"],
+  );
+  assert.deepEqual(labels(statsFor({ kind: "month", own: false, figures: null, total: 10 * HOUR, dayCount: 2 })), [
+    "10h Total",
+    "2 Tracked days",
+    "5h Average day",
+  ]);
+});
+
+test("the client PDF names no computer and carries no times or sessions", () => {
+  const own = [
+    {
+      date: DAY,
+      seconds: 3 * 3600,
+      tasks: [
+        { name: "Checkout", type: "Development", seconds: 2 * 3600, when: [{ start: "09:10", end: "11:20" }], sessions: ["4c11d0a2"], details: ["Errors on every field", "Card checks"] },
+        { name: UNLABELLED, seconds: 3600, when: [{ start: "12:00", end: "13:00" }], sessions: ["9be0f113"] },
+      ],
+      sessions: [{ ref: "4c11d0a2", label: "fix checkout validation bug" }, { ref: "9be0f113", label: "webhook retries" }],
+    },
+  ];
+  const view = (days, computer) => ({
+    project: "acme-shop",
+    period: "Week of 14 - 20 September 2026",
+    kind: "week",
+    today: TODAY,
+    days,
+    categories: ["Development", "Research"],
+    stats: [],
+    computer,
+    weeks: null,
+  });
+  const client = renderHtml(view(mergeDays([presentDays(own).days]), null));
+  for (const leak of ["studio", "4c11d0a2", "fix checkout", "webhook", "09:10", "12:00"]) {
+    assert.equal(client.includes(leak), false, leak);
+  }
+  assert.match(client, /Research &amp; exploration/);
+  const mine = renderHtml(view(presentDays(own).days, "studio"));
+  assert.match(mine, /09:10-11:20 · studio · &quot;fix checkout validation bug&quot;/);
+  assert.match(mine, /12:00-13:00 · studio · &quot;webhook retries&quot;/);
 });
 
 // --- the hour budget -------------------------------------------------------
@@ -734,19 +1013,24 @@ test("in a five-week month the month's cap closes the last week early", () => {
   assert.equal(budget.reopens, "2026-11-01");
 });
 
-test("every person's timesheet counts toward the one budget", () => {
+test("every computer's timesheet counts toward the one budget, upkeep rows not at all", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-budget-"));
   try {
     const month = (days) =>
       renderMonthFile({ month: "2026-10", days: days.map(([date, seconds]) => ({ date, seconds, tasks: [{ name: "Work", type: "Development", seconds }] })) });
-    writeFileSync(path.join(dir, "2026-10.ann.desk-1a2b.md"), month([["2026-10-05", 10 * HOUR]]));
+    writeFileSync(path.join(dir, "2026-10.desk-1a2b.md"), month([["2026-10-05", 10 * HOUR]]));
     writeFileSync(path.join(dir, "2026-10.bob.lap-9f9f.md"), month([["2026-10-05", 5 * HOUR], ["2026-10-06", 2 * HOUR]]));
+    writeFileSync(
+      path.join(dir, "2026-10.studio-3f9a.md"),
+      renderMonthFile({ month: "2026-10", days: [{ date: "2026-10-06", seconds: 2 * HOUR, tasks: [{ name: "Work", type: "Development", seconds: HOUR }, { name: "Timesheet update", seconds: HOUR }] }] }),
+    );
     const onDisk = recordedDays(["2026-10"], { dir });
     assert.equal(onDisk.get("2026-10-05"), 15 * HOUR);
-    assert.equal(onDisk.get("2026-10-06"), 2 * HOUR);
+    assert.equal(onDisk.get("2026-10-06"), 3 * HOUR);
+    assert.equal(recordedDays(["2026-10"], { dir, only: "desk-1a2b" }).get("2026-10-06"), undefined);
 
     // A computer's freshly measured month replaces what its file says.
-    const fresh = { id: "ann.desk-1a2b", months: new Map([["2026-10", { month: "2026-10", days: [{ date: "2026-10-05", seconds: 12 * HOUR, tasks: [] }] }]]) };
+    const fresh = { id: "desk-1a2b", months: new Map([["2026-10", { month: "2026-10", days: [{ date: "2026-10-05", seconds: 12 * HOUR, tasks: [] }] }]]) };
     assert.equal(recordedDays(["2026-10"], { dir, fresh }).get("2026-10-05"), 17 * HOUR);
   } finally {
     rmSync(dir, { recursive: true, force: true });

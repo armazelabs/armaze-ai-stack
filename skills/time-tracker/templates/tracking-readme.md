@@ -6,8 +6,8 @@ transcripts this machine already keeps.
 
 ## Getting started
 
-**New on this project?** Install the skill and set yourself up - each person
-does this once per computer:
+**New on this project?** Install the skill and set yourself up - once per
+computer:
 
 1. In the project's folder, in the terminal: `aistack add time-tracker`
 2. In Claude Code, say **"set up time tracking"** and answer its questions
@@ -16,7 +16,8 @@ does this once per computer:
 3. It checks itself at the end. Look for **"All good - time tracking is
    working."**
 
-**A new version came out?** Each person, on each computer:
+**A new version came out?** On every computer, the same day (a computer on an
+older version cannot read the newer timesheets):
 
 1. In the project's folder, in the terminal: `aistack update`
 2. In Claude Code, say **"update time tracker setup"**. It moves this project
@@ -30,25 +31,20 @@ hours measure and the budget shows, and that PDFs can be made - and fixes
 what it can on the spot. Checking is not counted as work, and it works even
 when the hours have run out.
 
-## One timesheet per person, per computer
+## One timesheet per computer
 
-Everyone on the project keeps their own timesheet, side by side in this folder -
-and one per computer they work on. Running the time-tracker setup registers you
-under `people` in `config.json` - an id made from your `git config user.name`,
-recognised by your `git config user.email` - and, the first time on a computer,
-asks what to call that computer (kept in `~/.claude/time-tracker/machine.json`,
-for every project). Every file a computer writes ends in both:
-`2026-09.<person>.<computer>.md`, `log.<person>.<computer>.jsonl`. Nobody, and
-no computer, writes to anyone else's files, so committing them never
-conflicts.
+Every computer working on the project keeps its own timesheet, side by side in
+this folder. The first time on a computer, the time-tracker setup asks what to
+call it (kept in `~/.claude/time-tracker/machine.json`, for every project), and
+every file that computer writes ends in that name: `2026-09.<computer>.md`,
+`log.<computer>.jsonl`. No computer writes to another's files, so committing
+them never conflicts. No git name or email is involved.
 
-Your hours come from each computer's own transcripts, and only commits you
-authored are used to name your days. Each computer also commits the stretches
-of time it counted, in `activity/`, so if Claude was running on two of your
-computers at once, the hour is counted once: whichever computer recorded it
-first keeps it. Your personal PDF adds all your computers together. If you commit under more than one email,
-add the others to your `emails` list in `config.json`. Neither your name nor
-your email ever appears on the PDF.
+A computer's hours come from its own transcripts, and only commits made on
+that computer (its git reflog) are used to name its days. **Every computer
+counts in full**: two computers working at the same time are two lots of
+hours, and the client PDF and the budget add them all together. No name or
+email ever appears on a PDF.
 
 ## The boundary
 
@@ -60,14 +56,15 @@ work, back-date that one line.
 ## The hour budget
 
 `monthlyHours` in `config.json` is the project's hours for a month - shared by
-everyone on it, not per person. A week (Monday to Sunday, even where it crosses
+every computer on it. A week (Monday to Sunday, even where it crosses
 into the next month) may use a quarter of it - **{{WEEKLY_HOURS}}** hours - and
 the month never more than all of it. In a five-week month, the last week gets
 whatever the month has left.
 
-What counts is what the timesheets record: everyone's, measured and manual,
-after the multipliers - the hours the client PDF shows. Only the timesheets in
-your checkout count, so a teammate's hours count once they push and you pull.
+What counts is what the timesheets record: every computer's, measured and
+manual, after the multipliers - the hours the client PDF shows, and the
+done / remaining / total every PDF prints. Only the timesheets in your
+checkout count, so another computer's hours count once it pushes and you pull.
 
 - **Every session checks in.** When a Claude Code session starts, the hours
   are re-measured and you see how much of the week and the month is used and
@@ -93,14 +90,13 @@ rendering the PDFs is still "update tracker".
 
 | File | What it is |
 | --- | --- |
-| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, work types (`categories`), and who is who (`people`). |
-| `<YYYY-MM>.<person>.<computer>.md` | One person's month on one computer: a total per day, the tasks it split into, and what each task delivered. |
-| `<YYYY-MM>.<person>.pdf` | The person's month as a PDF - all their computers merged. |
-| `weekly/<YYYY-MM>/<first day>.<person>.pdf` | One PDF per Monday-to-Sunday week, split at the month's edge. |
-| `client/<YYYY-MM>.pdf`, `client/weekly/...` | **The ones to send.** Everyone's timesheets merged, with no names. |
-| `log.<person>.<computer>.jsonl` | One line per update and per manual entry: days named, commits used, hours added by hand, month total. |
-| `activity/<YYYY-MM>.<person>.<computer>.json` | The stretches of time a computer counted, so your other computers do not count them again. |
-| `cache/` | Evidence for labelling - prompts and commits per block. Gitignored. |
+| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, work types (`categories`). |
+| `<YYYY-MM>.<computer>.md` | One computer's month: a total per day, the tasks it split into, when and in which session each happened, and what each delivered. |
+| `<YYYY-MM>.<computer>.pdf` | That month as a PDF, with this computer's hours beside the project's and each task's times and session. |
+| `weekly/<first day>.<computer>.pdf` | One PDF per whole Monday-to-Sunday week - the week of 28 Sep is one PDF across both months. |
+| `client/<YYYY-MM>.pdf`, `client/weekly/<first day>.pdf` | **The ones to send.** Every computer's timesheet merged, with no names, computers, sessions or clock times. |
+| `log.<computer>.jsonl` | One line per update and per manual entry: days named, commits used, hours added by hand, month total. |
+| `cache/` | Evidence for labelling - prompts, sessions and commits per block. Gitignored. |
 | `engine/` | The measurement code. Generated; re-synced by the skill. |
 
 ## How a day is measured
@@ -129,7 +125,9 @@ The day totals are recomputed from the transcripts on every collect. The task
 names are not: anything you or the labelling pass writes in place of
 `Unlabelled` is kept. A day named partway through that then grows keeps its
 named rows, and the extra time shows up as a new `Unlabelled` row. A named day
-never shrinks.
+never shrinks. If `config.json` has a `fullCountFrom` - written when the
+project moved to one timesheet per computer - days before it are never
+re-measured at all.
 
 Time spent updating the tracker is not counted and never appears on a PDF. A
 session that only said "update tracker" is left out whole; in a session that
@@ -139,29 +137,44 @@ prompt is left out.
 ## Naming the work
 
 A finished day with no name shows as `Unlabelled`; today's running tail shows as
-`In progress`. The time-tracker skill reads `cache/<month>.<person>.<computer>.pending.json`
-(your own commits and the prompts typed in each block) and replaces those rows
-with what was actually worked on. Commit subjects lead, because they are your
-own summary of the work; prompts name the blocks that hold no commit.
+`In progress`. The time-tracker skill reads `cache/<month>.<computer>.pending.json`
+(this computer's commits, its sessions and the prompts typed in each block) and
+replaces those rows with what was actually worked on. Commit subjects lead,
+because they are your own summary of the work; prompts name the blocks that
+hold no commit.
 
-Under each task it writes a few plain-language bullets saying what that time
-delivered - "Customers get a receipt email after every purchase" - taken from
-the same evidence. Those bullets are what the PDF shows a client beneath each
-task. You can edit them freely; they are kept on every update.
+Under each task it writes two to four plain-language bullets saying what that
+time delivered - "Customers get a receipt email after every purchase" - taken
+from the same evidence. Those bullets are what the PDF shows a client beneath
+each task. You can edit them freely; they are kept on every update.
+
+Each task also records **when** it happened and **in which session** - the
+first eight characters of the Claude Code session id - and under each day a
+legend names every session by its opening prompt. Your own PDF prints them
+under each task (`09:10-11:20 · studio · "fix checkout validation bug"`); the
+client's never does.
+
+Unnamed time still goes on the PDFs - as **Research & exploration**, typed
+Research, with no bullets - so no PDF is ever held back. A named task reads
+better to a client, so "update tracker" names them.
 
 ## Work types
 
 Every task carries a work type in the Type column - Design, Development,
 Research and so on, from the `categories` list in `config.json`. Edit that list
-to fit the project; keep the names stable, since the PDF's "By type" table adds
-time up by them. The labelling pass picks each task's type from the same
-evidence it names it from, and you can correct it in the markdown like any name.
+to fit the project; keep the names stable, since the PDF groups each day's tasks
+by them and its "By type" table adds time up by them. The labelling pass picks
+each task's type from the same evidence it names it from, and you can correct it
+in the markdown like any name.
 
 ```
-| Task | Type | Time |
-| ---- | ---- | ---- |
-| Checkout form validation | Development | 3h 30m |
-| Checkout screens in Figma | Design · manual | 3h |
+| Task | Type | When | Session | Time |
+| ---- | ---- | ---- | ------- | ---- |
+| Checkout form validation | Development | 09:10-11:20 | 4c11d0a2 | 3h 30m |
+| Checkout screens in Figma | Research · manual, 2h given | - | - | 3h |
+
+> Sessions
+> 4c11d0a2 · fix checkout validation bug
 ```
 
 ## Manual hours
@@ -173,20 +186,23 @@ checkout screens") and Claude turns that into a row, shows it back to you, and
 records it once you confirm. Say **"log manual hours"** to add some without an
 update.
 
-Manual rows are marked `· manual` in the Type column, and tagged **Manual** on
-both PDFs - on the client one too, so nobody has to ask where those hours came
-from. They are recorded exactly as given, never multiplied, and no collect
-ever trims or regrows them: the day's total is what was measured plus what you
-logged. A day can hold only manual hours. They count against the hour budget,
-and an entry that would take its week or month over it is refused.
+Manual hours are always **Research**. They are scaled like measured time -
+hours given times **{{HOURS_MULTIPLIER}}** - and the row keeps both:
+`Research · manual, 2h given` in the Type column, the recorded hours in Time.
+They are tagged **Manual** on both PDFs - on the client one too, so nobody has
+to ask where those hours came from - and no collect ever trims or regrows
+them: the day's total is what was measured plus what you logged. A day can
+hold only manual hours. They count against the hour budget at their recorded
+size, and an entry that would take its week or month over it is refused.
+Bullets are optional for manual hours.
 
 They are written by `{{ENGINE_REL}}/manual.mjs`, never by hand, so the row and the
 day's total move together and every change leaves a line in your log with your
 own description:
 
 ```
-node {{ENGINE_REL}}/manual.mjs add --date 2026-10-02 --type Design --task "Checkout screens in Figma" --hours 3 \
-  --bullet "Mobile and desktop checkout layouts" --note "3h in Figma yesterday on checkout"
+node {{ENGINE_REL}}/manual.mjs add --date 2026-10-02 --task "Checkout screens in Figma" --hours 2 \
+  --bullet "Mobile and desktop checkout layouts" --note "2h in Figma yesterday on checkout"
 node {{ENGINE_REL}}/manual.mjs set --date 2026-10-02 --task "Checkout screens in Figma" --hours 2.5
 node {{ENGINE_REL}}/manual.mjs remove --date 2026-10-02 --task "Checkout screens in Figma"
 ```
@@ -199,7 +215,7 @@ Any day from `trackFrom` to today can take manual hours, including last month's
 ```
 {{CMD_COLLECT}}              # remeasure, rewrite this month
 {{CMD_REPORT}}               # PDFs for this month and this week
-{{CMD_REPORT}} --all-weeks   # this month and every week in it
+{{CMD_REPORT}} --all-weeks   # this month and every week begun in it
 {{CMD_REPORT_LAST}}  # PDF for last month
 ```
 
@@ -213,7 +229,7 @@ below the names. The next update names it too.
 
 ## The log
 
-Every update appends a line to your `log.<person>.<computer>.jsonl`:
+Every update appends a line to this computer's `log.<computer>.jsonl`:
 
 ```
 7 Sept 18:02 - named 2026-09-07 - commits 79e9f55 - 6h 6m
@@ -228,26 +244,35 @@ reached, so the next run reads forward from there instead of re-reading the
 month. Days are still chosen by which ones lack a name, never by the commits -
 so a morning of uncommitted work is never skipped.
 
-**The PDF will not render while any day is still unnamed**, and there is no
-override - it is the document a client sees, so `In progress` must never appear
-on it. Name the days first.
-
 ## The client PDF
 
-`client/` holds the PDF that goes to the client: every timesheet in this folder
-merged into one, month and weeks alike. It shows no names and nothing that says
-how many people worked - hours are summed per day, and the same task of the
-same type on the same day is one row. A row that pools manual hours with
-measured ones is tagged **Partly manual**. It can only merge what is in your checkout, so everyone
-commits and pushes their timesheet after updating, and whoever sends it pulls
-first. The terminal says whose timesheets went in and how recent each is.
+`client/` holds the PDFs that go to the client: every computer's timesheet in
+this folder merged into one, month and weeks alike. They show no names, no
+computers, no sessions, no clock times, and nothing that says how many people
+worked - hours are summed per day, and the same task of the same type on the
+same day is one row. A row that pools manual hours with measured ones is tagged
+**Partly manual**. They can only merge what is in your checkout, so every
+computer commits and pushes its timesheet after updating, and whoever sends
+them pulls first. The terminal says whose timesheets went in and how recent
+each is.
+
+## What the PDFs show
+
+- **The hour budget.** A weekly PDF: hours done this week, remaining, and the
+  week's total. A monthly PDF: hours done so far, remaining, and the month's
+  total. Your own PDFs put this computer's hours beside the project's.
+- **Week by week** on monthly PDFs: a table of every week touching the month,
+  upcoming ones included, each counting its whole Monday-to-Sunday week, then
+  the days grouped under each week.
+- **Tasks grouped by work type** within each day, with subtotals, bullets
+  under each task, and a Manual tag on hours logged by hand.
 
 ## Weekly PDFs
 
 Alongside the monthly PDF, every update writes the current week's to
-`weekly/<YYYY-MM>/`. Weeks run Monday to Sunday and stop at the end of the
-month - a week that crosses into October is two PDFs, one in each month's
-folder - so a month's weekly PDFs always add up to its monthly one. Finished
+`weekly/<first day>.<computer>.pdf` (and the client's to
+`client/weekly/<first day>.pdf`). Weeks run Monday to Sunday, whole - a week
+that crosses into October is one PDF holding days from both months. Finished
 weeks keep the PDF from their last update; run the report with `--all-weeks`
 to rewrite them all, for instance after correcting an older day.
 
@@ -257,15 +282,15 @@ Nothing else here needs any dependency beyond Node.
 
 ## Several computers
 
-Each computer keeps its own timesheet, and you name each computer's days on that
-computer - it is the one with the transcripts. A day still unnamed on one
-computer holds back your PDF on the others until you run "update tracker" there
-and push. So after an update on any computer, commit and push its timesheet and
-`activity/` file, and pull before rendering on another.
+Each computer keeps its own timesheet, and each computer's days are named on
+that computer - it is the one with the transcripts. A day still unnamed on one
+computer shows on the client PDF as "Research & exploration" until it is named
+there and pushed. So after an update on any computer, commit and push its
+timesheet, and pull before sending the client PDF.
 
-A manual entry can be corrected from any of your computers. If it was logged on
-another one, its file must have no uncommitted changes here: pull first, and
-push straight after.
+A manual entry logged on another computer can be corrected from this one with
+`--computer <name>`; its file must have no uncommitted changes here: pull
+first, and push straight after.
 
 ## Committing
 

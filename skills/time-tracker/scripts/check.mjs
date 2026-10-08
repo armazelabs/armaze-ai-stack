@@ -19,7 +19,7 @@
 // Exit codes: 0 everything works (warnings allowed), 1 something still fails,
 // 2 needs an answer from the person before it can fix.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
@@ -67,16 +67,21 @@ function readJson(file) {
   }
 }
 
-function gitEmail() {
-  try {
-    return execFileSync("git", ["config", "user.email"], {
-      cwd: TARGET_ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "";
+/**
+ * What the tracking folder says about computers: this one's files still on
+ * the older `<person>.<computer>` names (setup renames them), and other
+ * computers whose timesheets are still on them (they have not upgraded).
+ */
+export function timesheetNames(names, machine) {
+  const own = [];
+  const others = new Set();
+  for (const name of names) {
+    const found = /^(?:\d{4}-\d{2}|log)\.([a-z0-9-]+)\.([a-z0-9-]+)\.(?:md|jsonl)$/.exec(name);
+    if (!found) continue;
+    if (found[2] === machine) own.push(name);
+    else others.add(`${found[1]}.${found[2]}`);
   }
+  return { own: own.sort(), others: [...others].sort() };
 }
 
 function machineName() {
@@ -145,7 +150,7 @@ async function runChecks() {
     add("ok", "Same version as the installed time-tracker");
   }
 
-  // 3. Settings, person and computer.
+  // 3. Settings and this computer.
   const configPath = path.join(installed.dir, "config.json");
   const config = readJson(configPath);
   if (config === undefined) {
@@ -165,18 +170,29 @@ async function runChecks() {
       );
     }
 
-    const email = gitEmail().toLowerCase();
     const machine = machineName();
-    const person = Object.entries(config.people ?? {}).find(([, entry]) =>
-      (entry?.emails ?? []).some((value) => String(value).toLowerCase() === email),
-    )?.[0];
-    if (!email) add("fail", 'No git email here - run `git config user.email "you@example.com"`.');
-    else if (!person) add("fail", `${email} is not registered on this project's timesheets.`, true);
     if (!machine) {
       add("fail", "This computer has no name yet.", true);
       needs.push(`machine ${suggestedMachine()}`);
+    } else {
+      const names = readdirSync(installed.dir);
+      const { own, others } = timesheetNames(names, machine);
+      if (own.length > 0) {
+        add("fail", `This computer's timesheet still has the older per-person names (${own[0]}…).`, true);
+      } else {
+        add("ok", `This computer (${machine}) - its timesheet is ${trackingRel}/<month>.${machine}.md`);
+      }
+      if (others.length > 0) {
+        add(
+          "warn",
+          `Not upgraded yet: ${others.join(", ")}. Their hours still count; each should run ` +
+            '"aistack update" and "update time tracker setup".',
+        );
+      }
+      if (config.people !== undefined) {
+        add("warn", 'config.json still has "people", which nothing reads now - remove it once every computer has upgraded.');
+      }
     }
-    if (person && machine) add("ok", `You (${person}) on this computer (${machine})`);
   }
 
   // 4. Hooks: written, then actually run.

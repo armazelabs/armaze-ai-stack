@@ -2,10 +2,9 @@
 //
 //   node <tracking>/engine/log.mjs record --named 2026-09-08,2026-09-09 --session 4c11d0a
 //
-// One JSON object per line in <tracking>/log.<person>.<computer>.jsonl,
-// appended newest-last - each person keeps one per computer, so two computers
-// never append to the same file, and each reads commits forward from where it
-// itself left off. It
+// One JSON object per line in <tracking>/log.<computer>.jsonl, appended
+// newest-last - one per computer, so two computers never append to the same
+// file, and each reads commits forward from where it itself left off. It
 // records the days named, the commits consumed, the session that did it and
 // the month total afterwards - an audit trail for a timesheet a client sees.
 //
@@ -28,7 +27,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { formatDuration } from "./blocks.mjs";
-import { REPO_ROOT, currentPerson, loadConfig, logPath, monthFilePath, monthOf } from "./config.mjs";
+import { REPO_ROOT, currentComputer, loadConfig, logPath, monthFilePath, monthOf } from "./config.mjs";
 import { parseMonthFile } from "./month-file.mjs";
 
 /**
@@ -96,15 +95,90 @@ function isKnownCommit(sha) {
 }
 
 /**
- * The commits this run consumed - this person's only, by author email, the
- * same filter the collector applies to its evidence.
+ * A reflog entry that is a commit made here: a plain commit, an amend, a
+ * merge commit, the first commit. Pulls, merges that fast-forward, checkouts,
+ * resets and cherry-picks move HEAD onto commits made somewhere else.
+ */
+const MADE_HERE = /^commit(?: \((?:initial|amend|merge)\))?:/;
+
+/**
+ * Commits made on this computer, from `git log -g` output, newest first.
+ *
+ * The reflog is the one record git keeps per checkout of what happened in
+ * it, so it answers "which commits did this computer make" without asking
+ * who anyone is. A commit amended or rebased away stays in it, so its
+ * evidence is not lost; an amend chain - the same author time and subject -
+ * is kept once, as its newest entry.
+ *
+ * Records are `\x1e`-separated `full sha, short sha, author time, reflog
+ * subject, subject, body` with tabs between - see `localCommits`.
+ */
+export function parseReflog(text) {
+  const seen = new Set();
+  const commits = [];
+  for (const record of text.split("\x1e")) {
+    if (!record.trim()) continue;
+    const [full, sha, seconds, reflog, subject, ...body] = record.replace(/^\n+/, "").split("\t");
+    if (!MADE_HERE.test(reflog ?? "")) continue;
+    const at = Number(seconds) * 1000;
+    const chain = `${at}\t${subject}`;
+    if (seen.has(full) || seen.has(chain)) continue;
+    seen.add(full);
+    seen.add(chain);
+    commits.push({ full, sha, at, subject: subject ?? "", body: body.join("\t") });
+  }
+  return commits;
+}
+
+/** The reflog of this checkout's HEAD, parsed. Empty where there is no git. */
+function reflog() {
+  try {
+    return parseReflog(
+      execFileSync("git", ["log", "-g", "HEAD", "--format=%x1e%H%x09%h%x09%at%x09%gs%x09%s%x09%b"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: 64 * 1024 * 1024,
+      }),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * This computer's commits since `sinceMs`, oldest first, for the labelling
+ * evidence. Read-only, like every git call here - nothing stages, commits or
+ * pushes. A teammate's commit pulled in is not evidence of what this
+ * computer did, and naming its time from it would put their work on it.
+ */
+export function localCommits(sinceMs, maxBody = 600) {
+  return reflog()
+    .filter((commit) => commit.at >= sinceMs)
+    .map(({ at, sha, subject, body }) => ({
+      at,
+      sha,
+      subject,
+      body: body.replace(/\s+/g, " ").trim().slice(0, maxBody),
+    }))
+    .reverse();
+}
+
+/** Full shas of every commit made on this computer. */
+export function localCommitShas() {
+  return new Set(reflog().map((commit) => commit.full));
+}
+
+/**
+ * The commits this run consumed - this computer's only, the same rule the
+ * collector applies to its evidence.
  *
  * From the watermark where it still exists in history, and otherwise from the
  * earliest day being named - because a rebase must degrade to "read a bit
  * more" rather than to an error or to silently reading nothing.
  */
-export function commitsSince(sha, sinceDay, emails) {
-  const format = "--format=%h%x09%ae%x09%s";
+export function commitsSince(sha, sinceDay, localShas) {
+  const format = "--format=%H%x09%h%x09%s";
   try {
     const out = isKnownCommit(sha)
       ? git(["log", `${sha}..HEAD`, format])
@@ -113,10 +187,10 @@ export function commitsSince(sha, sinceDay, emails) {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [short, email, ...rest] = line.split("\t");
-        return { sha: short, email: (email ?? "").toLowerCase(), subject: rest.join("\t") };
+        const [full, short, ...rest] = line.split("\t");
+        return { full, sha: short, subject: rest.join("\t") };
       })
-      .filter((commit) => emails.has(commit.email))
+      .filter((commit) => localShas.has(commit.full))
       .map(({ sha: short, subject }) => ({ sha: short, subject }))
       .reverse();
   } catch {
@@ -155,13 +229,13 @@ function main() {
     .sort();
 
   const config = loadConfig();
-  const person = currentPerson(config);
+  const computer = currentComputer();
   const month = flag("month") ?? monthOf(named[0] ?? new Date().toISOString().slice(0, 10));
-  const previous = lastCommit(person.fileId);
-  const commits = commitsSince(previous, named[0] ?? month + "-01", person.emails);
+  const previous = lastCommit(computer.fileId);
+  const commits = commitsSince(previous, named[0] ?? month + "-01", localCommitShas());
   const head = headCommit();
 
-  const entry = appendEntry(person.fileId, {
+  const entry = appendEntry(computer.fileId, {
     at: new Date().toLocaleString("sv", { timeZone: config.timeZone }).replace(" ", "T"),
     month,
     session: flag("session"),
@@ -171,7 +245,7 @@ function main() {
     // being stepped over.
     throughCommit: head,
     commits,
-    monthTotal: monthTotal(month, person.fileId),
+    monthTotal: monthTotal(month, computer.fileId),
   });
 
   console.log(

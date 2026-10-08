@@ -9,10 +9,13 @@
 // So a 160-hour project allows 40 hours a week, and in a five-week month the
 // last week gets whatever the month has left.
 //
-// What counts is what the timesheets record: every person's, every computer's,
-// measured and manual, after the multipliers - the same hours the client PDF
-// shows. It can only count the timesheets in this checkout, so a teammate's
-// hours count once they push and you pull.
+// What counts is what the timesheets record: every computer's, measured and
+// manual, after the multipliers, less any timesheet-upkeep rows - the same
+// hours the client PDF shows. It can only count the timesheets in this
+// checkout, so another computer's hours count once it pushes and you pull.
+//
+// The PDFs print these figures too: a week's done / left / cap, and for a
+// month every week that touches it (`weekRows`).
 //
 // Going over is never hidden and never trimmed. A collect records what it
 // measured and warns; the prompt hook (hooks.mjs) stops new prompts; manual
@@ -25,7 +28,7 @@ import { fileURLToPath } from "node:url";
 import { formatDuration, toLocalDay } from "./blocks.mjs";
 import { TRACKING_DIR, loadConfig, monthFileIds, monthOf } from "./config.mjs";
 import { appendEntry, readLog } from "./log.mjs";
-import { parseMonthFile } from "./month-file.mjs";
+import { parseMonthFile, withoutTrackerRows } from "./month-file.mjs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_NAMES = [
@@ -33,7 +36,7 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-function addDays(day, count) {
+export function addDays(day, count) {
   return new Date(Date.parse(`${day}T00:00:00Z`) + count * DAY_MS).toISOString().slice(0, 10);
 }
 
@@ -49,6 +52,65 @@ function shortDay(day) {
   const date = new Date(`${day}T00:00:00Z`);
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][date.getUTCDay()];
   return `${weekday} ${date.getUTCDate()} ${MONTH_NAMES[date.getUTCMonth()].slice(0, 3)}`;
+}
+
+/** `2026-10` -> `2026-10-31`. */
+export function monthEnd(month) {
+  const [year, index] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, index, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * Every Monday-to-Sunday week that touches `month`, whole - October 2026 runs
+ * from the week of 28 Sep - 4 Oct to the week of 26 Oct - 1 Nov.
+ */
+export function weeksOverlapping(month) {
+  const weeks = [];
+  const last = monthEnd(month);
+  for (let start = weekOf(`${month}-01`).start; start <= last; start = addDays(start, 7)) {
+    weeks.push({ start, end: addDays(start, 6) });
+  }
+  return weeks;
+}
+
+/** The seconds `totals` records from `start` to `end`, both included. */
+export function spanSeconds(totals, start, end) {
+  let sum = 0;
+  for (const [date, seconds] of totals) if (date >= start && date <= end) sum += seconds;
+  return sum;
+}
+
+/** `{ done, cap, left }` for a span; `cap` and `left` are null when there is no budget. */
+export function spanFigures(totals, start, end, cap) {
+  const done = spanSeconds(totals, start, end);
+  return { done, cap: cap ?? null, left: cap == null ? null : cap - done };
+}
+
+/**
+ * One row per week of `month` for a monthly PDF, future weeks included. Each
+ * counts its whole week, the days in the next or last month too, so it
+ * matches the budget the prompt hook enforces - and so the rows need not add
+ * up to the month. `before` and `after` are the parts of the week outside
+ * the month, with what they record, for the note under a week's heading.
+ *
+ * `own` is one computer's totals, for its own PDF's extra column.
+ */
+export function weekRows(totals, caps, month, own = null) {
+  const first = `${month}-01`;
+  const last = monthEnd(month);
+  return weeksOverlapping(month).map((week, index) => {
+    const row = { n: index + 1, ...week, ...spanFigures(totals, week.start, week.end, caps?.week) };
+    if (own) row.own = spanSeconds(own, week.start, week.end);
+    if (week.start < first) {
+      const end = addDays(first, -1);
+      row.before = { start: week.start, end, seconds: spanSeconds(totals, week.start, end) };
+    }
+    if (week.end > last) {
+      const start = addDays(last, 1);
+      row.after = { start, end: week.end, seconds: spanSeconds(totals, start, week.end) };
+    }
+    return row;
+  });
 }
 
 /** The week's and the month's caps in seconds, or null when the project has no budget. */
@@ -67,20 +129,23 @@ export function budgetCaps(config) {
  * re-measured in memory, used in place of what its files on disk say. That is
  * how the prompt hook counts the minutes since the last collect without
  * rewriting the timesheet on every prompt.
+ *
+ * `only` limits it to one computer's timesheet - its share, for its own PDF.
  */
-export function recordedDays(months, { dir = TRACKING_DIR, fresh = null } = {}) {
+export function recordedDays(months, { dir = TRACKING_DIR, fresh = null, only = null } = {}) {
   const totals = new Map();
   for (const month of new Set(months)) {
     const ids = new Set(monthFileIds(month, dir));
     if (fresh?.months.has(month)) ids.add(fresh.id);
     for (const id of ids) {
+      if (only && id !== only) continue;
       let file = fresh?.id === id ? fresh.months.get(month) : null;
       if (!file) {
         const source = path.join(dir, `${month}.${id}.md`);
         if (!existsSync(source)) continue;
         file = parseMonthFile(readFileSync(source, "utf8"));
       }
-      for (const day of file.days) {
+      for (const day of withoutTrackerRows(file.days)) {
         if (monthOf(day.date) !== month) continue;
         totals.set(day.date, (totals.get(day.date) ?? 0) + Math.round(day.seconds / 60) * 60);
       }

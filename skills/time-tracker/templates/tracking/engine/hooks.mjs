@@ -21,7 +21,7 @@
 // Claude, and a hook has no one to ask.
 //
 // A hook must never break a session. Anything that goes wrong - not set up,
-// not registered, no transcripts - is swallowed and the session carries on;
+// no computer name, no transcripts - is swallowed and the session carries on;
 // the one deliberate failure is the prompt block, exit code 2.
 
 import { readFileSync } from "node:fs";
@@ -64,7 +64,7 @@ function sessionStart(config) {
   const today = toLocalDay(Date.now(), config.timeZone);
   const budget = quietly(() => budgetFor(config, today));
   if (!budget) return;
-  if (result?.person && budget.over.length > 0) quietly(() => noteOverBudget(result.person.fileId, config, budget));
+  if (result?.computer && budget.over.length > 0) quietly(() => noteOverBudget(result.computer.fileId, config, budget));
   const summary = describeBudget(budget);
   const context = budget.exhausted
     ? `Time tracker - the project's hour budget is used up. ${summary} New prompts are refused until it ` +
@@ -81,17 +81,17 @@ function sessionStart(config) {
 function sessionEnd(config) {
   const result = quietly(() => collect());
   const budget = quietly(() => budgetFor(config));
-  if (result?.person && budget?.over.length > 0) quietly(() => noteOverBudget(result.person.fileId, config, budget));
+  if (result?.computer && budget?.over.length > 0) quietly(() => noteOverBudget(result.computer.fileId, config, budget));
 }
 
 function prompt(config, input) {
   if (promptExempt(input.prompt)) return;
   // Re-measured in memory, so the minutes since the last collect count
   // without the timesheet being rewritten on every prompt. A computer that
-  // cannot measure (not registered here) is checked against the files alone.
+  // cannot measure (no name yet) is checked against the files alone.
   const result = quietly(() => collect({ write: false }));
   const today = result?.todayDay ?? toLocalDay(Date.now(), config.timeZone);
-  const fresh = result?.person ? { id: result.person.fileId, months: result.months } : null;
+  const fresh = result?.computer ? { id: result.computer.fileId, months: result.months } : null;
   const budget = quietly(() => budgetFor(config, today, { fresh }));
   if (!budget?.exhausted) return;
   process.stderr.write(`${blockedMessage(budget)}\n`);

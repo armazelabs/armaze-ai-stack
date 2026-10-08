@@ -2,14 +2,13 @@
 
 The arithmetic is not your job - the collector measures the hours. Your job is
 to say **what the work was**, using only evidence: a short name for each task,
-its work type, and under it a few bullets saying what that time actually
-delivered.
+its work type, when it happened and in which session, and under it a few
+bullets saying what that time actually delivered.
 
-Everything is per person, per computer. The files carry the file id of whoever
-is running this, on this computer - `<month>.<fileid>.md`,
-`cache/<month>.<fileid>.pending.json`, where `<fileid>` is
-`<person>.<computer>` - and the evidence holds only that person's own commits
-and this computer's own sessions. The collector prints the month it wrote, and
+Everything is per computer. The files carry this computer's name as their file
+id - `<month>.<fileid>.md`, `cache/<month>.<fileid>.pending.json`, where
+`<fileid>` is like `studio-3f9a` - and the evidence holds only the commits
+made on this computer and its own sessions. The collector prints the month it wrote, and
 the tracking folder shows the files. Never edit another computer's month file
 to name its days: it holds time this computer has no evidence for, and only
 that computer can name it.
@@ -18,14 +17,18 @@ that computer can name it.
 
 - `<tracking>/<month>.<fileid>.md` - the record. Human-readable, hand-correctable, and
   the input to the PDF. This is the only file you edit, and within it only the
-  task rows' names and types and their bullets. Never a row marked `· manual`:
-  those belong to `manual.mjs` (see the skill's Manual hours step).
+  task rows' Task, Type, When and Session cells and their bullets. Never the
+  Time cells, never a row marked `· manual` - those belong to `manual.mjs`
+  (see the skill's Manual hours step) - and never the `> Sessions` legend
+  under a day, which the collector writes.
 - `<tracking>/cache/<month>.<fileid>.pending.json` - **your evidence, and the file
   you read.** Only the days that still need work, each with its `needs`
-  (`names`, `bullets`, `types`, or any mix), its current `tasks`, and its blocks: the
-  prompts typed in them and this person's commits landed in them, each commit
-  with its `subject` and, where it has one, its message `body`. Generated,
-  gitignored.
+  (`names`, `bullets`, `types`, `times`, or any mix), its current `tasks`, its
+  `sessions` legend (each session's ref and opening prompt), and its blocks:
+  for each block its `range`, the `sessions` working in it with their own
+  ranges, the prompts typed in it (each with its `session`), and the commits
+  made on this computer that landed in it, each with its `subject` and, where
+  it has one, its message `body`. Generated, gitignored.
 - `<tracking>/cache/<month>.<fileid>.raw.json` - the same evidence for the *whole* month,
   settled days included. Reach for it only when re-checking a day someone has
   already named. Reading it for a routine update means reading a month to name
@@ -55,8 +58,9 @@ that computer can name it.
      that arrives after you name it becomes a new `In progress` row underneath
      yours, which the next update names in turn. That is expected.
 
-   No PDF renders while either one is still standing, so a day left unnamed
-   blocks the report until someone names it.
+   A day left unnamed still renders - as "Research & exploration", typed
+   Research, with no bullets. That is a fallback for a client to read, not a
+   name: name every one you can.
 
 3. For each such day, read that day's blocks - their `commits` and `prompts` -
    and decide what was worked on.
@@ -82,16 +86,17 @@ that computer can name it.
    Then edit `<tracking>/<month>.<fileid>.md`, replacing that day's
 
    ```
-   | Unlabelled | - | 5h 56m |
+   | Unlabelled | - | 09:05-12:10, 13:30-16:20 | 4c11d0a2, 9be0f113 | 5h 56m |
    ```
 
-   row with one row per task - its name, its work type, its time - and add a
-   bullet list after the table - one top-level item per task, spelled exactly
-   as in its row, with its outcome bullets indented beneath it:
+   row with one row per task - its name, its work type, when it happened, its
+   sessions, its time - and add a bullet list after the table - one top-level
+   item per task, spelled exactly as in its row, with its outcome bullets
+   indented beneath it:
 
    ```
-   | Legal pages and hero band | Development | 3h 10m |
-   | Design-system rail documentation | Content | 2h 46m |
+   | Legal pages and hero band | Development | 09:05-12:10 | 4c11d0a2 | 3h 10m |
+   | Design-system rail documentation | Content | 13:30-16:20 | 9be0f113 | 2h 46m |
 
    - Legal pages and hero band
      - Privacy policy and terms pages, linked from the footer
@@ -101,22 +106,41 @@ that computer can name it.
      - Usage examples for buttons, forms and cards
    ```
 
-   A day whose `needs` is only `bullets` or `types` is already named: add the
-   list for the tasks that lack one, write a type into each `-` Type cell, and
-   leave the names and times exactly as they are. That is how days named
-   before bullets or types existed get filled in.
+   **When** is the local clock time the task happened, `HH:MM-HH:MM`, several
+   ranges separated by `, ` when it was worked in pieces. Read it from the
+   evidence: the block `range`s, the sessions' own ranges inside them, and the
+   `at` of the prompts and commits that belong to the task. The placeholder's
+   When is the unnamed part of the day - split it between your rows, and do
+   not reach outside it. **Session** is the ref of each session the task was
+   done in (the prompts carry their `session`), separated by `, `; the day's
+   `sessions` legend says which ref is which. Use `-` only where the evidence
+   truly gives no time.
 
-   A row whose Type reads `Design · manual` (any type) was logged by hand.
-   Its hours are not in the blocks and not yours to split - leave it exactly
-   as it is, and name only the measured rows around it. The rows still add up
-   to the day's total with it included.
+   **When is not Time.** Time is what is recorded - the hours multiplier is
+   already in it - so a task worked 09:00-11:00 may read `3h`. Split the
+   placeholder's Time between your rows in proportion to how long each was
+   worked, and keep them adding up to it.
+
+   A day whose `needs` is only some of `bullets`, `types` and `times` is
+   already named: add the bullets the tasks lack (two at least on each measured
+   task), write a type into each `-` Type cell, fill each `-` When and Session
+   cell from the evidence, and leave the names and Time cells exactly as they
+   are. That is how days named before bullets, types or times existed get
+   filled in.
+
+   A row whose Type reads `Research · manual, 2h given` or `Design · manual`
+   was logged by hand. Its hours are not in the blocks and not yours to split
+   - leave it exactly as it is, When and Session `-` included, and name only
+   the measured rows around it. The rows still add up to the day's total with
+   it included.
 
 4. **Do not re-run the collector to check your work.** Today is still running,
    so a collect after naming will nearly always find another minute or two and
-   open a fresh `In progress` row for it - which then blocks the PDF you were
-   about to render. The collector already ran in step 1; the arithmetic it
-   produced is what you named against, and the month file warns on its own if
-   your rows do not add up. Go straight to the report.
+   open a fresh `In progress` row for it - which then reaches the PDF you were
+   about to render as "Research & exploration". The collector already ran in
+   step 1; the arithmetic it produced is what you named against, and the next
+   collect warns if your rows do not add up or a When or Session does not
+   match the measured time. Go straight to the report.
 
    The exception is a month with no today in it - last month, an old month -
    where nothing can grow and a verifying collect is free.
@@ -127,7 +151,8 @@ The PDF is read by a client, who wants to see what their money bought. The
 task name says where the time went; the bullets say **what now exists or works
 because of it**.
 
-- **Two to four bullets a task.** One is fine for a short task with one outcome.
+- **Two to four bullets a task.** Every measured task needs at least two - the
+  report warns on one. Manual rows may have none.
 - **Outcomes, not activity.** "Customers get a receipt email after every
   purchase", not "Worked on email templates". Say what someone can now see,
   use or rely on.
@@ -142,8 +167,8 @@ because of it**.
   export to CSV"), never as delivered.
 - **`Unattributed work` gets no bullets.** There is nothing on record to say
   about it.
-- **Nothing personal.** No names, emails or who-did-what - the timesheet is
-  already one person's.
+- **Nothing personal.** No names, emails or who-did-what - and nothing that
+  says which computer or session; the timesheet already records that.
 
 ## Picking the work type
 
@@ -194,6 +219,6 @@ type - leave its cell `-`.
 - **A day already named is finished.** Do not rewrite labels someone accepted,
   unless the user asks you to. Adding missing bullets under them is not a
   rewrite - it is the backfill `needs: bullets` asks for.
-- **Only this person's work.** The evidence already holds only their own
-  commits. Do not go to `git log` for more - a teammate's commit is not evidence
-  of what this person did.
+- **Only this computer's work.** The evidence already holds only the commits
+  made on it. Do not go to `git log` for more - a commit pulled in from another
+  computer is not evidence of what this one did.

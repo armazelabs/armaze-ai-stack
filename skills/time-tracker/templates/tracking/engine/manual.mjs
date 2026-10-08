@@ -1,34 +1,40 @@
 // Manual hours: work that never touched a transcript.
 //
-//   node <tracking>/engine/manual.mjs add    --date 2026-10-02 --type Design --task "Checkout screens" \
-//                                            --hours 3 --bullet "Mobile and desktop checkout layouts" \
-//                                            --note "3 hours in Figma yesterday on checkout" [--session <id>]
-//   node <tracking>/engine/manual.mjs set    --date 2026-10-02 --task "Checkout screens" [--hours 2] \
-//                                            [--type Design] [--rename "…"] [--bullet …] [--note "…"]
-//   node <tracking>/engine/manual.mjs remove --date 2026-10-02 --task "Checkout screens" [--note "…"]
+//   node <tracking>/engine/manual.mjs add    --date 2026-10-02 --task "Checkout screens" --hours 2 \
+//                                            [--bullet "Mobile and desktop checkout layouts"] \
+//                                            --note "2 hours in Figma yesterday on checkout" [--session <id>]
+//   node <tracking>/engine/manual.mjs set    --date 2026-10-02 --task "Checkout screens" [--hours 3] \
+//                                            [--rename "…"] [--bullet …] [--note "…"] [--computer <id>]
+//   node <tracking>/engine/manual.mjs remove --date 2026-10-02 --task "Checkout screens" [--note "…"] \
+//                                            [--computer <id>]
 //
 // A Figma afternoon or a paper sketch leaves no transcript, so no collect can
 // measure it - the person says it happened and how long it took, and that is
-// the record. It lands in the month markdown as a row whose Type cell reads
-// `Design · manual`, which every rebuild carries across untouched and counts
+// the record. It is research, always: the row's Type cell reads `Research ·
+// manual, 2h given`, which every rebuild carries across untouched and counts
 // on top of what it measures.
 //
-// `add` always writes this computer's own timesheet. `set` and `remove` find
-// the row in whichever of the person's computers' timesheets holds it - an
-// entry logged on the laptop can be corrected from the desktop - but writing
-// another computer's file is the one place two computers could collide, so
-// that file must have no uncommitted changes here: pull first, push straight
-// after.
+// `--hours` is the time given. It is recorded scaled by `hoursMultiplier`,
+// the same as measured time - 2h given at 1.5 is recorded as 3h - so a manual
+// hour weighs what a measured one does. The given hours stay on the row, so
+// the record always shows both. Bullets are optional: the person's own words
+// are the record here, and they need not be dressed up as outcomes.
+//
+// `add` always writes this computer's own timesheet, and `set` and `remove`
+// look there. A row on another computer's timesheet is changed only when
+// `--computer <id>` names it - writing another computer's file is the one
+// place two computers could collide, so that file must also have no
+// uncommitted changes here: pull first, push straight after.
 //
 // This is the only way manual hours reach the timesheet. A day's total is
 // never hand-written: every change here moves the row and the day's heading
-// together, and appends a line to the person's log saying what changed, in
-// their own words (`--note`). Manual hours are recorded as given - the
-// multiplier scales measured activity, not effort the person stated directly.
+// together, and appends a line to this computer's log saying what changed,
+// in the person's own words (`--note`).
 //
-// They do count against the project's hour budget (budget.mjs): an `add`, or
-// a `set` that makes a row longer, is refused when it would take its day's
-// week or month past the budget, and says how much is left.
+// They do count against the project's hour budget (budget.mjs), at their
+// recorded size: an `add`, or a `set` that makes a row longer, is refused
+// when it would take its day's week or month past the budget, and says how
+// much is left.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, existsSync, writeFileSync } from "node:fs";
@@ -36,22 +42,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { formatDuration, toLocalDay } from "./blocks.mjs";
-import {
-  REPO_ROOT,
-  currentPerson,
-  loadConfig,
-  monthFilePath,
-  monthOf,
-  personFileIds,
-  splitFileId,
-} from "./config.mjs";
+import { REPO_ROOT, currentComputer, loadConfig, monthFileIds, monthFilePath, monthOf } from "./config.mjs";
 import { budgetFor, roomProblem } from "./budget.mjs";
 import { appendEntry, monthTotal } from "./log.mjs";
 import {
+  MANUAL_TYPE,
   addManualTask,
   parseMonthFile,
   removeManualTask,
   renderMonthFile,
+  scaleManual,
   setManualTask,
 } from "./month-file.mjs";
 
@@ -80,14 +80,11 @@ export function parseHours(text) {
  * from `trackFrom` like any other, and only up to today - logging tomorrow's
  * work is a guess, not a record.
  */
-export function entryProblem({ date, type, seconds }, config, today) {
+export function entryProblem({ date, seconds }, config, today) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? "")) return `--date expects YYYY-MM-DD, got ${date ?? "nothing"}.`;
   if (!config.trackFrom) return "No trackFrom in config.json - run setup first.";
   if (date < config.trackFrom) return `${date} is before trackFrom (${config.trackFrom}); it does not count.`;
   if (date > today) return `${date} is in the future - log it once it has happened.`;
-  if (type !== undefined && !(config.categories ?? []).includes(type)) {
-    return `"${type}" is not a category. Use one of: ${(config.categories ?? []).join(", ")}.`;
-  }
   if (seconds !== undefined && (seconds == null || seconds > MAX_SECONDS)) {
     return "--hours expects a length between a minute and 24 hours, e.g. 3, 1.5 or 1h 30m.";
   }
@@ -95,9 +92,9 @@ export function entryProblem({ date, type, seconds }, config, today) {
 }
 
 /**
- * Which of the person's timesheets holds the manual row `name` on `date`.
- * `files` is `[{ id, file }]` with each parsed month file; this computer's
- * own comes first, so it wins if two computers somehow hold the same row.
+ * Which timesheet holds the manual row `name` on `date`. `files` is
+ * `[{ id, file }]` with each parsed month file, this computer's own first, so
+ * it wins if two computers somehow hold the same row.
  */
 export function findManualOwner(files, date, name) {
   for (const { id, file } of files) {
@@ -148,18 +145,13 @@ function writeAtomic(file, content) {
   renameSync(temporary, file);
 }
 
-/** The computer a file id belongs to, for messages - `studio-3f9a`, or "the older shared" for a legacy file. */
-function describe(id) {
-  return splitFileId(id).machine ?? "the older shared";
-}
-
 /** Which PDFs no longer match, as the command that rewrites them. */
 function renderHint(date, today) {
   const monday = (day) => {
     const offset = (new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7;
     return new Date(Date.parse(`${day}T00:00:00Z`) - offset * 86400000).toISOString().slice(0, 10);
   };
-  if (monthOf(date) === monthOf(today) && monday(date) === monday(today)) {
+  if (monday(date) === monday(today)) {
     return "This week's PDFs pick it up on the next `report.mjs`.";
   }
   return `Re-render its PDFs: node ${path.join(path.dirname(fileURLToPath(import.meta.url)), "report.mjs")} --month ${monthOf(date)} --all-weeks`;
@@ -169,33 +161,35 @@ function main() {
   const action = (process.argv[2] ?? "").toLowerCase();
   if (!["add", "set", "remove"].includes(action)) {
     console.error(
-      "Usage: node manual.mjs add --date <YYYY-MM-DD> --type <category> --task <name> --hours <h> " +
+      "Usage: node manual.mjs add --date <YYYY-MM-DD> --task <name> --hours <h given> " +
         "[--bullet <outcome>]... [--note <their words>] [--session <id>]\n" +
-        "       node manual.mjs set --date <YYYY-MM-DD> --task <name> [--hours <h>] [--type <category>] " +
-        "[--rename <name>] [--bullet <outcome>]...\n" +
-        "       node manual.mjs remove --date <YYYY-MM-DD> --task <name>",
+        "       node manual.mjs set --date <YYYY-MM-DD> --task <name> [--hours <h given>] " +
+        "[--rename <name>] [--bullet <outcome>]... [--computer <id>]\n" +
+        "       node manual.mjs remove --date <YYYY-MM-DD> --task <name> [--computer <id>]",
     );
     process.exit(1);
   }
 
   const config = loadConfig();
-  const person = currentPerson(config);
+  const computer = currentComputer();
   const today = toLocalDay(Date.now(), config.timeZone);
 
   const date = flag("date");
   const task = flag("task")?.trim();
-  const type = flag("type")?.trim();
   const hours = flag("hours");
-  const seconds = hours === undefined ? undefined : parseHours(hours);
+  const given = hours === undefined ? undefined : parseHours(hours);
+  const seconds = given == null ? given : scaleManual(given, config.hoursMultiplier ?? 1);
   const rename = flag("rename")?.trim();
   const details = bullets();
+  const elsewhereId = flag("computer")?.trim() || null;
 
   if (!task) throw new Error("--task is required: the row's name, as it reads on the timesheet.");
-  if (action === "add" && (type === undefined || hours === undefined)) {
-    throw new Error("add needs --type and --hours as well as --date and --task.");
+  if (action === "add" && hours === undefined) {
+    throw new Error("add needs --hours (the time given) as well as --date and --task.");
   }
-  const problem = entryProblem({ date, type, seconds }, config, today);
+  const problem = entryProblem({ date, seconds: given }, config, today);
   if (problem) throw new Error(problem);
+  if (flag("type") !== undefined) console.log(`Manual hours are always ${MANUAL_TYPE} - --type ignored.`);
 
   const month = monthOf(date);
   const read = (id) => {
@@ -203,29 +197,38 @@ function main() {
     return existsSync(file) ? parseMonthFile(readFileSync(file, "utf8")) : { month, days: [] };
   };
 
-  let target = person.fileId;
+  let target = computer.fileId;
   if (action !== "add") {
-    const ids = [person.fileId, ...personFileIds(month, person.id).filter((id) => id !== person.fileId)];
-    target = findManualOwner(
-      ids.map((id) => ({ id, file: read(id) })),
-      date,
-      task,
-    );
-    if (!target) throw new Error(`${date} has no manual row "${task}" on any of your computers' timesheets.`);
+    const ids = elsewhereId ? [elsewhereId] : [computer.fileId];
+    target = findManualOwner(ids.map((id) => ({ id, file: read(id) })), date, task);
+    if (!target && !elsewhereId) {
+      const others = monthFileIds(month).filter((id) => id !== computer.fileId);
+      const owner = findManualOwner(others.map((id) => ({ id, file: read(id) })), date, task);
+      if (owner) {
+        throw new Error(
+          `"${task}" on ${date} is on ${owner}'s timesheet, not this computer's. ` +
+            `To change it from here, add --computer ${owner}.`,
+        );
+      }
+    }
+    if (!target) {
+      throw new Error(`${date} has no manual row "${task}" on ${elsewhereId ?? "this computer"}'s timesheet.`);
+    }
   }
-  const elsewhere = target !== person.fileId;
+  const elsewhere = target !== computer.fileId;
   const file = monthFilePath(month, target);
   if (elsewhere && gitDirty(file)) {
     throw new Error(
-      `"${task}" is on ${describe(target)}'s timesheet, which has uncommitted changes here. ` +
+      `"${task}" is on ${target}'s timesheet, which has uncommitted changes here. ` +
         "Commit or discard them, pull, then try again - editing it now could conflict with that computer.",
     );
   }
   const parsed = read(target);
   const current = parsed.month ? parsed : { ...parsed, month };
 
-  // The hour budget. Only time being added is checked - shortening or
-  // removing a row always goes through, even on a week already over.
+  // The hour budget, at the recorded size. Only time being added is checked -
+  // shortening or removing a row always goes through, even on a week already
+  // over.
   if (seconds != null && action !== "remove") {
     const existingRow = current.days
       .find((day) => day.date === date)
@@ -237,16 +240,22 @@ function main() {
 
   let next;
   if (action === "add") {
-    next = addManualTask(current, date, { name: task, type, seconds, ...(details ? { details } : {}) });
+    next = addManualTask(current, date, {
+      name: task,
+      type: MANUAL_TYPE,
+      seconds,
+      givenSeconds: given,
+      ...(details ? { details } : {}),
+    });
   } else if (action === "set") {
-    next = setManualTask(current, date, task, { rename, type, seconds, details });
+    next = setManualTask(current, date, task, { rename, seconds, givenSeconds: given, details });
   } else {
     next = removeManualTask(current, date, task);
   }
   writeAtomic(file, renderMonthFile(next, config.workdays));
 
   const row = next.days.find((day) => day.date === date)?.tasks.find((t) => t.manual && t.name === (rename || task));
-  appendEntry(person.fileId, {
+  appendEntry(computer.fileId, {
     at: new Date().toLocaleString("sv", { timeZone: config.timeZone }).replace(" ", "T"),
     kind: "manual",
     action,
@@ -255,22 +264,32 @@ function main() {
     task,
     ...(elsewhere ? { timesheet: target } : {}),
     ...(rename ? { renamedTo: rename } : {}),
-    ...(row ? { type: row.type, time: formatDuration(row.seconds) } : {}),
+    ...(row
+      ? {
+          type: row.type,
+          ...(row.givenSeconds != null ? { given: formatDuration(row.givenSeconds) } : {}),
+          time: formatDuration(row.seconds),
+        }
+      : {}),
     note: flag("note") ?? null,
     session: flag("session") ?? null,
     monthTotal: monthTotal(month, target),
   });
 
+  const sized = (r) =>
+    r.givenSeconds != null
+      ? `${formatDuration(r.givenSeconds)} given (recorded as ${formatDuration(r.seconds)})`
+      : formatDuration(r.seconds);
   const what =
     action === "add"
-      ? `Added ${formatDuration(seconds)} of ${type} on ${date}: "${task}" (manual).`
+      ? `Added ${sized(row)} of ${MANUAL_TYPE} on ${date}: "${task}" (manual).`
       : action === "set"
-        ? `Changed the manual row "${task}" on ${date}${row ? ` - now ${row.type}, ${formatDuration(row.seconds)}` : ""}.`
+        ? `Changed the manual row "${task}" on ${date}${row ? ` - now ${sized(row)}` : ""}.`
         : `Removed the manual row "${task}" from ${date}.`;
   const day = next.days.find((candidate) => candidate.date === date);
   console.log(
     `${what} ${date} now ${day ? formatDuration(day.seconds) : "has no time"}` +
-      `${elsewhere ? ` on ${describe(target)}'s timesheet` : ""}.`,
+      `${elsewhere ? ` on ${target}'s timesheet` : ""}.`,
   );
   if (elsewhere) console.log("That file belongs to another computer: commit and push it now, before it collects again.");
   console.log(renderHint(date, today));
