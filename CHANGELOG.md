@@ -2,6 +2,34 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.10.0 - 2026-10-08
+
+**Upgrade every computer on a project the same day.** A computer still on 0.9.0 cannot read the timesheets 0.10.0 writes. On each computer: `aistack update`, then say "update time tracker setup" in Claude Code, then commit and push the `tracking/` folder.
+
+### Changed
+
+- **time-tracker** keeps one timesheet per computer, named after the computer — `2026-10.<computer>.md` — with no git name or email involved. Setup no longer registers people; re-running it renames this computer's `2026-10.<person>.<computer>.md` files and deletes its `activity/` overlap records. `people` in `config.json` is no longer read and can be removed once every computer has upgraded.
+- **time-tracker** counts every computer in full. Two computers working at the same time are two lots of hours; the overlap between one person's computers is no longer taken off. On an upgrade, setup writes `fullCountFrom` — the Monday of the month's first week — and days before it keep the hours already recorded.
+- **time-tracker** names a computer's work only from the commits made on it, read from its git reflog, instead of from commits matching a person's email.
+- **time-tracker** weekly PDFs cover whole Monday-to-Sunday weeks: the week of 28 September - 4 October is one PDF, `weekly/2026-09-28.<computer>.pdf`, no longer split at the month's edge. Client weeklies are `client/weekly/<first day>.pdf`. Setup lists the old `weekly/<YYYY-MM>/` folders as safe to delete.
+- **time-tracker** never refuses a PDF for an unnamed day. Unnamed time shows as **Research & exploration**, typed Research, with its hours counted; the collector and the report list the days still unnamed.
+- **time-tracker** manual hours are always Research and are scaled by the hours multiplier like measured time: 2h given at 1.5 is recorded as 3h, and the timesheet keeps both (`Research · manual, 2h given`). Entries already recorded stay as they are. `--type` is gone, bullets are optional, and an entry on another computer's timesheet is changed with `--computer <name>`.
+- **time-tracker** turns a main-session turn started by an agent's task notification, rather than by a prompt, into agent time at `subagentMultiplier`.
+- **time-tracker** asks for at least two outcome bullets on every measured task.
+
+### Added
+
+- **time-tracker** PDFs show the hour budget for their span: a week's hours done, remaining and total (`monthlyHours / 4`), a month's hours done so far, remaining and total. A computer's own PDFs put its hours beside the project's.
+- **time-tracker** monthly PDFs have a week-by-week table — every week touching the month, upcoming ones included, each counting its whole week — and the days grouped under each week with subtotals.
+- **time-tracker** groups each day's tasks by work type, with a subtotal per type.
+- **time-tracker** records when each task happened and in which Claude Code session. The month file gains `When` and `Session` columns and, under each day, a legend naming every session by its opening prompt. A computer's own PDF prints `09:10-11:20 · studio · "fix checkout validation bug"` under each task; the client PDF never shows computers, sessions or times.
+- **time-tracker** check warns about computers whose timesheets still have the older names, and about a leftover `people` key.
+
+### Fixed
+
+- **time-tracker** setup no longer reports a per-person install as starting today: the `trackFrom` fallback now reads two-part timesheet names.
+- **time-tracker** hour budget leaves out timesheet-upkeep rows, so it matches the client PDF exactly.
+
 ## 0.9.0 - 2026-10-08
 
 ### Added
