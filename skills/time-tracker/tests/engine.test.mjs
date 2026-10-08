@@ -70,9 +70,13 @@ import { firstWeekStart, legacyMoves, legacyPersonFor, withTrackerHooks } from "
 import { engineDrift, timesheetNames } from "../scripts/check.mjs";
 import {
   budgetFrom,
+  capsOn,
+  describeBudget,
+  exceptionNotes,
   recordedDays,
   roomProblem,
   weekOf,
+  weekCaps,
   weekRows,
   weeksOverlapping,
 } from "../templates/tracking/engine/budget.mjs";
@@ -1016,6 +1020,36 @@ test("in a five-week month the month's cap closes the last week early", () => {
   assert.equal(budget.month.left, 0);
   assert.equal(budget.exhausted, true);
   assert.equal(budget.reopens, "2026-11-01");
+});
+
+test("a budget exception sets the week's cap and can lift the month's, only inside its days", () => {
+  const config = {
+    ...BUDGET,
+    budgetExceptions: [{ from: "2026-10-12", to: "2026-10-31", weeklyHours: 40, monthlyHours: null, note: "From 12 October, 40 hours a week." }],
+  };
+  // 120h of October recorded before the exception: the month cap still closes 5-11 Oct at 160h...
+  const before = new Map([["2026-10-01", 80 * HOUR], ["2026-10-05", 40 * HOUR]]);
+  assert.equal(budgetFrom(before, config, "2026-10-08").month.left, 40 * HOUR);
+  // ...and from 12 Oct each week has its own 40h with no month cap.
+  const totals = new Map([...before, ["2026-10-13", 30 * HOUR]]);
+  const budget = budgetFrom(totals, config, "2026-10-14");
+  assert.equal(budget.month.cap, null);
+  assert.equal(budget.left, 10 * HOUR);
+  assert.equal(budget.exhausted, false);
+  assert.match(describeBudget(budget), /October: 150h used, no month cap\./);
+  // The week crossing into November keeps the exception's cap; November is back to normal.
+  assert.deepEqual(capsOn(config, "2026-10-26"), { week: 40 * HOUR, month: null });
+  assert.deepEqual(capsOn(config, "2026-11-02"), { week: 40 * HOUR, month: 160 * HOUR });
+  assert.equal(budgetFrom(new Map([["2026-11-01", HOUR]]), config, "2026-11-01").month.cap, 160 * HOUR);
+  // The weeks table takes each week's own cap.
+  const rows = weekRows(totals, weekCaps({ ...config, budgetExceptions: [{ ...config.budgetExceptions[0], weeklyHours: 30 }] }), "2026-10");
+  assert.deepEqual(rows.map((row) => row.cap / HOUR), [40, 40, 30, 30, 30]);
+  // The note reaches every PDF touching October, not September's.
+  assert.deepEqual(exceptionNotes(config, "2026-09-28", "2026-10-04"), ["From 12 October, 40 hours a week."]);
+  assert.deepEqual(exceptionNotes(config, "2026-10-01", "2026-10-31"), ["From 12 October, 40 hours a week."]);
+  assert.deepEqual(exceptionNotes(config, "2026-09-01", "2026-09-30"), []);
+  // A malformed entry is ignored.
+  assert.deepEqual(capsOn({ ...BUDGET, budgetExceptions: [{ from: "12 Oct", weeklyHours: 80 }] }, "2026-10-12"), { week: 40 * HOUR, month: 160 * HOUR });
 });
 
 test("every computer's timesheet counts toward the one budget, upkeep rows not at all", () => {

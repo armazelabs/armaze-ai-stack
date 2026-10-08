@@ -9,6 +9,13 @@
 // So a 160-hour project allows 40 hours a week, and in a five-week month the
 // last week gets whatever the month has left.
 //
+// `budgetExceptions` in config.json changes that for a stretch of days the
+// person chose, each entry `{ from, to, weeklyHours?, monthlyHours?, note? }`:
+// a week starting inside it gets `weeklyHours`, and a day inside it is held
+// to `monthlyHours` for its month - `null` there means no month cap at all.
+// Its `note` is printed on every PDF whose span touches the exception's
+// months, so whoever reads the PDF sees why the budget changed.
+//
 // What counts is what the timesheets record: every computer's, measured and
 // manual, after the multipliers, less any timesheet-upkeep rows - the same
 // hours the client PDF shows. It can only count the timesheets in this
@@ -99,7 +106,8 @@ export function weekRows(totals, caps, month, own = null) {
   const first = `${month}-01`;
   const last = monthEnd(month);
   return weeksOverlapping(month).map((week, index) => {
-    const row = { n: index + 1, ...week, ...spanFigures(totals, week.start, week.end, caps?.week) };
+    const cap = caps?.weekFor ? caps.weekFor(week.start) : caps?.week;
+    const row = { n: index + 1, ...week, ...spanFigures(totals, week.start, week.end, cap) };
     if (own) row.own = spanSeconds(own, week.start, week.end);
     if (week.start < first) {
       const end = addDays(first, -1);
@@ -118,6 +126,56 @@ export function budgetCaps(config) {
   const hours = Number(config?.monthlyHours);
   if (config?.monthlyHours == null || !Number.isFinite(hours) || hours <= 0) return null;
   return { month: hours * 3600, week: (hours * 3600) / 4 };
+}
+
+/** The well-formed `budgetExceptions` from config.json. */
+export function budgetExceptions(config) {
+  const list = Array.isArray(config?.budgetExceptions) ? config.budgetExceptions : [];
+  const isDay = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  return list.filter((entry) => entry && isDay(entry.from) && isDay(entry.to) && entry.from <= entry.to);
+}
+
+/** The exception covering `day`, or null. */
+export function exceptionOn(config, day) {
+  return budgetExceptions(config).find((entry) => day >= entry.from && day <= entry.to) ?? null;
+}
+
+function hoursToSeconds(value) {
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours > 0 ? hours * 3600 : null;
+}
+
+/**
+ * The caps in force on `day`, or null when the project has no budget. The
+ * week cap is the one for the week starting on `day` - pass a Monday - and
+ * the month cap is null when an exception lifts it.
+ */
+export function capsOn(config, day) {
+  const caps = budgetCaps(config);
+  if (!caps) return null;
+  const exception = exceptionOn(config, day);
+  if (!exception) return caps;
+  const week = hoursToSeconds(exception.weeklyHours) ?? caps.week;
+  const month = !("monthlyHours" in exception)
+    ? caps.month
+    : exception.monthlyHours == null
+      ? null
+      : (hoursToSeconds(exception.monthlyHours) ?? caps.month);
+  return { week, month };
+}
+
+/** `budgetCaps` plus `weekFor(start)`, the cap of the week starting that Monday, for `weekRows`. */
+export function weekCaps(config) {
+  const caps = budgetCaps(config);
+  return caps && { ...caps, weekFor: (start) => capsOn(config, start).week };
+}
+
+/** The notes of the exceptions touching any month from `start` to `end`, for a PDF. */
+export function exceptionNotes(config, start, end) {
+  return budgetExceptions(config)
+    .filter((entry) => typeof entry.note === "string" && entry.note.trim() !== "")
+    .filter((entry) => `${monthOf(entry.from)}-01` <= end && monthEnd(monthOf(entry.to)) >= start)
+    .map((entry) => entry.note.trim());
 }
 
 /**
@@ -160,10 +218,12 @@ export function recordedDays(months, { dir = TRACKING_DIR, fresh = null, only = 
  * budget.
  */
 export function budgetFrom(totals, config, day) {
-  const caps = budgetCaps(config);
-  if (!caps) return null;
+  if (!budgetCaps(config)) return null;
   const week = weekOf(day);
   const month = monthOf(day);
+  // The week's cap is set by the day it starts; the month's by the day itself,
+  // so an exception that lifts the month cap does so only from its first day.
+  const caps = { week: capsOn(config, week.start).week, month: capsOn(config, day).month };
   let weekUsed = 0;
   let monthUsed = 0;
   for (const [date, seconds] of totals) {
@@ -171,10 +231,10 @@ export function budgetFrom(totals, config, day) {
     if (monthOf(date) === month) monthUsed += seconds;
   }
   const weekLeft = caps.week - weekUsed;
-  const monthLeft = caps.month - monthUsed;
+  const monthLeft = caps.month == null ? Infinity : caps.month - monthUsed;
   const over = [];
   if (weekUsed > caps.week) over.push("week");
-  if (monthUsed > caps.month) over.push("month");
+  if (caps.month != null && monthUsed > caps.month) over.push("month");
   // When the budget opens again: next Monday for the week, the 1st for the
   // month - the later of the two when both are used up.
   const [year, monthIndex] = month.split("-").map(Number);
@@ -210,6 +270,7 @@ export function budgetFor(config, day = toLocalDay(Date.now(), config.timeZone),
 }
 
 function standing(used, cap) {
+  if (cap == null) return `${formatDuration(used)} used, no month cap`;
   const left = cap - used;
   return left >= 0
     ? `${formatDuration(used)} of ${formatDuration(cap)} used, ${formatDuration(left)} left`

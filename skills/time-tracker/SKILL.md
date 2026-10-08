@@ -359,9 +359,21 @@ client PDF shows, and the done / left / total the PDFs print.
   month over prints a warning and logs one `"kind": "over-budget"` line per
   week or month that crossed. Report it; never trim rows to fit.
 
+**Exceptions.** `budgetExceptions` in `config.json` changes the budget for a
+stretch of days the person chose - a list of
+`{ "from", "to", "weeklyHours", "monthlyHours", "note" }`. A week starting
+inside it gets `weeklyHours`; a day inside it is held to `monthlyHours` for
+its month, and `"monthlyHours": null` lifts the month cap for those days.
+Leave either out to keep the usual figure. The `note` is the person's own
+words, printed under the heading of every PDF, client and personal, whose span
+touches the exception's months - say what changed and why, the way they want
+the client to read it. Add or change one only when the person asks, with the
+dates and the note in their words.
+
 If the session context says the budget is used up, tell the person before
-starting any work. Never set `TIME_TRACKER_OVERRIDE`, edit `monthlyHours`, or
-touch the hooks to get past a block - those are the person's call.
+starting any work. Never set `TIME_TRACKER_OVERRIDE`, edit `monthlyHours` or
+`budgetExceptions`, or touch the hooks to get past a block - those are the
+person's call.
 
 ## The log and the watermark
 
@@ -465,7 +477,8 @@ bullets and the hours - plus, on a computer's own PDF only, the computer's
 name and each task's times and session. No person name and no email anywhere.
 No measurement method, no idle cut-off, no multiplier, no timezone. Those are
 the contractor's own settings and they stay in `config.json`. Never add a
-footer or subtitle line explaining them.
+footer or subtitle line explaining them. The one note a PDF carries is a
+budget exception's `note`, written by the person (see **The hour budget**).
 
 ## Rules
 

@@ -80,6 +80,22 @@ checkout count, so another computer's hours count once it pushes and you pull.
   notes it once for that week or month.
 - **Manual hours that would go over are refused**, with how much is left.
 
+**Exceptions.** For a stretch of days you choose, `budgetExceptions` in
+`config.json` sets a different week cap and can lift the month cap - for
+example:
+
+```json
+"budgetExceptions": [
+  { "from": "2026-10-12", "to": "2026-10-31", "weeklyHours": 40, "monthlyHours": null,
+    "note": "From 12 October 2026, work is limited to 40 hours a week." }
+]
+```
+
+A week starting inside it gets `weeklyHours`; a day inside it is held to
+`monthlyHours` for its month (`null`: no month cap). Its `note` is printed
+under the heading of every PDF whose span touches its months, client PDF
+included, in your words.
+
 Check where you stand at any time with `node {{ENGINE_REL}}/budget.mjs`.
 
 The hooks live in the project's `.claude/settings.json` and run

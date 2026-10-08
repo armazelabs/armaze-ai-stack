@@ -60,11 +60,14 @@ import {
 import {
   addDays,
   budgetCaps,
+  capsOn,
+  exceptionNotes,
   monthEnd,
   recordedDays,
   spanFigures,
   spanSeconds,
   weekOf,
+  weekCaps,
   weekRows,
   weeksOverlapping,
 } from "./budget.mjs";
@@ -459,9 +462,11 @@ function weekTableHtml(view) {
       ? "Each week counts Monday to Sunday in full, including its days in the next or previous month, " +
         "so the weeks need not add up to the month total."
       : "",
-    budget
+    budget && view.monthCap != null
       ? `A week may use a quarter of the month's ${formatDuration(view.monthCap)}; the month total is the ceiling for all of them.`
-      : "",
+      : budget
+        ? "Each week may use the cap beside it; this month has no overall cap."
+        : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -511,8 +516,14 @@ function weekSectionsHtml(view) {
  * hand, a Manual tag - the client sees up front which hours no transcript
  * measured.
  *
+ * The one exception is `view.notices`: the notes the person wrote on a
+ * `budgetExceptions` entry in config.json, printed under the heading of every
+ * PDF whose span touches it, because a budget that changed mid-month needs
+ * saying to whoever reads the figures. They are the person's own words; the
+ * engine never writes one.
+ *
  * `view` is `{ project, period, kind, today, days, categories, stats,
- * computer, weeks, monthCap, edgeLabel }`; `weeks` only for a month.
+ * computer, weeks, monthCap, edgeLabel, notices }`; `weeks` only for a month.
  */
 export function renderHtml(view) {
   const total = view.days.reduce((sum, day) => sum + day.seconds, 0);
@@ -579,6 +590,10 @@ export function renderHtml(view) {
     color: #6b7280; font-weight: 600; break-after: avoid;
   }
   .note { color: #6b7280; font-size: 8pt; margin: 5px 0 0; line-height: 1.4; }
+  .notice {
+    font-size: 9pt; line-height: 1.45; margin: 12px 0 0; padding: 7px 10px;
+    border-left: 2px solid #16181d; background: #f6f7f9;
+  }
 
   /* A week of a month: a band with its subtotal, the days beneath it. */
   .week-head {
@@ -666,6 +681,8 @@ export function renderHtml(view) {
   <h1>${name} - time tracking</h1>
   <div class="subtitle">${escapeHtml(view.period)}${view.computer ? ` · ${escapeHtml(view.computer)}` : ""}</div>
 </header>
+
+${(view.notices ?? []).map((note) => `<p class="notice">${escapeHtml(note)}</p>`).join("\n")}
 
 <div class="summary">${stats}</div>
 <p class="summary-line">${view.days.length} tracked ${view.days.length === 1 ? "day" : "days"} · average day ${formatDuration(average)}</p>
@@ -922,13 +939,16 @@ function render(job, context) {
   // one's alone for its own share. Weeks cross months, so the months either
   // side are read too.
   const caps = budgetCaps(config);
+  // The caps for this span: a week's from its Monday, a month's from its last
+  // day - an exception that lifts the month cap lifts it for the month's PDF.
+  const spanCaps = caps && capsOn(config, job.kind === "week" ? job.start : job.end);
   const reach =
     job.kind === "month"
       ? monthsOf(weekOf(job.start).start, weekOf(job.end).end)
       : monthsOf(job.start, job.end);
   const project = recordedDays(reach);
   const ownTotals = job.team ? null : recordedDays(reach, { only: computer.fileId });
-  const figures = spanFigures(project, job.start, job.end, job.kind === "week" ? caps?.week : caps?.month);
+  const figures = spanFigures(project, job.start, job.end, job.kind === "week" ? spanCaps?.week : spanCaps?.month);
   const total = days.reduce((sum, day) => sum + day.seconds, 0);
 
   let weeks = null;
@@ -936,7 +956,7 @@ function render(job, context) {
     // The note under a week's heading speaks for the PDF's own timesheet: the
     // client's is everyone's, a computer's is its own.
     const noteTotals = ownTotals ?? project;
-    weeks = weekRows(project, caps, job.month, ownTotals).map((row) => ({
+    weeks = weekRows(project, weekCaps(config), job.month, ownTotals).map((row) => ({
       ...row,
       beforeNote: row.before && { ...row.before, seconds: spanSeconds(noteTotals, row.before.start, row.before.end) },
       afterNote: row.after && { ...row.after, seconds: spanSeconds(noteTotals, row.after.start, row.after.end) },
@@ -954,8 +974,9 @@ function render(job, context) {
     stats: statsFor({ kind: job.kind, own, figures: caps ? figures : null, total, dayCount: days.length }),
     computer: own ? computerLabel(computer.fileId) : null,
     weeks,
-    monthCap: caps?.month ?? null,
+    monthCap: spanCaps?.month ?? null,
     edgeLabel: own ? "timesheet" : "PDF",
+    notices: exceptionNotes(config, job.start, job.end),
   });
 
   mkdirSync(CACHE_DIR, { recursive: true });
@@ -975,10 +996,12 @@ function render(job, context) {
   );
 
   const count = days.length;
-  const budget = caps
-    ? ` Project ${job.kind === "week" ? "week" : "month"}: ${formatDuration(figures.done)} of ` +
-      `${formatDuration(figures.cap)}, ${figures.left >= 0 ? `${formatDuration(figures.left)} left` : `${formatDuration(-figures.left)} over`}.`
-    : "";
+  const budget = !caps
+    ? ""
+    : figures.cap == null
+      ? ` Project ${job.kind === "week" ? "week" : "month"}: ${formatDuration(figures.done)}, no month cap.`
+      : ` Project ${job.kind === "week" ? "week" : "month"}: ${formatDuration(figures.done)} of ` +
+        `${formatDuration(figures.cap)}, ${figures.left >= 0 ? `${formatDuration(figures.left)} left` : `${formatDuration(-figures.left)} over`}.`;
   return (
     `${path.relative(process.cwd(), job.pdf)} - ${formatDuration(total)}, ` +
     `${count} tracked ${count === 1 ? "day" : "days"}.${budget}`
