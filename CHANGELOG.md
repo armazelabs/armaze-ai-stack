@@ -2,6 +2,21 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.9.0 - 2026-10-08
+
+### Added
+
+- **time-tracker** has an hour budget. Setup asks how many hours a month the project has — the whole team's budget, not each person's — and a week gets a quarter of it (160 a month is 40 a week). Weeks run Monday to Sunday, and the month is a hard ceiling too, so in a five-week month the last week gets whatever is left. It counts recorded hours from every timesheet in the checkout, measured and manual, after the multipliers. `node <tracking>/engine/budget.mjs` shows where this week and month stand.
+- **time-tracker** checks in with every session. Setup installs three hooks in the project's `.claude/settings.json`: a session start re-measures the hours and shows the week's and month's hours used and left, a session end re-measures so the timesheet stays current, and each prompt is refused once the week or month is used up — until the next Monday or the 1st. "update tracker" still works, and starting Claude Code with `TIME_TRACKER_OVERRIDE=1` lets work through. Hours past the budget are still recorded as measured; a collect warns and the log notes it once per week or month.
+
+- **time-tracker** has a check. Say **"check time tracker"** and it checks the project has the newest version, the monthly hours and multipliers are set, you and this computer are registered, the session hooks are installed and actually run, hours measure, the budget shows and a browser for PDFs is found - and fixes what it can by re-running setup, asking only for what it can't know (the monthly hours, a computer's name). After `aistack update`, say **"update time tracker setup"** to move a project to the new version the same way. A new setup ends with the check. Both phrases are upkeep: not counted as work, and they still work when the hours have run out. The README has step-by-step guides for a new setup and for updating.
+
+### Changed
+
+- **time-tracker** manual hours count toward the budget: an entry that would take its week or month over it is refused, with how much is left.
+- **time-tracker** counts subagent time that no main session covered at its own multiplier, `subagentMultiplier`, 1.2 by default (it was counted at its actual length).
+- **time-tracker** no longer asks for the hours multiplier: new installs record measured hours at 1.5. Existing installs keep theirs. Re-running setup on an existing install adds `subagentMultiplier`, installs the hooks (replacing the old SessionStart one), and asks for the monthly hours if the config has none.
+
 ## 0.8.1 - 2026-10-05
 
 ### Fixed
