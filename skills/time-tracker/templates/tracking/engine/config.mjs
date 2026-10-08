@@ -84,6 +84,28 @@ export function historyPath() {
 }
 
 /**
+ * Every config folder Claude Code may run from for this checkout: the default
+ * `~/.claude`, the repo's own `.claude-local` (a project may start Claude
+ * with CLAUDE_CONFIG_DIR pointing there) and any CLAUDE_CONFIG_DIR set now.
+ */
+function configRoots(repoRoot = REPO_ROOT) {
+  const roots = [path.join(homedir(), ".claude"), path.join(repoRoot, ".claude-local")];
+  if (process.env.CLAUDE_CONFIG_DIR) roots.push(process.env.CLAUDE_CONFIG_DIR);
+  return [...new Set(roots.map((root) => path.resolve(root)))];
+}
+
+/** Every place this project's transcripts may live; each is read and merged. */
+export function transcriptDirs(repoRoot = REPO_ROOT) {
+  const encoded = repoRoot.replaceAll("/", "-").replaceAll(".", "-");
+  return configRoots(repoRoot).map((root) => path.join(root, "projects", encoded));
+}
+
+/** Every prompt log that may hold this project's prompts. */
+export function historyPaths(repoRoot = REPO_ROOT) {
+  return configRoots(repoRoot).map((root) => path.join(root, "history.jsonl"));
+}
+
+/**
  * One timesheet per computer. Every such file carries the computer's name as
  * its id, as in `2026-09.studio-3f9a.md`, so no two computers ever write to
  * the same file and nothing they commit conflicts in git. Each computer is

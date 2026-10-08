@@ -52,11 +52,13 @@ import {
   TRACKING_DIR,
   currentComputer,
   historyPath,
+  historyPaths,
   loadConfig,
   monthFilePath,
   monthFilePattern,
   monthOf,
   transcriptDir,
+  transcriptDirs,
 } from "./config.mjs";
 import {
   FALLBACK_NAME,
@@ -710,15 +712,29 @@ export function collect({ write = true } = {}) {
   // update began, so those stretches are taken out before anything is
   // measured, and the prompts themselves never reach the evidence - a block
   // that holds nothing else gets no row to name.
-  const allPrompts = readPrompts();
+  const allPrompts = historyPaths()
+    .flatMap((file) => readPrompts(file))
+    .sort((a, b) => a.at - b.at);
   const exclusions = trackerStretches(allPrompts);
   const prompts = allPrompts.filter((prompt) => !isTrackerPrompt(prompt.text));
 
-  const { main: mainInstants, all, holes, sessions, openers } = readTimestamps(
-    transcriptDir(),
-    config.sentinel,
-    exclusions,
-  );
+  // Claude may run from more than one config folder for this checkout (see
+  // `transcriptDirs`), so read every folder's transcripts and merge them.
+  const mainInstants = [];
+  const all = [];
+  const holes = [];
+  const sessions = new Map();
+  const openers = new Map();
+  for (const dir of transcriptDirs()) {
+    const read = readTimestamps(dir, config.sentinel, exclusions);
+    for (const t of read.main) mainInstants.push(t);
+    for (const t of read.all) all.push(t);
+    for (const h of read.holes) holes.push(h);
+    for (const [key, value] of read.sessions) sessions.set(key, value);
+    for (const [key, value] of read.openers) openers.set(key, value);
+  }
+  mainInstants.sort((a, b) => a - b);
+  all.sort((a, b) => a - b);
   if (all.length === 0) {
     say(`No transcripts found under ${transcriptDir()}.`);
     return { config, computer, todayDay, months: new Map() };

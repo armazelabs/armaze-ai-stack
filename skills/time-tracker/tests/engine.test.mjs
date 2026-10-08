@@ -20,7 +20,12 @@ import {
   totalSeconds,
   uncoveredSeconds,
 } from "../templates/tracking/engine/blocks.mjs";
-import { computerLabel, monthFileIds } from "../templates/tracking/engine/config.mjs";
+import {
+  computerLabel,
+  historyPaths,
+  monthFileIds,
+  transcriptDirs,
+} from "../templates/tracking/engine/config.mjs";
 import {
   cutHoles,
   dayNeeds,
@@ -1108,5 +1113,26 @@ test("engineDrift lists changed, missing and left-over engine files", () => {
     assert.deepEqual(engineDrift(templates, engine), { changed: ["b.mjs"], missing: ["c.mjs"], extra: ["track.mjs"] });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("transcripts and prompts are read from ~/.claude, the repo's .claude-local and CLAUDE_CONFIG_DIR", () => {
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  try {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const dirs = transcriptDirs("/work/my.app");
+    assert.equal(dirs.length, 2);
+    assert.ok(dirs[0].endsWith(path.join(".claude", "projects", "-work-my-app")));
+    assert.equal(dirs[1], path.join("/work/my.app", ".claude-local", "projects", "-work-my-app"));
+
+    // Pointing CLAUDE_CONFIG_DIR at a folder already listed adds nothing.
+    process.env.CLAUDE_CONFIG_DIR = "/work/my.app/.claude-local";
+    assert.equal(transcriptDirs("/work/my.app").length, 2);
+
+    process.env.CLAUDE_CONFIG_DIR = "/elsewhere";
+    assert.equal(historyPaths("/work/my.app").at(-1), path.join("/elsewhere", "history.jsonl"));
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = saved;
   }
 });
