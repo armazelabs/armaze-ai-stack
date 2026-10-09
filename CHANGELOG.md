@@ -2,6 +2,25 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.11.0 - 2026-10-09
+
+**Project-management files now live in one folder, `project-management/`.** On each project: `aistack update`, then re-run `scaffold-folder-structure` if the project has a `project-management-log/`, say "update time tracker setup" in Claude Code, and commit the moved folders.
+
+### Changed
+
+- Every skill and agent keeps what it writes for project management under `project-management/` at the project root, spelled exactly that way. `skills/README.md` and `agents/README.md` make it the rule for new components.
+- **scaffold-folder-structure** creates `project-management/` instead of `project-management-log/`. Re-run on an older workspace, it moves `project-management-log/` into `project-management/` — never overwriting a file already there, and listing any clash to merge by hand — and rewrites the workspace's references to the old name.
+- **feedback-intake** writes to `project-management/feedback/`.
+- **time-tracker** always installs into `project-management/tracking/` and no longer reuses a `Project Management` or `project_management` folder. Setup moves a tracker it finds under any other folder there, and repoints the hooks in `.claude/settings.json`, the `time:*` npm scripts, the `.gitignore` cache entry and the tracking readme. If `project-management/tracking/` already holds something, it stops and asks for the two to be merged by hand. Check flags a tracker still in another folder, and `--fix` moves it.
+
+### Added
+
+- **time-tracker** budget exceptions: `budgetExceptions` in `config.json` sets a different week cap — and can lift the month cap — for a stretch of days the person chooses. The PDFs print each week's own cap, say "no month cap" where it is lifted, and carry the exception's `note`, in the person's words, under the heading of every PDF touching its months.
+
+### Fixed
+
+- **time-tracker** reads transcripts and prompts from every Claude config folder the project may run from — `~/.claude`, the repo's own `.claude-local`, and any `CLAUDE_CONFIG_DIR` — so time spent in a session started with its own config folder is no longer measured as a few stray minutes.
+
 ## 0.10.0 - 2026-10-08
 
 **Upgrade every computer on a project the same day.** A computer still on 0.9.0 cannot read the timesheets 0.10.0 writes. On each computer: `aistack update`, then say "update time tracker setup" in Claude Code, then commit and push the `tracking/` folder.
