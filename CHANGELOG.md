@@ -2,9 +2,16 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.12.0 - 2026-10-09
+
+**Run `aistack update` twice in each project this time.** The first run pulls 0.12.0; the second moves `scaffold-folder-structure` over to its new name, `research-workspace`. Commit the change. From 0.12.0 on, one run is enough.
+
+### Changed
+
+- **scaffold-folder-structure** is now **research-workspace**: the name says what it builds and looks after. What it does is unchanged. `aistack update` replaces the old copy in each project with the renamed skill — a symlinked install stays a symlink — and updates `.armaze-stack`. `aistack add scaffold-folder-structure` still works, with a note.
 
 ### Added
+
 
 - `aistack init` starts a project in an empty folder or a freshly cloned repo, with its own Claude login. It runs `git init`, writes a `.gitignore` that keeps secrets and the login out of git, and creates `.claude-local/`: the project's own Claude config. It copies in your global settings, skills, agents, commands and MCP servers, and reinstalls your plugins. It never copies your login. Then it opens Claude Code on `/project-kickoff`. Re-running it only fills gaps.
 - **project-kickoff** asks what you're building (website, SaaS, mobile app or a mix), the name, a one-line pitch and the stack, with more detail optional. Then it writes the project's AI layer, with no app code:
@@ -17,6 +24,14 @@ All notable changes to the Armaze AI Stack — the shared shelf of skills and ag
 
   It makes one commit and removes itself. The website stack defaults to Next.js, Tailwind and shadcn; the SaaS backend and the mobile stack are always asked.
 - The armaze plugin's `claude` uses a project's `.claude-local/` automatically anywhere inside the project, including its git worktrees. It ignores any `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` in your shell there, since those would override the project login. Run `ARMAZE_CLAUDE_GLOBAL=1 claude` to use your global setup instead.
+- **research-workspace** writes the UX visualization guide to `research/internal/product-knowledge/ux-research/ux-visualization-guide.md`: how to pick between task flows, user flows, journeys, experience maps, IA, sitemaps, personas, empathy maps and competitive analysis, and how to draw each. It is only written if missing, so re-run the skill on an existing workspace to get it.
+- **ux-visualization-assistant** carries the same guide built in, for projects without one. A project's own guide always wins.
+- `aistack update` follows renamed skills and agents: it installs the new name, removes the old copy and updates the manifest.
+- `aistack update` restarts itself when the pull brings a newer `aistack`, so the new version's rules apply in the same run.
+
+### Fixed
+
+- `aistack update` lists a renamed skill or agent as one removed and one added, instead of only the new name.
 
 ## 0.11.0 - 2026-10-09
 
