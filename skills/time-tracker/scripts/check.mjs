@@ -134,7 +134,11 @@ async function runChecks() {
   const trackingRel = path.relative(TARGET_ROOT, installed.dir);
   const engineDir = path.join(installed.dir, "engine");
   const engineRel = path.relative(TARGET_ROOT, engineDir);
-  add("ok", `Set up in ${trackingRel}/`);
+  if (trackingRel.split(path.sep).join("/") === "project-management/tracking") {
+    add("ok", `Set up in ${trackingRel}/`);
+  } else {
+    add("fail", `Set up in ${trackingRel}/ - every Armaze skill keeps its files in project-management/.`, true);
+  }
 
   // 2. Version.
   const drift = engineDrift(TEMPLATE_ENGINE, engineDir);

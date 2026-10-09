@@ -13,7 +13,7 @@ description: >
   type every unnamed day, ask about manual hours, re-render the monthly and
   whole-week PDFs with hours done, left and total - the computer's own, and
   one merged, anonymous client PDF with a week-by-week breakdown. Sets itself up in any project, in any language - no package.json or build tooling needed - inside
-  <project-management>/tracking/. Use for "set up time tracking", "add a time
+  project-management/tracking/. Use for "set up time tracking", "add a time
   tracker", "update tracker", "update tracking", "updatetracking", "how many
   hours have I worked", "label my time", "time tracking report", "log manual
   hours", "add 2h of design yesterday", "check time tracker", "update time
@@ -80,9 +80,10 @@ does.
 install is one - reach for the narrower modes only when the user asked for that
 piece specifically.
 
-Everything lives in one folder. Find it before doing anything but Setup:
-`<project-management>/tracking/`, where the project-management folder may be
-spelled `project-management`, `Project Management` or `project_management`. The
+Everything lives in one folder: `project-management/tracking/`, at the project
+root. Every Armaze skill keeps its files in `project-management/`, spelled
+exactly that way - never create or use another spelling. Setup moves a tracker
+it finds anywhere else (`project-management-log/tracking/`, say) into place. The
 engine is `<tracking>/engine/*.mjs`; below, `<engine>` means that path.
 
 ## Setup

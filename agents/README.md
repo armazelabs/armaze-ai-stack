@@ -28,3 +28,4 @@ Conventions:
 - Files and directories starting with `.` or `_`, and this `README.md`, are ignored by `aistack`.
 - `tools` and `model` follow the Claude Code sub-agent format; other platforms ignore keys they don't know, so it's safe to keep them.
 - Keep the agent self-contained — it is copied as a unit into other repos, so a directory agent must not reference anything outside its own folder.
+- Anything a component writes for project management - logs, feedback, decisions, time tracking - goes under `project-management/` at the target repo's root, spelled exactly that way. Never create `project-management-log/`, `Project Management/`, `project_management/` or a new top-level folder of your own for it.

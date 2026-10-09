@@ -28,3 +28,4 @@ Conventions:
 - Directories starting with `.` or `_` are ignored by `aistack` — use `_drafts/` for work in progress.
 - Keep the instructions platform-neutral. If a step only makes sense in one tool, say so in the text rather than depending on that tool's private format.
 - Don't reference files outside the skill directory; the directory is copied as a unit into other repos.
+- Anything a component writes for project management - logs, feedback, decisions, time tracking - goes under `project-management/` at the target repo's root, spelled exactly that way. Never create `project-management-log/`, `Project Management/`, `project_management/` or a new top-level folder of your own for it.

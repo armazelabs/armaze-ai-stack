@@ -37,6 +37,8 @@ bash .claude/skills/scaffold-folder-structure/scripts/scaffold.sh ./acme-platfor
 
 The script is **idempotent and non-destructive**: it `mkdir -p`s every folder and writes each file **only if it does not already exist**. Re-running never overwrites existing work - it fills in anything missing and reports how many files were created versus skipped.
 
+Project-management docs always live in `project-management/` - every Armaze skill and agent uses that exact folder name. A workspace scaffolded before that has a `project-management-log/` instead; the script folds it into `project-management/` (nothing already there is overwritten - a clash is left in place and reported) and rewrites the workspace's references to the old name. That is the one move the script makes.
+
 After running, confirm to the user which folders/files were created versus already present.
 
 ---
@@ -46,7 +48,7 @@ After running, confirm to the user which folders/files were created versus alrea
 The scaffold is **additive-only** and describes the documentation workspace, not the whole repository. When the target root is an existing project (it has `package.json`, `Gemfile`, `src/`, or any other application files):
 
 - **Never move, relocate, or reorganize existing files.** `package.json`, lockfiles, configs, and source folders stay exactly where developers expect them - at the repo root.
-- **Never create an `app/` (or similar) wrapper folder** to separate the code from the docs. The workspace folders (`research/`, `rules/`, `project-management-log/`, `feature.md`) are simply added alongside the existing files.
+- **Never create an `app/` (or similar) wrapper folder** to separate the code from the docs. The workspace folders (`research/`, `rules/`, `project-management/`, `feature.md`) are simply added alongside the existing files.
 - The structure diagram below shows only what the scaffold adds. An existing repo will have other files at `[root]/` - that is expected and correct.
 - If the user wants the docs kept separate from the code, scaffold **into a subfolder** by passing it as `target-root` (e.g. `./docs`) - still moving nothing.
 
@@ -81,7 +83,7 @@ The scaffold is **additive-only** and describes the documentation workspace, not
 │   ├── file-naming-rule.md
 │   ├── version-control-rule.md
 │   └── product-decision.md
-└── project-management-log/     Institutional memory
+└── project-management/         Institutional memory
     ├── CHANGELOG.md
     ├── decisionlog.md
     ├── meeting-notes/
@@ -94,7 +96,7 @@ The scaffold is **additive-only** and describes the documentation workspace, not
 
 ## Mandatory File Naming Rules
 
-These apply to every file and folder created or edited **inside the workspace tree** (`research/`, `rules/`, `project-management-log/`, `feature.md`, and the folder readmes the scaffold generates).
+These apply to every file and folder created or edited **inside the workspace tree** (`research/`, `rules/`, `project-management/`, `feature.md`, and the folder readmes the scaffold generates).
 
 1. **Kebab-case only.** Lowercase words separated by hyphens. No spaces, no underscores, no PascalCase, no camelCase. (e.g. `user-personas`, `feature-matrix.md`)
 2. **No capital letters** in workspace folder or file names (e.g. `feature-matrix.md`, not `Feature-Matrix.md`).
@@ -163,7 +165,7 @@ Decision and change log entries are added **inside** `decisionlog.md` / `CHANGEL
 
 ## Phase-Gated Workflow
 
-Work flows through these phases **in order**. Do not place content in a later phase's folder until the prior phase has sign-off. Log every phase-gate approval in `project-management-log/decisionlog.md`.
+Work flows through these phases **in order**. Do not place content in a later phase's folder until the prior phase has sign-off. Log every phase-gate approval in `project-management/decisionlog.md`.
 
 ```
 Phase 1 - Product Knowledge    research/internal/product-knowledge/          Sign-off: Product Lead
@@ -194,11 +196,11 @@ Phase 3 - UX Structure         research/internal/product-knowledge/          Sig
 | Module-specific research | `research/internal/product-knowledge/modules/[name]/research/` |
 | Information architecture | `research/internal/product-knowledge/information-architecture.md` |
 | Sitemap | `research/internal/product-knowledge/sitemap.md` |
-| Meeting notes | `project-management-log/meeting-notes/` |
-| Requirement updates | `project-management-log/requirement-updates/` |
-| Team / stakeholder feedback | `project-management-log/feedback/` |
-| Any decision made | `project-management-log/decisionlog.md` |
-| Any change to the project | `project-management-log/CHANGELOG.md` |
+| Meeting notes | `project-management/meeting-notes/` |
+| Requirement updates | `project-management/requirement-updates/` |
+| Team / stakeholder feedback | `project-management/feedback/` |
+| Any decision made | `project-management/decisionlog.md` |
+| Any change to the project | `project-management/CHANGELOG.md` |
 | Technical specs: design system, architecture, API contracts, implementation plans | **Not in the workspace tree.** These belong beside the code they describe (e.g. `design-system/`), because they are read by developers alongside the source and often ship with a hand-off. Log the *decision* in `decisionlog.md` and keep the *specification* with the code. |
 
 ---
@@ -235,7 +237,7 @@ If a master-doc sync skill is installed in the project, then after any create, e
 | `research/external/` | Researcher / Product Lead |
 | `research/internal/product-knowledge/ux-research/`, IA, sitemap | Lead Designer |
 | `research/internal/product-knowledge/modules/` | Product Lead |
-| `project-management-log/` | Product Lead |
+| `project-management/` | Product Lead |
 | `rules/` | Product Lead |
 
 ---
@@ -247,6 +249,6 @@ Running the script creates/ensures:
 - **The folder tree** of the workspace, with a purpose `README.md` in each content folder (`profiles/`, `overview/`, `user-personas/`, `ux-research/`, `meeting-notes/`, `requirement-updates/`).
 - **Root `README.md`** - structure, phase workflow, golden rules, naming conventions, and the routing table. If a lowercase `readme.md` already exists, that one is targeted instead and left untouched, so no case-duplicate pair is ever created; run `fix-file-casing.sh` to normalise it.
 - **`rules/` docs**: `file-naming-rule.md`, `version-control-rule.md`, `product-decision.md`.
-- **Seed living documents**: `feature.md`; the three `CHANGELOG.md` files (`research/`, `research/external/`, `research/internal/`); the competitor working docs (`feature-matrix.md`, `pricing-comparison.md`, `pain-points.md`, `opportunities.md`); `research/internal/product-knowledge/` `open-questions.md`, `information-architecture.md`, `sitemap.md`; `project-management-log/decisionlog.md` and `CHANGELOG.md`; a sample `feedback/date/01.feedback.md`; and the modules index at `research/internal/product-knowledge/modules/README.md`.
+- **Seed living documents**: `feature.md`; the three `CHANGELOG.md` files (`research/`, `research/external/`, `research/internal/`); the competitor working docs (`feature-matrix.md`, `pricing-comparison.md`, `pain-points.md`, `opportunities.md`); `research/internal/product-knowledge/` `open-questions.md`, `information-architecture.md`, `sitemap.md`; `project-management/decisionlog.md` and `CHANGELOG.md`; a sample `feedback/date/01.feedback.md`; and the modules index at `research/internal/product-knowledge/modules/README.md`.
 
 Generated docs use the project name passed to the script (or the directory name by default). Anything that already exists is left untouched.

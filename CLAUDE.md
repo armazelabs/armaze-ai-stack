@@ -104,7 +104,7 @@ Written to the root of the *target* repo by `manifest_upsert`, tab-separated: `t
 
 ## Component authoring
 
-Conventions for adding skills and agents are in `skills/README.md` and `agents/README.md` (kebab-case names matching the directory/file name, front matter with `name` + one-line `description`, self-contained because each component is copied as a unit). Verify a new component with `./bin/aistack list` and try it with `aistack add --link <name>` from a real project.
+Conventions for adding skills and agents are in `skills/README.md` and `agents/README.md` (kebab-case names matching the directory/file name, front matter with `name` + one-line `description`, self-contained because each component is copied as a unit). Anything a component writes for project management goes under `project-management/` in the target repo, spelled exactly that way — no `project-management-log/` or other variants; `scaffold-folder-structure` and `time-tracker` move older folders into it. Verify a new component with `./bin/aistack list` and try it with `aistack add --link <name>` from a real project.
 
 ## Git commits
 

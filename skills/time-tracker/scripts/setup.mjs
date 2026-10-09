@@ -4,7 +4,7 @@
 // Works on any project, in any language, with or without a package manifest -
 // the only dependency is Node itself, which Claude Code already ships with.
 //
-// Everything lives in one folder: <project-management>/tracking/. The engine
+// Everything lives in one folder: project-management/tracking/. The engine
 // goes in tracking/engine/ and is always re-synced, since it is generated code
 // nobody is meant to hand-edit. Project-owned files - config.json and the
 // readme - are written only if absent, so a project's own choices are never
@@ -34,6 +34,8 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -43,7 +45,7 @@ const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const TEMPLATES_DIR = path.join(SKILL_DIR, "templates");
 const TARGET_ROOT = process.cwd();
 
-const PM_NAME = /^project[-_ ]?management$/i;
+const PM_DIR = "project-management";
 const TRACKING_NAME = /^tracking$/i;
 
 function readTemplate(relativePath) {
@@ -235,18 +237,13 @@ function flagValue(name) {
 // --- folders -------------------------------------------------------------
 
 /**
- * Find the project-management folder, whatever it is called here, or create a
- * lowercase one. An existing `Project Management` or `project_management` is
- * reused as-is - renaming a folder a project already uses is not this script's
- * business.
- */
-/**
- * An existing install always wins over the naming convention.
+ * Every Armaze skill keeps its files in `project-management/` at the project
+ * root, spelled exactly that way.
  *
- * A project may keep its tracking folder under a name this script would never
- * have chosen - `project-management-log`, say. Matching on the name alone would
- * miss it and build a second, empty tracker beside the real one, so look for
- * the install itself first and only fall back to the name.
+ * An existing install is still looked for anywhere, not by name: a tracker set
+ * up under `project-management-log/` or `Project Management/` would otherwise
+ * be missed and a second, empty one built beside it. `relocateTracker` then
+ * moves it to where it belongs.
  */
 export function findInstalledTrackingDir() {
   for (const entry of entries(TARGET_ROOT)) {
@@ -263,13 +260,64 @@ export function findInstalledTrackingDir() {
   return null;
 }
 
-function resolveProjectManagementDir(installed) {
-  if (installed) return { dir: installed.pmDir, created: false };
+function sameDir(a, b) {
+  try {
+    const x = statSync(a);
+    const y = statSync(b);
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+}
 
-  const found = entries(TARGET_ROOT).find((entry) => entry.isDirectory() && PM_NAME.test(entry.name));
-  if (found) return { dir: path.join(TARGET_ROOT, found.name), created: false };
+/**
+ * Move an install found outside `project-management/tracking/` there. The
+ * whole tracking folder goes as one, history and all; the folder it leaves is
+ * removed only if that empties it. A folder that is already the right one
+ * under another casing (`Project-Management` on a case-insensitive disk) is
+ * just renamed. Exits rather than merge two trackers.
+ */
+function relocateTracker(installed) {
+  const pmDir = path.join(TARGET_ROOT, PM_DIR);
+  const dest = path.join(pmDir, "tracking");
+  if (installed.dir === dest) return { installed, movedFrom: null };
+  const movedFrom = path.relative(TARGET_ROOT, installed.dir);
 
-  const dir = path.join(TARGET_ROOT, "project-management");
+  if (sameDir(installed.pmDir, pmDir)) {
+    // Case-only renames need a stop in between on a case-insensitive disk.
+    const parentTemp = `${pmDir}.rename-${process.pid}`;
+    renameSync(installed.pmDir, parentTemp);
+    renameSync(parentTemp, pmDir);
+    const trackingNow = path.join(pmDir, path.basename(installed.dir));
+    if (trackingNow !== dest) {
+      const trackingTemp = `${dest}.rename-${process.pid}`;
+      renameSync(trackingNow, trackingTemp);
+      renameSync(trackingTemp, dest);
+    }
+    return { installed: { pmDir, dir: dest }, movedFrom };
+  }
+
+  if (existsSync(dest)) {
+    if (entries(dest).length > 0) {
+      console.error(`time-tracker setup: there is a tracker in ${movedFrom}/ and a ${PM_DIR}/tracking/ folder too.`);
+      console.error(`Merge them by hand into ${PM_DIR}/tracking/, remove ${movedFrom}/, then re-run setup.`);
+      process.exit(1);
+    }
+    rmSync(dest, { recursive: true });
+  }
+  mkdirSync(pmDir, { recursive: true });
+  renameSync(installed.dir, dest);
+  try {
+    rmdirSync(installed.pmDir);
+  } catch {
+    // Not empty - the rest of that folder is the project's own business.
+  }
+  return { installed: { pmDir, dir: dest }, movedFrom };
+}
+
+function resolveProjectManagementDir() {
+  const dir = path.join(TARGET_ROOT, PM_DIR);
+  if (existsSync(dir)) return { dir, created: false };
   mkdirSync(dir, { recursive: true });
   return { dir, created: true };
 }
@@ -310,13 +358,20 @@ function ensureFile(file, content) {
   return true;
 }
 
-function ensureGitignore(cacheRel) {
+function ensureGitignore(cacheRel, previousCacheRel) {
   const file = path.join(TARGET_ROOT, ".gitignore");
   const entry = `${cacheRel}/`;
 
   if (existsSync(file)) {
     const content = readFileSync(file, "utf8");
     if (content.split("\n").some((line) => line.trim() === entry)) return false;
+    // A tracker that moved keeps its comment and its place in the file.
+    const previous = previousCacheRel && `${previousCacheRel}/`;
+    if (previous && content.split("\n").some((line) => line.trim() === previous)) {
+      const lines = content.split("\n").map((line) => (line.trim() === previous ? entry : line));
+      writeFileSync(file, lines.join("\n"));
+      return true;
+    }
     const separator = content.length === 0 || content.endsWith("\n") ? "" : "\n";
     appendFileSync(file, `${separator}\n# time tracking - the evidence cache is scratch\n${entry}\n`);
     return true;
@@ -331,7 +386,7 @@ function ensureGitignore(cacheRel) {
  * package.json simply does not get them, and the direct `node` commands are
  * what the readme documents in every project.
  */
-function mergePackageScripts(engineRel) {
+function mergePackageScripts(engineRel, previousEngineRel) {
   const file = path.join(TARGET_ROOT, "package.json");
   if (!existsSync(file)) return { applicable: false, added: [], skipped: [] };
 
@@ -343,14 +398,18 @@ function mergePackageScripts(engineRel) {
   }
   pkg.scripts ??= {};
 
-  const wanted = {
-    "time:collect": `node ${shellPath(`${engineRel}/collect.mjs`)}`,
-    "time:report": `node ${shellPath(`${engineRel}/report.mjs`)}`,
-  };
+  const scriptsFor = (rel) => ({
+    "time:collect": `node ${shellPath(`${rel}/collect.mjs`)}`,
+    "time:report": `node ${shellPath(`${rel}/report.mjs`)}`,
+  });
+  const wanted = scriptsFor(engineRel);
+  // Scripts this skill wrote for a tracker that has since moved are its own to
+  // repoint; anything else under these names is the project's.
+  const previous = previousEngineRel ? scriptsFor(previousEngineRel) : {};
   const added = [];
   const skipped = [];
   for (const [key, value] of Object.entries(wanted)) {
-    if (!(key in pkg.scripts)) {
+    if (!(key in pkg.scripts) || pkg.scripts[key] === previous[key]) {
       pkg.scripts[key] = value;
       added.push(key);
     } else if (pkg.scripts[key] !== value) {
@@ -740,7 +799,10 @@ function main() {
     day: "2-digit",
   }).format(new Date());
 
-  const installed = findInstalledTrackingDir();
+  const found = findInstalledTrackingDir();
+  const relocated = found ? relocateTracker(found) : { installed: null, movedFrom: null };
+  const installed = relocated.installed;
+  const movedFromRel = relocated.movedFrom;
   // Read before anything is written: an install from before per-computer
   // timesheets is what gets migrated, and what gets `fullCountFrom`.
   const priorConfig = installed ? readJson(path.join(installed.dir, "config.json")) : undefined;
@@ -754,7 +816,7 @@ function main() {
     console.error("  --monthly-hours <hours>");
     process.exit(2);
   }
-  const pm = resolveProjectManagementDir(installed);
+  const pm = resolveProjectManagementDir();
   const tracking = resolveTrackingDir(pm.dir, installed);
   const trackingRel = path.relative(TARGET_ROOT, tracking.dir);
   const engineRel = path.join(trackingRel, "engine");
@@ -804,6 +866,7 @@ function main() {
       // or from before tasks carried a work type and manual hours existed.
       const text = readFileSync(readmePath, "utf8");
       return (
+        (movedFromRel !== null && text.includes(movedFromRel)) ||
         /track\.mjs|state\.json/.test(text) ||
         !text.includes("<YYYY-MM>.<computer>.md") ||
         !text.includes("Research & exploration") ||
@@ -819,8 +882,9 @@ function main() {
   const readmeRewritten = readmeStale;
   if (readmeRewritten) writeFileSync(readmePath, readmeContent);
   const readmeCreated = ensureFile(readmePath, readmeContent);
-  const gitignoreUpdated = ensureGitignore(cacheRel);
-  const scripts = mergePackageScripts(engineRel);
+  const previousRel = movedFromRel === null ? null : { engine: path.join(movedFromRel, "engine"), cache: path.join(movedFromRel, "cache") };
+  const gitignoreUpdated = ensureGitignore(cacheRel, previousRel?.cache);
+  const scripts = mergePackageScripts(engineRel, previousRel?.engine);
   const backfilled = configCreated
     ? { backfilled: false }
     : backfillTrackFrom(path.join(tracking.dir, "config.json"), trackFrom.day);
@@ -855,6 +919,9 @@ function main() {
   const stateRemoved = existsSync(legacyState);
   if (stateRemoved) rmSync(legacyState);
 
+  if (movedFromRel !== null) {
+    console.log(`- ${movedFromRel}/ -> ${trackingRel}/: moved - every Armaze skill keeps its files in ${PM_DIR}/`);
+  }
   console.log(
     `- ${path.relative(TARGET_ROOT, pm.dir)}/: ${pm.created ? "created" : "found, reused"}`,
   );

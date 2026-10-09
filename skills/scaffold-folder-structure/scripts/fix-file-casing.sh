@@ -56,7 +56,7 @@ cd "$ROOT"
 
 # The tree this skill governs. Application source, configs, and the tool
 # directories (.claude/, node_modules/) are deliberately out of scope.
-SCOPE_DIRS="research rules project-management-log design-system"
+SCOPE_DIRS="research rules project-management design-system"
 ROOT_FILES="feature.md"
 
 # Conventional spellings, keyed by their lowercase form. A file whose name

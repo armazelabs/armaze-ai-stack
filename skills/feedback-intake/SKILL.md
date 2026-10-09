@@ -5,7 +5,7 @@ description: Captures and standardizes project feedback into the one-file-per-da
 
 # Feedback Intake
 
-This skill is the single front door for feedback on the project. It turns raw input - a pasted comment, a meeting note, a FigJam board - into clean, categorized, deduplicated entries in the project's `project-management-log/feedback/` log, following the format defined in `project-management-log/feedback/README.md`.
+This skill is the single front door for feedback on the project. It turns raw input - a pasted comment, a meeting note, a FigJam board - into clean, categorized, deduplicated entries in the project's `project-management/feedback/` log, following the format defined in `project-management/feedback/README.md`.
 
 It never writes blind. Every entry is prepared as a draft, shown for review, and written only after approval. This draft-then-approve gate is the backbone of the workflow, not an optional step (mirrors the `update-competitor-profile` skill).
 
@@ -19,9 +19,9 @@ It never writes blind. Every entry is prepared as a draft, shown for review, and
 
 ## The Format (authoritative source: feedback readme)
 
-Always follow `project-management-log/feedback/README.md`. In short:
+Always follow `project-management/feedback/README.md`. In short:
 
-- **One file per date:** `project-management-log/feedback/YYYY-MM-DD.feedback.md`. Create it from the header template if it does not exist; otherwise append.
+- **One file per date:** `project-management/feedback/YYYY-MM-DD.feedback.md`. Create it from the header template if it does not exist; otherwise append.
 - **Entry id:** `F#NN - <date>`, `NN` sequential within that date's file (the running number and the date are kept visibly distinct).
 - **Fields per entry:** Time (optional), Reviewer, Source, Category (1+), Module / Area, Severity, Status, Feedback (verbatim where possible), Action taken, Related.
 - **Header Summary line:** keep the count current as you add entries.
@@ -40,7 +40,7 @@ This is the required order of operations.
 6. **Prepare the draft.** Show, for each proposed entry: the date file it lands in, the next id, all fields filled, the dedup result, and the updated header Summary. Do not touch any file yet.
 7. **Present the draft for review** and wait for explicit approval.
 8. **On approval, write.** Append entries to the correct dated file (creating it from the header template if absent), assign sequential ids, and update the Summary count. Then **upsert the Feedback Register** (`register.md`): add or update each item's row under its module's `##` section using the simplified 3-state status (Open / In Progress / Closed - mapping in the readme), and update the register's Summary counts. A status change to an existing entry updates both the dated file and its register row in the same pass.
-9. **Log the batch** in `project-management-log/CHANGELOG.md` as a Process entry when feedback intake is a notable project event (e.g. a full review session imported). Single ad-hoc entries do not each need a changelog row.
+9. **Log the batch** in `project-management/CHANGELOG.md` as a Process entry when feedback intake is a notable project event (e.g. a full review session imported). Single ad-hoc entries do not each need a changelog row.
 10. **Flag anything unverifiable** - unclear module, missing author, ambiguous severity - so a human can resolve it.
 
 If approval is not given, nothing is written. Revise and present again.
@@ -76,7 +76,7 @@ Severity from urgency language: blocker/broken -> Critical; minor/polish/would-b
 
 ## Deduplication
 
-Before drafting, search every `project-management-log/feedback/*.feedback.md` for the same **Module / Area** plus similar feedback text or source. On a match:
+Before drafting, search every `project-management/feedback/*.feedback.md` for the same **Module / Area** plus similar feedback text or source. On a match:
 
 - Mark the new entry `Status: Duplicate`, `Related: Duplicate of F#NN - YYYY-MM-DD`.
 - Add `Raised again on YYYY-MM-DD` under the original entry.
@@ -85,7 +85,7 @@ Recurring feedback stays visible without inflating counts. Call out near-duplica
 
 ## The Feedback Register
 
-`project-management-log/feedback/register.md` is the maintained, module-grouped overview of all feedback. Keep it in sync as part of every write (step 8): one row per item under its primary module's `##` section, with the simplified 3-state status and a link back to the dated entry. Cross-cutting items go under `Global`. When work begins on an item, set its register status to **In Progress** and put the `W-NNN` from the [Work Board](../../../project-management-log/work-board.md) in the `Work` column. See the readme for the full status mapping and column spec.
+`project-management/feedback/register.md` is the maintained, module-grouped overview of all feedback. Keep it in sync as part of every write (step 8): one row per item under its primary module's `##` section, with the simplified 3-state status and a link back to the dated entry. Cross-cutting items go under `Global`. When work begins on an item, set its register status to **In Progress** and put the `W-NNN` from the [Work Board](../../../project-management/work-board.md) in the `Work` column. See the readme for the full status mapping and column spec.
 
 ## Roll-Ups
 

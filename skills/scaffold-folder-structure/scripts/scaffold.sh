@@ -5,7 +5,7 @@
 # Builds a phase-gated product documentation structure organised around a
 # single research/ tree split into external (competitor/market-facing) and
 # internal (the product's own knowledge) research, plus a slim rules/ folder
-# and a project-management-log/ for institutional memory.
+# and a project-management/ for institutional memory.
 #
 # Idempotent and non-destructive:
 #   - Directories are created with `mkdir -p` (safe to re-run).
@@ -76,8 +76,49 @@ folder_readme() {
   fi
 }
 
+# merge_into <src-dir> <dest-dir>
+# Moves everything in src into dest, recursing into folders both have. Nothing
+# already in dest is overwritten - a clash is left where it is and reported.
+# src is removed once it is empty.
+merge_into() {
+  local src="$1" dst="$2" entry name
+  mkdir -p "$dst"
+  for entry in "$src"/* "$src"/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    if [ ! -e "$dst/$name" ] && [ ! -L "$dst/$name" ]; then
+      mv "$entry" "$dst/$name"
+    elif [ -d "$entry" ] && [ ! -L "$entry" ] && [ -d "$dst/$name" ]; then
+      merge_into "$entry" "$dst/$name"
+    else
+      echo "  Kept $entry - $dst/$name already exists, merge the two by hand."
+    fi
+  done
+  rmdir "$src" 2>/dev/null || true
+}
+
 echo "Scaffolding workspace \"$PROJECT\" at: $ROOT"
 echo ""
+
+# ---------------------------------------------------------------------------
+# Every Armaze skill keeps project-management docs in project-management/.
+# Workspaces scaffolded before that have a project-management-log/ instead:
+# fold it in, then point the workspace's own references at the new folder, so
+# a re-run never leaves two.
+# ---------------------------------------------------------------------------
+LEGACY_PM="project-management-log"
+if [ -d "$LEGACY_PM" ]; then
+  echo "Moving $LEGACY_PM/ into project-management/"
+  merge_into "$LEGACY_PM" "project-management"
+  for scope in research rules project-management design-system ./*.md .claude/settings.json package.json .gitignore; do
+    [ -e "$scope" ] || continue
+    grep -rlF "$LEGACY_PM" "$scope" 2>/dev/null || true
+  done | while IFS= read -r ref; do
+    sed -i.bak "s|$LEGACY_PM|project-management|g" "$ref" && rm -f "$ref.bak"
+    echo "  Updated references in $ref"
+  done
+  echo ""
+fi
 
 # ---------------------------------------------------------------------------
 # Container folders (no readme - they hold a changelog or seed docs instead)
@@ -86,7 +127,7 @@ mkdir -p \
   research/external/competitor-analysis \
   research/internal/product-knowledge/modules \
   rules \
-  project-management-log/feedback/date
+  project-management/feedback/date
 
 # ---------------------------------------------------------------------------
 # Folders that carry a purpose README
@@ -101,8 +142,8 @@ folder_readme "research/internal/product-knowledge/user-personas" "Persona profi
 folder_readme "research/internal/product-knowledge/ux-research"   "Usability tests, kickoff findings, moodboard references." "Phase 2 - Research."
 
 # Cross-phase institutional memory
-folder_readme "project-management-log/meeting-notes"      "Notes from every team meeting with decisions and actions." "Cross-phase. Owner: Product Lead."
-folder_readme "project-management-log/requirement-updates" "Changes to product requirements over time." "Cross-phase."
+folder_readme "project-management/meeting-notes"      "Notes from every team meeting with decisions and actions." "Cross-phase. Owner: Product Lead."
+folder_readme "project-management/requirement-updates" "Changes to product requirements over time." "Cross-phase."
 
 # ---------------------------------------------------------------------------
 # Root README.md - structure, phases, routing, golden rules
@@ -152,7 +193,7 @@ __ROOTNAME__/
 │   ├── file-naming-rule.md
 │   ├── version-control-rule.md
 │   └── product-decision.md
-└── project-management-log/     Institutional memory
+└── project-management/         Institutional memory
     ├── CHANGELOG.md
     ├── decisionlog.md
     ├── meeting-notes/
@@ -167,7 +208,7 @@ This tree shows only the documentation workspace. Application files (`package.js
 
 ## Phase-Gated Workflow
 
-Work flows through three phases in order. Nothing moves to a later phase until the prior phase has sign-off, and every gate approval is logged in `project-management-log/decisionlog.md`.
+Work flows through three phases in order. Nothing moves to a later phase until the prior phase has sign-off, and every gate approval is logged in `project-management/decisionlog.md`.
 
 ```
 Phase 1 - Product Knowledge    research/internal/product-knowledge/     Sign-off: Product Lead
@@ -197,11 +238,11 @@ Phase 3 - UX Structure         research/internal/product-knowledge/     Sign-off
 | Module-specific research | `research/internal/product-knowledge/modules/[name]/research/` |
 | Information architecture | `research/internal/product-knowledge/information-architecture.md` |
 | Sitemap | `research/internal/product-knowledge/sitemap.md` |
-| Meeting notes | `project-management-log/meeting-notes/` |
-| Requirement updates | `project-management-log/requirement-updates/` |
-| Team / stakeholder feedback | `project-management-log/feedback/` |
-| Any decision made | `project-management-log/decisionlog.md` |
-| Any change to the project | `project-management-log/CHANGELOG.md` |
+| Meeting notes | `project-management/meeting-notes/` |
+| Requirement updates | `project-management/requirement-updates/` |
+| Team / stakeholder feedback | `project-management/feedback/` |
+| Any decision made | `project-management/decisionlog.md` |
+| Any change to the project | `project-management/CHANGELOG.md` |
 
 ---
 
@@ -234,7 +275,7 @@ EOF
 write_if_absent "rules/file-naming-rule.md" <<'EOF'
 # File Naming Rule
 
-Consistent file naming keeps the project navigable as it grows. These rules apply to every file and folder created inside the workspace tree (`research/`, `rules/`, `project-management-log/`, `feature.md`).
+Consistent file naming keeps the project navigable as it grows. These rules apply to every file and folder created inside the workspace tree (`research/`, `rules/`, `project-management/`, `feature.md`).
 
 ---
 
@@ -309,7 +350,7 @@ How files are versioned across the project - covering documentation and assets.
 1. **Never overwrite.** Save a new version rather than overwriting the previous one.
 2. **Version numbers are in the file name** - not in the file content, not in a separate tracking document.
 3. **Only the latest version is "current"** - earlier versions are for reference, not active use.
-4. **Every new version needs a reason** - log significant version changes in `project-management-log/CHANGELOG.md`.
+4. **Every new version needs a reason** - log significant version changes in `project-management/CHANGELOG.md`.
 
 ---
 
@@ -352,14 +393,14 @@ How product decisions get made, recorded, and changed. Complements `file-naming-
 ## Principles
 
 - Product details (module names, features, user roles, business goals) are never inferred or assumed. They come directly from what the product owner provides. If a detail is unknown, leave a placeholder and flag it in `research/internal/product-knowledge/open-questions.md`.
-- Every decision is logged in `project-management-log/decisionlog.md` with date, owner, and reason.
+- Every decision is logged in `project-management/decisionlog.md` with date, owner, and reason.
 - Phase-gate approvals are decisions and must be logged the same way.
 
 ## Decision Workflow
 
 1. Raise the question - capture it in `open-questions.md` if not yet resolved.
 2. Decide - with the accountable owner.
-3. Record - add an entry to `project-management-log/decisionlog.md`.
+3. Record - add an entry to `project-management/decisionlog.md`.
 4. Propagate - update affected docs and note the change in the relevant changelog.
 
 ## What Counts as a Product Decision
@@ -622,7 +663,7 @@ A map of every screen in __PROJECT__ and how they connect. Useful for onboarding
 _To be defined once the information architecture is signed off (Phase 3)._
 EOF
 
-write_if_absent "project-management-log/decisionlog.md" <<'EOF'
+write_if_absent "project-management/decisionlog.md" <<'EOF'
 # Decision Log
 
 Every significant product or design decision made on the project, in chronological order.
@@ -648,7 +689,7 @@ Every significant product or design decision made on the project, in chronologic
 *(Add entries here as decisions are made. Every phase-gate approval must be logged here.)*
 EOF
 
-write_if_absent "project-management-log/CHANGELOG.md" <<'EOF'
+write_if_absent "project-management/CHANGELOG.md" <<'EOF'
 # Change Log
 
 A chronological record of every significant change to the product or project scope.
@@ -674,7 +715,7 @@ A chronological record of every significant change to the product or project sco
 *(Add entries here as changes are made.)*
 EOF
 
-write_if_absent "project-management-log/feedback/date/01.feedback.md" <<'EOF'
+write_if_absent "project-management/feedback/date/01.feedback.md" <<'EOF'
 # Feedback - 01
 
 > Sample feedback entry. Copy this file and increment the number (`02.feedback.md`, `03.feedback.md`, ...) for each new feedback note. Group files by date using the parent `date/` folder.
