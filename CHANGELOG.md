@@ -2,6 +2,15 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.14.0 - 2026-10-09
+
+**The research tree moves into `project-management/`.** This applies to new workspaces; one that already has `research/` at the project root keeps it there, and the skills keep using it. Run `aistack update` in each project.
+
+### Changed
+
+- **research-workspace** creates the research tree in `project-management/research/` instead of `research/`, so `project-management/` is the only folder it adds at the project root. The guide, routing table and seeded docs point there. A workspace with a root `research/` keeps that layout and gets no second tree.
+- **create-competitor-profile**, **update-competitor-profile**, **ux-visualization-assistant** (and its built-in guide) and **feedback-intake** read and write `project-management/research/`, falling back to a root `research/` where a project has one.
+
 ## 0.13.0 - 2026-10-09
 
 **Skills now write their documents in `project-management/`, not at the project root.** This applies to new projects; an existing project keeps its root files and the skills keep using them there. Run `aistack update` in each project.
