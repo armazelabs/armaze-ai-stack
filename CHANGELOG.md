@@ -2,6 +2,22 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.13.0 - 2026-10-09
+
+**Skills now write their documents in `project-management/`, not at the project root.** This applies to new projects; an existing project keeps its root files and the skills keep using them there. Run `aistack update` in each project.
+
+### Changed
+
+- Only what a tool looks for stays at the project root: `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`, `.gitignore`, `package.json`, and the release notes in `CHANGELOG.md`. Every other document a skill writes goes under `project-management/`. `skills/README.md` and `agents/README.md` make it the rule for new components.
+- **research-workspace** adds only `research/` and `project-management/` at the root. Its guide is `project-management/README.md`, so a repo's own `README.md` is never written; `feature.md` and `rules/` move to `project-management/feature.md` and `project-management/rules/`. A workspace that already has them at the root keeps that layout.
+- **project-kickoff** writes the product docs to `project-management/docs/` instead of `docs/`. In a project with several parts, each part's docs go in `project-management/docs/<part>/` (`web/`, `mobile/`) instead of `apps/<part>/docs/`; each part keeps its own `CLAUDE.md`. The `/plan` command and the `CLAUDE.md` it writes point there.
+- **code-to-figma** and **figma-to-code** keep `FIGMA.md`, a generated `DESIGN.md` and the `figma-library-keys.md` / `figma-screen-keys.md` registries in `project-management/design/`. A project with `FIGMA.md` at the root and a root `design/` keeps using them.
+- **ux-visualization-assistant** and **create-competitor-profile** point to the rules in `project-management/rules/`.
+
+### Fixed
+
+- **feedback-intake** refers to `CLAUDE.md` with its real spelling (`claude.md` is not found on a case-sensitive disk), and no longer links to a work board that nothing creates.
+
 ## 0.12.0 - 2026-10-09
 
 **Run `aistack update` twice in each project this time.** The first run pulls 0.12.0; the second moves `scaffold-folder-structure` over to its new name, `research-workspace`. Commit the change. From 0.12.0 on, one run is enough.
