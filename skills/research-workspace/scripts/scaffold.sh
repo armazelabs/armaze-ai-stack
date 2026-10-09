@@ -405,7 +405,7 @@ Start at `v1`. Never use `v0`, `draft`, `final`, `new`, or `latest` as version i
 
 - Commit frequently - at minimum, after completing each task.
 - Commit messages should be descriptive: `Add competitor profile for X` not `Update files`.
-- Use branch names in the format `[type]/[description]` - e.g., `docs/module-notes`, `__RESEARCH__/competitor-x`.
+- Use branch names in the format `[type]/[description]` - e.g., `docs/module-notes`, `research/competitor-x`.
 
 ---
 
@@ -887,7 +887,8 @@ modules/
     ├── [module-name].md   module definition: what it does, personas, design status, changelog
     ├── userflows.md       user and task flows for the module
     ├── notes.md           open questions, decisions log, research gaps
-    ├── __RESEARCH__/          individual research files (.md) - auto-synced to master-doc.md   (when research exists)
+    ├── research/          individual research files (.md) - auto-synced to master-doc.md   (when research exists)
+    │   └── screenshots/   JPEG screenshots the research files link to   (when research has screenshots)
     └── master-doc.md      auto-generated combined research document - do not edit manually  (when research exists)
 ```
 
@@ -895,7 +896,7 @@ modules/
 
 1. Create a subfolder named after the module in kebab-case (e.g., `onboarding`, `checkout`).
 2. Add `[module-name].md` with the module definition, `userflows.md` with its flows, and `notes.md` for open items.
-3. Add individual research files inside `__RESEARCH__/` - one topic per file. If a master-doc sync skill is installed, `master-doc.md` is generated automatically when files in `__RESEARCH__/` change. Do not edit it manually.
+3. Add individual research files inside `research/` - one topic per file, with any screenshots they link to in `research/screenshots/`. If a master-doc sync skill is installed, `master-doc.md` is generated automatically when files in `research/` change. Do not edit it manually.
 
 ## Current Modules
 
