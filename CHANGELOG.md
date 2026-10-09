@@ -2,6 +2,12 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.15.1 - 2026-10-09
+
+### Fixed
+
+- **research-workspace**: the modules README now shows a module's own `research/` folder. It used to show the full `project-management/research/` path there, in both the folder tree and the "How to Add a Module" steps. It also lists `research/screenshots/`, where product-teardown saves its screenshots. The version-control rule's example branch name is `research/competitor-x` again. Workspaces scaffolded earlier keep their old README, because the scaffold never overwrites a file. Fix those two lines by hand, or delete the README and run the scaffold again.
+
 ## 0.15.0 - 2026-10-09
 
 **New skill: product-teardown.** Add it to any project with `aistack add product-teardown`. It needs Orca.
