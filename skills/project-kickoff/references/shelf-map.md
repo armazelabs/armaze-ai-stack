@@ -21,6 +21,7 @@ unticked.
 | `skills/feedback-intake` | offered | ticked | ticked | Saves feedback under `project-management/feedback/`. |
 | `skills/create-competitor-profile` | offered | ticked | offered | Sourced profile of a new competitor. |
 | `skills/update-competitor-profile` | offered | ticked | offered | Proposes updates to existing profiles. |
+| `skills/product-teardown` | offered | offered | offered | Module-by-module research of a product, Figma file or app, with screenshots and every element. Needs Orca. |
 | `skills/changelog-generator` | offered | offered | ticked | Store release notes from commits. |
 | `skills/code-to-figma` | offered | offered | offered | Pushes built screens back into Figma. |
 | `skills/remove-ai-marks` | offered | offered | offered | Strips AI marks from text and images. |
