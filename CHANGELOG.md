@@ -2,6 +2,36 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.16.0 - 2026-10-09
+
+**New skill: site-to-figma.** Add it to any project with `aistack add site-to-figma`. It needs Orca and the Figma MCP server.
+
+### Added
+
+- **site-to-figma** reads a live website's design system in Orca's browser instead of redrawing it, and builds it into a Figma file. You give it a URL, and optionally a Figma file to build into (otherwise it makes a new one in your drafts). It scans that page plus three to five key pages, in parallel. From each one it takes:
+  - every colour, by where it is used
+  - the dark theme, when the site has one
+  - fonts and text styles
+  - spacing, radius, shadows and motion
+  - CSS variables, the logo and icons
+  - the site's own buttons, inputs, badges and cards with their hover and focus states
+- Near-identical colours are merged and named into a palette (`gray/50` to `gray/950`, `blue/500`, ...). Each colour then gets a meaning (`text/primary`, `surface/page`, `brand/primary`, `border/default`, ...), with a light and a dark value. You review the result before anything is written to Figma. Changes go into `overrides.json`, so they are kept on the next run.
+- In Figma it creates:
+  - variable collections: the raw palette, the colour meanings with Light and Dark modes, spacing and radius, and font families
+  - text styles, in the closest font Figma has, with the real one named
+  - shadow styles
+  - a documentation board
+  - the logo and icons as components
+  - Button, Input, Badge and Card component sets bound to all of these
+- It then captures the starting page into the same file with Figma's own capture, run inside Orca. It applies the text styles, shadow, radius and spacing tokens to the capture, and swaps its buttons for Button instances where it is sure.
+- Running it again updates the file in place. It changes values the site changed, keeps anything edited in Figma, and lists tokens that are no longer on the site without deleting them.
+- In the project it writes W3C design tokens (`tokens.json`), the review, screenshots and the raw scans under `project-management/design-system/<site>/`.
+- **project-kickoff** offers site-to-figma for every project type.
+
+### Changed
+
+- `skills/README.md` and `agents/README.md` now list everything on the shelf, with one line on what each does and what it needs. The root README points to these lists. When you add a component, give it a row there too.
+
 ## 0.15.1 - 2026-10-09
 
 ### Fixed
