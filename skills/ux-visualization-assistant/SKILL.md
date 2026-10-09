@@ -5,7 +5,7 @@ description: Helps teams choose and create the right UX visualization - user flo
 
 # UX Visualization Assistant
 
-Picks the right UX visualization for the goal at hand and generates it to the project standard. The single source of truth for method, shape, and selection is `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` - always read it first and follow it.
+Picks the right UX visualization for the goal at hand and generates it to the project standard. The single source of truth for method, shape, and selection is the project's guide at `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` - always read it first and follow it. When the project has none, use `references/ux-visualization-guide.md` in this skill's folder instead. The project's copy always wins: a team may have tuned it.
 
 ## Purpose
 
@@ -63,7 +63,7 @@ Trigger manually for: "generate a [artifact]", "review this [diagram]", "improve
 
 ## Best practices and constraints
 
-- Always read `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` first and follow it; if guide and request conflict, surface it.
+- Always read the guide first and follow it - the project's `research/internal/product-knowledge/ux-research/ux-visualization-guide.md`, or this skill's `references/ux-visualization-guide.md` when the project has none. If guide and request conflict, surface it.
 - Pick the shape that renders clearest - tables for matrices, Mermaid for flows; do not force everything into one form.
 - One artifact per goal; if the user needs several, generate them separately.
 - Ask exactly one clarifying question only when the artifact choice is genuinely ambiguous; otherwise recommend and proceed.

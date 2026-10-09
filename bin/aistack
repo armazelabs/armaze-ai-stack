@@ -12,6 +12,7 @@
 # Environment:
 #   ARMAZE_STACK_DIR   Path to the armaze-ai-stack checkout (default: the repo this script lives in)
 #   ARMAZE_NO_FZF      Set to 1 to always use the numbered picker instead of fzf
+#   ARMAZE_NO_PULL     Set to 1 to make update skip pulling the stack (update sets it when it restarts itself)
 #   ARMAZE_ICONS       Set to 0 for ASCII markers instead of Nerd Font glyphs
 #   ARMAZE_UI          1/0 to force the banner layout on/off (default: on when stdout is a terminal)
 #   ARMAZE_WIDTH       Width of the boxed layout in columns (default 100, never wider than the terminal)
@@ -24,6 +25,11 @@ setopt pipe_fail extended_glob typeset_silent
 readonly ARMAZE_VERSION="0.11.0"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(skills agents)
+# Components that were renamed, "type/old-name" -> new name. Entries stay for good: update
+# moves a project still on the old name over whenever it runs, and add accepts the old name.
+typeset -grA RENAMES=(
+  skills/scaffold-folder-structure research-workspace
+)
 
 ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:-${0:A:h:h}}"
 ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:A}"
@@ -32,6 +38,7 @@ typeset -ga SELECTED
 typeset -g  APP_ACTION=quit   # what the app decided: add | update | quit
 typeset -ga FR                # frame under construction while UI_CAPTURE=1
 typeset -gi UI_CAPTURE=0      # 1: ui_line/ui_edge append to FR instead of printing
+typeset -gi STACK_SELF_CHANGED=0  # 1: stack_pull brought a different bin/aistack than the one running
 
 # ---------------------------------------------------------------------------
 # Output helpers
@@ -394,6 +401,7 @@ stack_pull() {
     return 0
   fi
   ok "stack updated ${C_DIM}${before[1,7]} → ${after[1,7]}${C_RESET}"
+  git -C "$dir" diff --quiet "$before" "$after" -- bin/aistack || STACK_SELF_CHANGED=1
   stack_changes "$before" "$after"
 }
 
@@ -401,7 +409,7 @@ stack_pull() {
 stack_changes() {  # <from-rev> <to-rev>
   local from=$1 to=$2 file type name key mark   # (not `path` — that would shadow $PATH)
   local -A state
-  local -a files=("${(@f)$(git -C "$ARMAZE_STACK_DIR" diff --name-only "$from" "$to" -- "${TYPES[@]}" 2>/dev/null)}")
+  local -a files=("${(@f)$(git -C "$ARMAZE_STACK_DIR" diff --name-only --no-renames "$from" "$to" -- "${TYPES[@]}" 2>/dev/null)}")
   files=("${(@)files:#}")
   for file in "${files[@]}"; do
     type=${file%%/*}
@@ -572,6 +580,14 @@ manifest_upsert() {  # <target> <type> <name> <relpath>
   } > "$tmp" && mv -f -- "$tmp" "$file"
 }
 
+# Drop the row for <relpath> from the target's manifest.
+manifest_remove() {  # <target> <relpath>
+  local file="$1/$MANIFEST_NAME" rel=$2
+  [[ -f $file ]] || return 0
+  local tmp="$file.$$.tmp"
+  awk -F'\t' -v p="$rel" '/^#/ || $3 != p' "$file" > "$tmp" && mv -f -- "$tmp" "$file"
+}
+
 # ---------------------------------------------------------------------------
 # Selection
 # ---------------------------------------------------------------------------
@@ -580,7 +596,17 @@ manifest_upsert() {  # <target> <type> <name> <relpath>
 resolve_name() {  # <arg> <allowed types...>
   local arg=$1; shift
   local -a allowed=("$@")
-  local type
+  local type renamed
+
+  # A renamed component still answers to its old name, with a note (on stderr: callers
+  # read stdout through $(...)).
+  for renamed in "${(@k)RENAMES}"; do
+    if [[ $arg == ${renamed#*/} || $arg == $renamed || $arg == ${${renamed%%/*}%s}/${renamed#*/} ]]; then
+      info "${renamed#*/} is now called ${RENAMES[$renamed]}" >&2
+      arg="${renamed%%/*}/${RENAMES[$renamed]}"
+      break
+    fi
+  done
 
   if [[ $arg == */* ]]; then
     type=${arg%%/*}; type=${type%s}s
@@ -1193,11 +1219,35 @@ cmd_update() {
   do_update
 }
 
+# Move one manifest entry from a renamed component's old name to its new one: install the
+# new name beside the old copy (a link stays a link), remove the old copy, swap the row.
+# Reads $target from the caller. Returns 0 moved, 1 failed.
+migrate_renamed() {  # <type> <old-name> <relpath>
+  local type=$1 old=$2 rel=$3
+  local new=${RENAMES[$type/$old]}
+  local newrel="${rel:h}/$(dest_leaf "$type" "$new")"
+  local olddest="$target/$rel" newdest="$target/$newrel" mode=copy
+  [[ -L $olddest ]] && mode=link
+  install_one "$type" "$new" "$newdest" 1 "$mode" || return 1
+  rm -rf -- "$olddest"
+  manifest_remove "$target" "$rel"
+  manifest_upsert "$target" "$type" "$new" "$newrel"
+  ok "$(type_singular $type) $old is now ${C_BOLD}$new${C_RESET} — removed $(pretty_path "$olddest")"
+}
+
 # Pull the stack, then re-copy whatever $target's manifest records.
 do_update() {
   # 1. The stack: pull whatever is new (warns and carries on if it can't).
-  stack_pull
-  print
+  if [[ -z ${ARMAZE_NO_PULL:-} ]]; then
+    stack_pull
+    print
+    # zsh has already read this script, so a pull that changed it would leave the new
+    # update rules (renamed components, say) for the next run. Hand the project step to
+    # the new script instead, as plain output below whatever is on screen.
+    if (( STACK_SELF_CHANGED )); then
+      ARMAZE_NO_PULL=1 ARMAZE_PICKER=menu ARMAZE_UI=0 exec "$ARMAZE_STACK_DIR/bin/aistack" update --to "$target"
+    fi
+  fi
 
   # 2. This project: re-copy what its manifest records.
   local manifest="$target/$MANIFEST_NAME"
@@ -1219,6 +1269,10 @@ do_update() {
     IFS=$'\t' read -r type name rel rest <<< "$line"
     if [[ -z $type || -z $name || -z $rel ]]; then
       warn "skipping malformed manifest line: $line"; (( failed += 1 )); continue
+    fi
+    if [[ -n ${RENAMES[$type/$name]:-} ]]; then
+      if migrate_renamed "$type" "$name" "$rel"; then (( updated += 1 )); else (( failed += 1 )); fi
+      continue
     fi
     dest="$target/$rel"
     src=$(component_src "$type" "$name")

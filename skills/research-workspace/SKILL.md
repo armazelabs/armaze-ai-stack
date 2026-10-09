@@ -1,11 +1,11 @@
 ---
-name: scaffold-folder-structure
-description: Scaffolds and enforces a product-design / documentation workspace for any project, organised around a research/ tree split into external (competitor) and internal (product-knowledge) research. Invoke to build the full folder tree (per-folder READMEs, rules docs, and seed living documents) or to look up where a file belongs and how it must be named. Use whenever setting up a new project workspace, adding files, or checking a naming, placement, or phase rule. Works for any product; the project name is configurable.
+name: research-workspace
+description: Sets up and looks after the product research workspace for any project - a research/ tree split into internal (product knowledge) and external (competitor and market) research, worked through in signed-off phases, plus project-management/, rules/ and feature.md. Invoke to build the workspace (per-folder READMEs, rules docs, seed living documents and the UX visualization guide) or to look up where a file belongs and how it must be named. Use whenever setting up a new project workspace, adding files to it, or checking a naming, placement or phase rule. Works for any product; the project name is configurable.
 ---
 
-# Scaffold Folder Structure
+# Research Workspace
 
-This skill is a reusable, project-agnostic **product-design and documentation workspace** scaffold. It does two things:
+This skill sets up and looks after a reusable, project-agnostic **product research workspace**. It does two things:
 
 1. **Scaffolds** the entire folder structure automatically - every folder, its README, the root `README.md` guide, the `rules/` documents, and the seed living documents (feature inventory, changelogs, open questions, decision log, modules index).
 2. **Enforces** every naming rule, routing rule, phase gate, and golden rule below whenever files are created, moved, or named **inside the workspace tree**. It never renames or moves existing files, and repo-level conventional files (`README.md`, `CLAUDE.md`, `package.json`, etc.) are out of scope - see the exceptions under the naming rules and the coexistence rule below.
@@ -19,7 +19,7 @@ The structure encodes a proven workflow: product knowledge -> research -> UX str
 When the user asks to set up, recreate, scaffold, or repair the workspace, run the bundled script:
 
 ```bash
-bash .claude/skills/scaffold-folder-structure/scripts/scaffold.sh [target-root] [project-name]
+bash .claude/skills/research-workspace/scripts/scaffold.sh [target-root] [project-name]
 ```
 
 - `target-root` - where to build the structure. Defaults to the current directory.
@@ -29,10 +29,10 @@ Examples:
 
 ```bash
 # Scaffold the current directory, project name = current folder name
-bash .claude/skills/scaffold-folder-structure/scripts/scaffold.sh
+bash .claude/skills/research-workspace/scripts/scaffold.sh
 
 # Scaffold a new project folder with an explicit display name
-bash .claude/skills/scaffold-folder-structure/scripts/scaffold.sh ./acme-platform "Acme Platform"
+bash .claude/skills/research-workspace/scripts/scaffold.sh ./acme-platform "Acme Platform"
 ```
 
 The script is **idempotent and non-destructive**: it `mkdir -p`s every folder and writes each file **only if it does not already exist**. Re-running never overwrites existing work - it fills in anything missing and reports how many files were created versus skipped.
@@ -76,6 +76,7 @@ The scaffold is **additive-only** and describes the documentation workspace, not
 │           ├── modules/                 Per-module workspace (definition, userflows, notes, research)
 │           ├── user-personas/
 │           ├── ux-research/             Kickoff findings, moodboard references
+│           │   └── ux-visualization-guide.md   How UX artifacts are chosen and drawn
 │           ├── open-questions.md
 │           ├── information-architecture.md
 │           └── sitemap.md
@@ -132,8 +133,8 @@ The second is invisible to any filesystem scan - the only way to detect it is to
 Both are automated by the bundled script:
 
 ```bash
-bash .claude/skills/scaffold-folder-structure/scripts/fix-file-casing.sh            # report only
-bash .claude/skills/scaffold-folder-structure/scripts/fix-file-casing.sh . --fix    # repair
+bash .claude/skills/research-workspace/scripts/fix-file-casing.sh            # report only
+bash .claude/skills/research-workspace/scripts/fix-file-casing.sh . --fix    # repair
 ```
 
 It scans the workspace tree only, skips the conventional uppercase filenames listed above, stages the renames, and never commits - review with `git status` and commit yourself. Run it after any bulk file creation, and before handing the repo to anyone on Linux.
@@ -249,6 +250,6 @@ Running the script creates/ensures:
 - **The folder tree** of the workspace, with a purpose `README.md` in each content folder (`profiles/`, `overview/`, `user-personas/`, `ux-research/`, `meeting-notes/`, `requirement-updates/`).
 - **Root `README.md`** - structure, phase workflow, golden rules, naming conventions, and the routing table. If a lowercase `readme.md` already exists, that one is targeted instead and left untouched, so no case-duplicate pair is ever created; run `fix-file-casing.sh` to normalise it.
 - **`rules/` docs**: `file-naming-rule.md`, `version-control-rule.md`, `product-decision.md`.
-- **Seed living documents**: `feature.md`; the three `CHANGELOG.md` files (`research/`, `research/external/`, `research/internal/`); the competitor working docs (`feature-matrix.md`, `pricing-comparison.md`, `pain-points.md`, `opportunities.md`); `research/internal/product-knowledge/` `open-questions.md`, `information-architecture.md`, `sitemap.md`; `project-management/decisionlog.md` and `CHANGELOG.md`; a sample `feedback/date/01.feedback.md`; and the modules index at `research/internal/product-knowledge/modules/README.md`.
+- **Seed living documents**: `feature.md`; the three `CHANGELOG.md` files (`research/`, `research/external/`, `research/internal/`); the competitor working docs (`feature-matrix.md`, `pricing-comparison.md`, `pain-points.md`, `opportunities.md`); `research/internal/product-knowledge/` `open-questions.md`, `information-architecture.md`, `sitemap.md`; the UX visualization guide at `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` (read first by `ux-visualization-assistant`; this copy wins over the one built into that skill); `project-management/decisionlog.md` and `CHANGELOG.md`; a sample `feedback/date/01.feedback.md`; and the modules index at `research/internal/product-knowledge/modules/README.md`.
 
 Generated docs use the project name passed to the script (or the directory name by default). Anything that already exists is left untouched.

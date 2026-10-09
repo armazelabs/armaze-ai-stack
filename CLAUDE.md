@@ -109,6 +109,10 @@ Written to the root of the *target* repo by `manifest_upsert`, tab-separated: `t
 
 `cmd_update` is two steps: `stack_pull`, then the manifest loop (skipped with an info line when the target has no manifest, so `update` is useful from any directory). `stack_pull` runs `git pull --ff-only` on the checkout — when it can't (not a git checkout, no upstream, local edits, diverged) it *warns and returns 1* and the re-copy proceeds with the checkout as it is; it never dies. On a successful pull, `stack_changes` diffs `skills/` and `agents/` between the old and new HEAD and classifies each touched component as added / changed / removed by whether its `component_doc_rel` file exists at each revision. Hidden, `_`-prefixed and `README` names are skipped, matching the discovery rules.
 
+A pull that changes `bin/aistack` sets `STACK_SELF_CHANGED`; `do_update` then `exec`s the new script for the manifest step (`ARMAZE_NO_PULL=1`, and `ARMAZE_PICKER=menu ARMAZE_UI=0` so it prints plainly below the app). zsh has already read the running script, so without this, new update rules would only apply on the next run. `stack_changes` uses `--no-renames` so a renamed component shows as one removed and one added.
+
+Renaming a component: `git mv` it, then add `type/old-name new-name` to the `RENAMES` map at the top of `bin/aistack` and never remove the entry. In the manifest loop, a row under an old name goes through `migrate_renamed`: it installs the new name next to the old one (a symlink stays a symlink), deletes the old copy and swaps the manifest row (`manifest_remove` + `manifest_upsert`). `resolve_name` maps the old name with a note on stderr, so `aistack add <old-name>` still works.
+
 ## Conventions for scripts
 
 - Start scripts with `emulate -R zsh` then `setopt` only what's needed (`pipe_fail extended_glob typeset_silent`). Don't enable `err_exit`; errors are handled explicitly via `die`/return codes.
@@ -121,7 +125,7 @@ Written to the root of the *target* repo by `manifest_upsert`, tab-separated: `t
 
 ## Component authoring
 
-Conventions for adding skills and agents are in `skills/README.md` and `agents/README.md` (kebab-case names matching the directory/file name, front matter with `name` + one-line `description`, self-contained because each component is copied as a unit). Anything a component writes for project management goes under `project-management/` in the target repo, spelled exactly that way — no `project-management-log/` or other variants; `scaffold-folder-structure` and `time-tracker` move older folders into it. Verify a new component with `./bin/aistack list` and try it with `aistack add --link <name>` from a real project.
+Conventions for adding skills and agents are in `skills/README.md` and `agents/README.md` (kebab-case names matching the directory/file name, front matter with `name` + one-line `description`, self-contained because each component is copied as a unit). Anything a component writes for project management goes under `project-management/` in the target repo, spelled exactly that way — no `project-management-log/` or other variants; `research-workspace` and `time-tracker` move older folders into it. Verify a new component with `./bin/aistack list` and try it with `aistack add --link <name>` from a real project.
 
 ## Git commits
 
