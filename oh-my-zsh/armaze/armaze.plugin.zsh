@@ -16,11 +16,41 @@ if [[ -d "$ARMAZE_STACK_DIR/bin" ]]; then
   typeset -U path
 fi
 
+# Inside a project set up by `aistack init`, run claude with that project's own
+# config dir (.claude-local), so it has its own login and settings. Variables
+# that would override the login are dropped. Pass-through everywhere else, when
+# CLAUDE_CONFIG_DIR is already set, or with ARMAZE_CLAUDE_GLOBAL=1.
+if (( ! $+aliases[claude] && ! $+functions[claude] )); then
+  function claude {
+    emulate -L zsh
+    local d=$PWD root='' common=''
+    if [[ -z ${ARMAZE_CLAUDE_GLOBAL:-} && -z ${CLAUDE_CONFIG_DIR:-} ]]; then
+      while [[ $d != / && $d != $HOME ]]; do
+        if [[ -d $d/.claude-local ]]; then root=$d; break; fi
+        d=${d:h}
+      done
+      # A git worktree shares the main checkout's login.
+      if [[ -z $root ]] && common=$(command git rev-parse --git-common-dir 2>/dev/null); then
+        common=${common:A:h}
+        [[ $common != $HOME && -d $common/.claude-local ]] && root=$common
+      fi
+    fi
+    if [[ -z $root ]] || (( ! $+commands[claude] )); then
+      command claude "$@"
+      return
+    fi
+    [[ -t 2 ]] && print -ru2 -- $'\e[2m'"claude: project login (${root/#$HOME/~}/.claude-local)"$'\e[0m'
+    env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
+      CLAUDE_CONFIG_DIR="$root/.claude-local" claude "$@"
+  }
+fi
+
 _aistack() {
   local -a subcmds=(
     'list:List available skills and agents'
     'add:Add skills/agents to the current repo'
     'update:Pull the latest stack, then refresh this repo'
+    'init:Start a project here, with its own Claude login'
     'root:Print the stack checkout path'
     'help:Show help'
     'version:Show version'
@@ -52,6 +82,14 @@ _aistack() {
     update|upgrade)
       _arguments \
         '(-t --to)'{-t,--to}'[target repo]:dir:_directories'
+      ;;
+    init)
+      _arguments \
+        '(-t --to)'{-t,--to}'[folder to set up]:dir:_directories' \
+        '--no-carry[do not copy global settings, skills and MCP servers]' \
+        '--no-plugins[do not reinstall global plugins]' \
+        '(--no-launch)--launch[open Claude into /project-kickoff at the end]' \
+        '(--launch)--no-launch[only set up]'
       ;;
   esac
 }

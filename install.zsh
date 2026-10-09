@@ -156,4 +156,5 @@ print
 print -r -- "${C_BOLD}Next:${C_RESET} reload your shell (exec zsh) if the one-liner hasn't, then try"
 print -r -- "    aistack list                          what the stack offers"
 print -r -- "    cd ~/your-project && aistack add      pick skills to add"
+print -r -- "    cd ~/new-folder && aistack init       start a project with its own Claude login"
 print -r -- "    aistack update                        pull the latest stack and refresh a project"

@@ -38,6 +38,7 @@ aistack add --force             # overwrite anything already there without askin
 aistack add --link              # symlink instead of copy — for developing a skill against a real repo
 
 aistack update                  # the app on its update tab; ⏎ pulls the stack and re-copies what this repo added
+aistack init                    # start a new project here, with its own Claude login (see below)
 aistack help                    # the app on its help tab
 
 aistack --version               # which release you have (see CHANGELOG.md); also -v or version
@@ -69,6 +70,45 @@ Without a terminal on both ends — piped output, scripts, `list --names`, `add 
 | `ARMAZE_ICONS=0` | ASCII markers instead of Nerd Font glyphs |
 | `ARMAZE_UI=0` | Plain output even on a terminal (`=1` forces the layout when piped) |
 | `NO_COLOR=1` | No colour; `CLICOLOR_FORCE=1` keeps colour when piped |
+
+### Start a new project
+
+```zsh
+mkdir ~/Projects/my-app && cd ~/Projects/my-app     # or a freshly cloned, empty repo
+aistack init
+```
+
+`aistack init` gets an empty folder ready in one go, then opens Claude Code on the `project-kickoff` skill:
+
+1. `git init` if it isn't a repo yet, and a `.gitignore` that keeps `.claude-local/`, `.env*` (except `.env.example`), `*.pem` and `.claude/settings.local.json` out of git.
+2. `.claude-local/`: the project's **own Claude config folder**, so the project has its own login, separate from your global `~/.claude` one.
+3. Your global setup is copied in: `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json`, your skills, agents and commands, and your user-level MCP servers. Your enabled plugins are reinstalled (that needs the network). **Your login, history and sessions are never copied.**
+4. The `project-kickoff` skill goes into `.claude/skills/`, then Claude starts on `/project-kickoff`. Sign in when it asks; that login belongs to this project only.
+
+The kickoff asks what you're building (website, SaaS, mobile app, or a mix), its name, a one-line pitch and the stack, with more detail optional. Then it writes the AI layer, but no app code:
+
+- `CLAUDE.md`, with `AGENTS.md` linked to it so other tools read the same rules.
+- Product docs in `docs/`, and plans and a decisions log in `project-management/`.
+- Project `.claude/` settings that block reading secrets, plus `/plan` and `/decision` commands.
+- A `.mcp.json` with the servers for your stack.
+- The Armaze skills that fit, from a pre-ticked list you can trim.
+
+It never overwrites a file, makes one commit (`Project kickoff: <name>`), and removes itself. Re-running `aistack init` is safe: it only fills what's missing.
+
+| Option | Effect |
+|--------|--------|
+| `--to DIR` | Set up another folder instead of the current one |
+| `--no-carry` | Start with an empty Claude config: no global settings, skills or MCP servers |
+| `--no-plugins` | Copy settings but don't reinstall plugins |
+| `--no-launch` / `--launch` | Don't (or do) open Claude at the end. The default is to open it in a terminal |
+
+### Project logins
+
+With the armaze plugin loaded, `claude` checks whether you're inside a project that has a `.claude-local/` folder, including any subfolder or git worktree of it. If so, it runs with that folder as its config, so you get that project's login, settings and history. It also drops `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, which would otherwise override the project login. Everywhere else, `claude` behaves as usual.
+
+- `ARMAZE_CLAUDE_GLOBAL=1 claude` uses your global setup for one run. A `CLAUDE_CONFIG_DIR` you set yourself always wins.
+- Without the plugin, use `CLAUDE_CONFIG_DIR=.claude-local claude`.
+- Only the terminal `claude` uses project logins, including VS Code's built-in terminal. The Desktop app and the IDE extensions keep using your global login.
 
 ### Keeping up to date
 

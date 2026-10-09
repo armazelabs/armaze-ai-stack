@@ -2,6 +2,22 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- `aistack init` starts a project in an empty folder or a freshly cloned repo, with its own Claude login. It runs `git init`, writes a `.gitignore` that keeps secrets and the login out of git, and creates `.claude-local/`: the project's own Claude config. It copies in your global settings, skills, agents, commands and MCP servers, and reinstalls your plugins. It never copies your login. Then it opens Claude Code on `/project-kickoff`. Re-running it only fills gaps.
+- **project-kickoff** asks what you're building (website, SaaS, mobile app or a mix), the name, a one-line pitch and the stack, with more detail optional. Then it writes the project's AI layer, with no app code:
+  - `CLAUDE.md`, with `AGENTS.md` linked to it;
+  - product docs in `docs/`;
+  - plans and decisions in `project-management/`;
+  - `.claude/` settings that block reading secrets, plus `/plan` and `/decision` commands;
+  - `.mcp.json` for the chosen stack;
+  - the shelf skills that fit, from a pre-ticked list.
+
+  It makes one commit and removes itself. The website stack defaults to Next.js, Tailwind and shadcn; the SaaS backend and the mobile stack are always asked.
+- The armaze plugin's `claude` uses a project's `.claude-local/` automatically anywhere inside the project, including its git worktrees. It ignores any `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` in your shell there, since those would override the project login. Run `ARMAZE_CLAUDE_GLOBAL=1 claude` to use your global setup instead.
+
 ## 0.11.0 - 2026-10-09
 
 **Project-management files now live in one folder, `project-management/`.** On each project: `aistack update`, then re-run `scaffold-folder-structure` if the project has a `project-management-log/`, say "update time tracker setup" in Claude Code, and commit the moved folders.

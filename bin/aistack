@@ -6,6 +6,7 @@
 #   aistack add  [--to DIR] [--platform claude|generic] [--skills-dir DIR] [--agents-dir DIR]
 #               [--skills] [--agents] [--force] [--link] [NAME ...]
 #   aistack update [--to DIR]
+#   aistack init [--to DIR] [--no-carry] [--no-plugins] [--launch|--no-launch]
 #   aistack root | help | version        (also: -h/--help, -v/--version)
 #
 # Environment:
@@ -306,6 +307,7 @@ ${C_BOLD}Usage${C_RESET}
   aistack list [skills|agents] [--names]   List what the stack offers
   aistack add [options] [NAME ...]         Add components to a repo (the app if no NAME)
   aistack update [--to DIR]                Pull the latest stack, then refresh this project
+  aistack init [options]                   Start a project here, with its own Claude login
   aistack root                             Print the stack checkout path
   aistack help | -h | --help               Show this help
   aistack version | -v | --version         Print the CLI version
@@ -330,6 +332,15 @@ ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
   Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies.
   In a terminal it opens the app's update tab; enter runs it. Piped or scripted, it just runs.
+
+${C_BOLD}init options${C_RESET}
+  -t, --to DIR            Folder to set up (default: the current directory)
+      --no-carry          Don't copy your global settings, skills, agents and MCP servers
+      --no-plugins        Don't reinstall your global plugins (that needs the network)
+      --launch            Open Claude into /project-kickoff at the end (default in a terminal)
+      --no-launch         Only set up; start Claude yourself
+  Makes .claude-local/ (gitignored) the project's own Claude config, so it has its own login.
+  In the project the armaze plugin runs claude with it; ARMAZE_CLAUDE_GLOBAL=1 opts out.
 
 ${C_BOLD}Layouts${C_RESET}
   claude    .claude/skills/<name>/    .claude/agents/<name>.md
@@ -1233,6 +1244,261 @@ do_update() {
   (( failed == 0 ))
 }
 
+# ---------------------------------------------------------------------------
+# init: a project with its own Claude login
+# ---------------------------------------------------------------------------
+
+# Print the value of a top-level object key from pretty-printed JSON (2-space
+# indent, as Claude Code writes ~/.claude.json and settings.json), with the
+# indentation it has at the top level. Fails when the key is missing or its
+# block doesn't close where expected.
+json_top_block() {  # <file> <key>
+  awk -v key="$2" '
+    !inside && index($0, "  \"" key "\": {") == 1 {
+      rest = substr($0, length(key) + 7)
+      if (rest ~ /^[{][}],?$/) { print "{}"; found = 1; exit }
+      if (rest != "{") exit
+      print "{"; inside = 1; next
+    }
+    inside && /^  [}],?$/ { print "  }"; found = 1; exit }
+    inside { print }
+    END { exit !found }
+  ' "$1"
+}
+
+# "name<TAB>source" for each marketplace in a known_marketplaces.json, where the
+# source is what `claude plugin marketplace add` takes: owner/repo, a URL or a path.
+marketplace_sources() {  # <file>
+  awk '
+    /^  "[^"]+": [{]$/ { name = $0; sub(/^  "/, "", name); sub(/".*/, "", name); done = 0; next }
+    /^      "(repo|url|path)": "/ && name != "" && !done {
+      v = $0; sub(/^      "[a-z]+": "/, "", v); sub(/",?$/, "", v)
+      print name "\t" v; done = 1
+    }
+  ' "$1"
+}
+
+# Run claude against a config dir, with every variable that would override its login unset.
+claude_in() {  # <config dir> <args...>
+  local cfg=$1; shift
+  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
+    CLAUDE_CONFIG_DIR="$cfg" claude "$@"
+}
+
+# Copy the global Claude setup into a project's config dir — settings, memory
+# file, keybindings, skills, agents, commands and user-scope MCP servers — but
+# never the login, history or plugin installs. Fills gaps only. Appends to the
+# caller's made/skipped arrays.
+init_carry() {  # <config dir>
+  local cfg=$1
+  local src=$HOME/.claude gj=$HOME/.claude.json
+  local item entry rel hits block
+  local -i n s
+  if [[ ! -d $src ]]; then
+    warn "no ~/.claude to carry settings over from"
+    return 0
+  fi
+
+  for item in settings.json settings.local.json CLAUDE.md keybindings.json; do
+    [[ -f $src/$item ]] || continue
+    if [[ -e $cfg/$item ]]; then skipped+=(".claude-local/$item"); continue; fi
+    cp -- "$src/$item" "$cfg/$item" || { warn "couldn't copy ~/.claude/$item"; continue }
+    made+=(".claude-local/$item")
+    [[ $item == settings.json ]] || continue
+    # A path written as ${CLAUDE_CONFIG_DIR:-$HOME/.claude} would now resolve inside
+    # .claude-local, where files like the statusline's helpers don't exist. Pin it.
+    sed 's|\${CLAUDE_CONFIG_DIR:-\$HOME/\.claude}|$HOME/.claude|g' "$cfg/$item" > "$cfg/$item.$$.tmp" \
+      && mv -f -- "$cfg/$item.$$.tmp" "$cfg/$item"
+    hits=$(grep -n 'CLAUDE_CONFIG_DIR' "$cfg/$item" | cut -d: -f1 | tr '\n' ' ')
+    [[ -n $hits ]] && warn ".claude-local/settings.json still mentions CLAUDE_CONFIG_DIR (lines ${hits% }) — check those paths"
+  done
+
+  for item in skills agents commands; do
+    [[ -d $src/$item ]] || continue
+    n=0 s=0
+    for entry in "$src/$item"/*(N); do
+      rel=$item/${entry:t}
+      if [[ -e $cfg/$rel || -L $cfg/$rel ]]; then (( s += 1 )); continue; fi
+      if [[ ! -e $entry ]]; then warn "skipping ~/.claude/$rel — it's a broken link"; continue; fi
+      mkdir -p -- "$cfg/$item"
+      # -L: a relative symlink in ~/.claude would point nowhere from .claude-local.
+      if cp -RL -- "$entry" "$cfg/$rel" 2>/dev/null; then
+        (( n += 1 ))
+      else
+        warn "couldn't copy ~/.claude/$rel"; rm -rf -- "$cfg/$rel"
+      fi
+    done
+    (( n )) && made+=(".claude-local/$item/ ($n copied)")
+    (( s )) && skipped+=(".claude-local/$item/: $s ${${(M)s:#1}:+entry}${${s:#1}:+entries}")
+  done
+
+  # User-scope MCP servers live in ~/.claude.json next to the login, so only that key comes over.
+  [[ -f $gj ]] && grep -q '^  "mcpServers": ' "$gj" || return 0
+  if [[ -e $cfg/.claude.json ]]; then
+    skipped+=(".claude-local/.claude.json")
+  elif block=$(json_top_block "$gj" mcpServers); then
+    ( umask 077; print -r -- "{"$'\n'"  \"mcpServers\": $block"$'\n'"}" > "$cfg/.claude.json" ) \
+      && made+=(".claude-local/.claude.json ($(print -r -- "$block" | grep -c '^    "[^"]*": [{]') MCP servers, no login)")
+  else
+    warn "couldn't read the MCP servers in ~/.claude.json — add them again with: claude mcp add -s user …"
+  fi
+}
+
+# Reinstall the plugins enabled in the copied settings into the project's config
+# dir. Copying plugins/ would keep absolute install paths into ~/.claude.
+init_plugins() {  # <config dir>
+  local cfg=$1
+  local known=$HOME/.claude/plugins/known_marketplaces.json block plugin mp name s out
+  local -a plugins pending mps
+  local -A src
+  [[ -f $cfg/settings.json ]] || return 0
+  block=$(json_top_block "$cfg/settings.json" enabledPlugins) || return 0
+  plugins=(${(f)"$(print -r -- "$block" | sed -n 's/^    "\([^"]*@[^"]*\)": true,\{0,1\}$/\1/p')"})
+  for plugin in "${plugins[@]}"; do
+    if [[ -f $cfg/plugins/installed_plugins.json ]] && grep -qF "\"$plugin\"" "$cfg/plugins/installed_plugins.json"; then
+      skipped+=("plugin $plugin")
+    else
+      pending+=("$plugin")
+    fi
+  done
+  (( $#pending )) || return 0
+  if (( ! $+commands[claude] )); then
+    warn "claude isn't installed — skipping ${#pending} plugins"
+    return 0
+  fi
+  if [[ -f $known ]]; then
+    marketplace_sources "$known" | while IFS=$'\t' read -r name s; do src[$name]=$s; done
+  fi
+
+  info "plugins  reinstalling ${#pending} into .claude-local ${C_DIM}(needs the network)${C_RESET}"
+  mps=(${(u)pending#*@})
+  for mp in "${mps[@]}"; do
+    [[ -f $cfg/plugins/known_marketplaces.json ]] && grep -q "^  \"$mp\": " "$cfg/plugins/known_marketplaces.json" && continue
+    if [[ -z ${src[$mp]:-} ]]; then
+      warn "marketplace $mp isn't in ~/.claude/plugins — its plugins may not install"
+      continue
+    fi
+    out=$(claude_in "$cfg" plugin marketplace add "${src[$mp]}" 2>&1) \
+      || warn "marketplace $mp: ${${(f)out}[-1]:-failed}"
+  done
+  for plugin in "${pending[@]}"; do
+    if out=$(claude_in "$cfg" plugin install -s user "$plugin" 2>&1); then
+      made+=("plugin $plugin")
+    else
+      warn "plugin $plugin: ${${(f)out}[-1]:-failed}"
+    fi
+  done
+}
+
+cmd_init() {
+  require_stack
+  local to="" launch=auto
+  local -i carry=1 plugins=1
+  while (( $# )); do
+    case $1 in
+      -t|--to)      [[ -n ${2:-} ]] || die "$1 needs a value"; to=$2; shift 2 ;;
+      --no-carry)   carry=0; shift ;;
+      --no-plugins) plugins=0; shift ;;
+      --launch)     launch=1; shift ;;
+      --no-launch)  launch=0; shift ;;
+      -h|--help)    usage; return 0 ;;
+      *)            die "unknown option '$1' (run: aistack help)" ;;
+    esac
+  done
+  if [[ $launch == auto ]]; then
+    if [[ -t 0 && -t 1 ]]; then launch=1; else launch=0; fi
+  fi
+
+  # Not resolve_target: that jumps to an enclosing repo's root, and a new project
+  # folder inside another repo is exactly the mistake to stop here.
+  local target=${to:-$PWD} top=""
+  [[ -d $target ]] || die "target directory not found: $target"
+  target=${target:A}
+  [[ $target == $ARMAZE_STACK_DIR || $target == $ARMAZE_STACK_DIR/* ]] \
+    && die "the target is the stack itself — cd into your own repo or pass --to DIR"
+  [[ $target == ${HOME:A} || $target == / ]] \
+    && die "refusing to set up $(pretty_path "$target") as a project — make a folder for it first"
+  if top=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) && [[ ${top:A} != $target ]]; then
+    die "$(pretty_path "$target") is inside the repo $(pretty_path "${top:A}") — run init at that repo's root, or in a folder of its own"
+  fi
+
+  local -a made=() skipped=()
+  info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
+  info "target  $(pretty_path "$target")"
+  print
+
+  # 1. Git.
+  if [[ -z $top ]]; then
+    git -C "$target" init -q || die "git init failed in $(pretty_path "$target")"
+    made+=("git repo")
+  fi
+
+  # 2. .gitignore — the login folder and secrets, before anything is written.
+  local gi=$target/.gitignore line
+  local -a missing=()
+  for line in .claude-local/ .env '.env.*' '!.env.example' '*.pem' .claude/settings.local.json; do
+    if [[ -f $gi ]]; then
+      grep -qxF -- "$line" "$gi" && continue
+      [[ $line == .claude-local/ ]] && grep -qx -e '/\{0,1\}\.claude-local/\{0,1\}' "$gi" && continue
+    fi
+    missing+=("$line")
+  done
+  if (( $#missing )); then
+    {
+      if [[ -s $gi ]]; then
+        [[ -n $(tail -c1 "$gi") ]] && print
+        print
+      fi
+      print -r -- "# added by aistack init"
+      print -rl -- "${missing[@]}"
+    } >> "$gi"
+    made+=(".gitignore (+${#missing} lines)")
+  else
+    skipped+=(".gitignore")
+  fi
+  [[ -n $(git -C "$target" ls-files -- .claude-local 2>/dev/null) ]] \
+    && warn ".claude-local is already committed — remove it with: git rm -r --cached .claude-local"
+
+  # 3. The project's own Claude config dir.
+  local cfg=$target/.claude-local
+  if [[ -d $cfg ]]; then
+    skipped+=(".claude-local/")
+  else
+    mkdir -p -- "$cfg" && chmod 700 "$cfg" || die "cannot create $(pretty_path "$cfg")"
+    made+=(".claude-local/")
+  fi
+
+  # 4. Global settings, without the login, then the plugins they enable.
+  (( carry )) && init_carry "$cfg"
+  (( carry && plugins )) && init_plugins "$cfg"
+
+  # 5. The one-off kickoff skill. Not recorded in the manifest: it removes itself.
+  local kick="$target/$(dest_dir claude skills)/project-kickoff"
+  if [[ -e $kick || -L $kick ]]; then
+    skipped+=(".claude/skills/project-kickoff")
+  elif install_one skills project-kickoff "$kick" 0 copy >/dev/null; then
+    made+=(".claude/skills/project-kickoff")
+  fi
+
+  print
+  for line in "${made[@]}"; do ok "$line"; done
+  for line in "${skipped[@]}"; do print -r -- "  ${C_DIM}$line — already there, left alone${C_RESET}"; done
+  print
+
+  if (( launch )); then
+    if (( $+commands[claude] )); then
+      info "starting Claude with this project's own login — sign in when it asks, then the kickoff runs"
+      cd -- "$target" || die "cannot cd into $(pretty_path "$target")"
+      claude_in "$cfg" "/project-kickoff"
+      return
+    fi
+    warn "claude isn't installed — install Claude Code, then run: cd $(pretty_path "$target") && claude /project-kickoff"
+    return 0
+  fi
+  info "next: cd $(pretty_path "$target") && claude /project-kickoff"
+  print -r -- "  ${C_DIM}The armaze plugin points claude at .claude-local there; without it: CLAUDE_CONFIG_DIR=.claude-local claude${C_RESET}"
+}
+
 main() {
   # No command: the app on its add tab when there is a terminal, otherwise help.
   local cmd=${1:-}
@@ -1244,6 +1510,7 @@ main() {
     list|ls)               cmd_list "$@" ;;
     add|install)           cmd_add "$@" ;;
     update|upgrade)        cmd_update "$@" ;;
+    init)                  cmd_init "$@" ;;
     root|path)             print -r -- "$ARMAZE_STACK_DIR" ;;
     help|-h|--help)        usage ;;
     version|-v|--version)  print -r -- "aistack $ARMAZE_VERSION" ;;
