@@ -149,12 +149,12 @@ armaze-ai-stack/
 └── tools/                     # scripts, CLIs, MCP servers
 ```
 
-Each of `skills/`, `agents/`, `workflows/` and `tools/` has a README with the authoring conventions for that component type.
+Each of `skills/`, `agents/`, `workflows/` and `tools/` has a README with the authoring conventions for that component type. The [skills](skills/README.md#on-the-shelf) and [agents](agents/README.md#on-the-shelf) READMEs also list what is on the shelf.
 
 ## Adding to the stack
 
 1. Branch from `main`.
-2. Add your component following the conventions in the relevant directory README — kebab-case name, front matter with `name` and a one-line `description`, self-contained files.
+2. Add your component following the conventions in the relevant directory README — kebab-case name, front matter with `name` and a one-line `description`, self-contained files — and give it a row in that README's "On the shelf" table.
 3. Check it shows up: `aistack list`. Try it in a real project: `cd ~/some-repo && aistack add --link <name>`.
 4. Add a line to `CHANGELOG.md` under `## Unreleased` (create the heading if it isn't there) saying what members get.
 5. Open a pull request. A short note on when to use the component and what you tested is plenty.

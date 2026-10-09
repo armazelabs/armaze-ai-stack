@@ -2,6 +2,16 @@
 
 One Markdown file per agent — or, when an agent needs supporting files, one directory. An agent is a role definition — who it is, what it is for, which tools it may use, and how it should approach its class of problems.
 
+## On the shelf
+
+| Agent | What it does | Needs |
+|---|---|---|
+| `website-weaver` | Breaks a website or product brief into subtasks and sends each to the Claude model and effort level best suited for it. | Orca |
+
+`aistack list agents` shows the same list with full descriptions. When you add, rename or remove an agent, update this table in the same change.
+
+## Writing an agent
+
 ```
 agents/<name>.md            # single-file agent
 agents/<name>/AGENT.md      # directory agent — entry document, plus whatever it needs alongside

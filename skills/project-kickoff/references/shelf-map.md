@@ -22,6 +22,7 @@ unticked.
 | `skills/create-competitor-profile` | offered | ticked | offered | Sourced profile of a new competitor. |
 | `skills/update-competitor-profile` | offered | ticked | offered | Proposes updates to existing profiles. |
 | `skills/product-teardown` | offered | offered | offered | Module-by-module research of a product, Figma file or app, with screenshots and every element. Needs Orca. |
+| `skills/site-to-figma` | offered | offered | offered | Pulls a live site's design system into Figma as variables, styles and components, and recreates a page. Needs Orca and the Figma MCP. |
 | `skills/changelog-generator` | offered | offered | ticked | Store release notes from commits. |
 | `skills/code-to-figma` | offered | offered | offered | Pushes built screens back into Figma. |
 | `skills/remove-ai-marks` | offered | offered | offered | Strips AI marks from text and images. |
