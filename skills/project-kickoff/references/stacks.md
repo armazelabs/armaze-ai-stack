@@ -1,7 +1,7 @@
 # Stacks
 
 What each choice means, and what it adds to `CLAUDE.md` (the "Stack" and
-"Commands" sections) and to `docs/architecture.md`. Commands are written as
+"Commands" sections) and to `project-management/docs/architecture.md`. Commands are written as
 "once the code exists" - the kickoff creates no app code.
 
 ## Web stack (Website, and the front of a SaaS)

@@ -113,7 +113,7 @@ example) - list it as a next step.
 Run, from the project root, with the project name and every path you wrote:
 
 ```zsh
-zsh .claude/skills/project-kickoff/scripts/finish.zsh "<name>" CLAUDE.md docs project-management ...
+zsh .claude/skills/project-kickoff/scripts/finish.zsh "<name>" CLAUDE.md project-management ...
 ```
 
 It creates the `AGENTS.md` symlinks next to each `CLAUDE.md`, commits only what

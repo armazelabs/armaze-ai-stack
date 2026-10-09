@@ -85,7 +85,7 @@ Recurring feedback stays visible without inflating counts. Call out near-duplica
 
 ## The Feedback Register
 
-`project-management/feedback/register.md` is the maintained, module-grouped overview of all feedback. Keep it in sync as part of every write (step 8): one row per item under its primary module's `##` section, with the simplified 3-state status and a link back to the dated entry. Cross-cutting items go under `Global`. When work begins on an item, set its register status to **In Progress** and put the `W-NNN` from the [Work Board](../../../project-management/work-board.md) in the `Work` column. See the readme for the full status mapping and column spec.
+`project-management/feedback/register.md` is the maintained, module-grouped overview of all feedback. Keep it in sync as part of every write (step 8): one row per item under its primary module's `##` section, with the simplified 3-state status and a link back to the dated entry. Cross-cutting items go under `Global`. When work begins on an item, set its register status to **In Progress** and put the work item's ID (e.g. `W-NNN`) in the `Work` column. See the readme for the full status mapping and column spec.
 
 ## Roll-Ups
 
@@ -96,7 +96,7 @@ The register is the standing overview. For ad-hoc slices it does not pre-group, 
 
 ## Product Knowledge Rule
 
-Per `claude.md`, never infer or assume product details (module names, features, roles). If the input does not make the module, source, or author clear, use a placeholder, flag it in the draft, and - if it is an open product question - note it for `research/internal/product-knowledge/open-questions.md`.
+Per the project's `CLAUDE.md`, never infer or assume product details (module names, features, roles). If the input does not make the module, source, or author clear, use a placeholder, flag it in the draft, and - if it is an open product question - note it for `research/internal/product-knowledge/open-questions.md`.
 
 ## Tips
 

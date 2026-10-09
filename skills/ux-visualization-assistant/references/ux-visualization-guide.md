@@ -97,7 +97,7 @@ Always markdown tables, never Mermaid. Empathy map is four quadrants (Says / Thi
 
 ## Placement and naming
 
-Generated artifacts go in the routing-correct folder and follow kebab-case and the dating/versioning conventions in the project's `rules/file-naming-rule.md`, where it has one.
+Generated artifacts go in the routing-correct folder and follow kebab-case and the dating/versioning conventions in the project's `project-management/rules/file-naming-rule.md` (`rules/file-naming-rule.md` in an older workspace), where it has one.
 
 | Artifact | Location |
 | --- | --- |

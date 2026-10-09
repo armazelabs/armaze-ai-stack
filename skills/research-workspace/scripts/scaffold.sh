@@ -4,8 +4,10 @@
 #
 # Builds a phase-gated product documentation structure organised around a
 # single research/ tree split into external (competitor/market-facing) and
-# internal (the product's own knowledge) research, plus a slim rules/ folder
-# and a project-management/ for institutional memory.
+# internal (the product's own knowledge) research, plus project-management/
+# for institutional memory - which also holds the workspace guide, the
+# feature list and the rules/ folder, so nothing but research/ and
+# project-management/ is added at the project root.
 #
 # Idempotent and non-destructive:
 #   - Directories are created with `mkdir -p` (safe to re-run).
@@ -36,8 +38,24 @@ PROJECT="${2:-$ROOTNAME}"
 created=0
 skipped=0
 
+# Where the workspace's own docs go. Every Armaze skill keeps them in
+# project-management/. A workspace scaffolded before that has feature.md and
+# rules/ at the root; it keeps that layout, so a re-run never starts a second
+# copy beside the first.
+if [ -e "feature.md" ] || [ -e "rules/file-naming-rule.md" ]; then
+  DOCS="."
+  GUIDE="README.md"
+  [ -e "readme.md" ] && GUIDE="readme.md"
+else
+  DOCS="project-management"
+  GUIDE="project-management/README.md"
+fi
+if [ "$DOCS" = "." ]; then RULES="rules"; FEATURE="feature.md"
+else RULES="$DOCS/rules"; FEATURE="$DOCS/feature.md"; fi
+
 # write_if_absent <relative-path> then heredoc on stdin.
-# Placeholders __PROJECT__ and __ROOTNAME__ are substituted before writing.
+# Placeholders __PROJECT__, __ROOTNAME__, __GUIDE__, __FEATURE__ and __RULES__
+# are substituted before writing.
 write_if_absent() {
   local path="$1"
   mkdir -p "$(dirname "$path")"
@@ -45,7 +63,8 @@ write_if_absent() {
     skipped=$((skipped + 1))
     cat >/dev/null   # consume heredoc
   else
-    sed -e "s|__PROJECT__|${PROJECT}|g" -e "s|__ROOTNAME__|${ROOTNAME}|g" >"$path"
+    sed -e "s|__PROJECT__|${PROJECT}|g" -e "s|__ROOTNAME__|${ROOTNAME}|g" \
+        -e "s|__GUIDE__|${GUIDE}|g" -e "s|__FEATURE__|${FEATURE}|g" -e "s|__RULES__|${RULES}|g" >"$path"
     created=$((created + 1))
   fi
 }
@@ -70,7 +89,7 @@ folder_readme() {
       printf '# %s\n\n' "$name"
       printf '%s\n\n' "$purpose"
       printf '%s\n\n' "$phase"
-      printf 'Read this README before adding anything here. Follow the naming rules in `rules/file-naming-rule.md` and the routing table in `README.md`.\n'
+      printf 'Read this README before adding anything here. Follow the naming rules in `%s/file-naming-rule.md` and the routing table in `%s`.\n' "$RULES" "$GUIDE"
     } >"$dir/README.md"
     created=$((created + 1))
   fi
@@ -126,7 +145,7 @@ fi
 mkdir -p \
   research/external/competitor-analysis \
   research/internal/product-knowledge/modules \
-  rules \
+  "$RULES" \
   project-management/feedback/date
 
 # ---------------------------------------------------------------------------
@@ -146,16 +165,15 @@ folder_readme "project-management/meeting-notes"      "Notes from every team mee
 folder_readme "project-management/requirement-updates" "Changes to product requirements over time." "Cross-phase."
 
 # ---------------------------------------------------------------------------
-# Root README.md - structure, phases, routing, golden rules
+# The workspace guide - structure, phases, routing, golden rules - at
+# project-management/README.md, so the repo's own README is never touched.
 #
-# README.md is the conventional spelling and the default. An existing
-# lowercase readme.md is targeted instead, so write_if_absent skips it rather
-# than creating a case-duplicate pair (which breaks on case-sensitive
-# filesystems). Run fix-file-casing.sh to normalise an existing lowercase one.
+# In an older workspace it is the root README.md. There an existing lowercase
+# readme.md is targeted instead, so write_if_absent skips it rather than
+# creating a case-duplicate pair (which breaks on case-sensitive filesystems).
+# Run fix-file-casing.sh to normalise an existing lowercase one.
 # ---------------------------------------------------------------------------
-root_readme="README.md"
-[ -e "readme.md" ] && root_readme="readme.md"
-write_if_absent "$root_readme" <<'EOF'
+write_if_absent "$GUIDE" <<'EOF'
 # __PROJECT__
 
 Product documentation and design knowledge base for **__PROJECT__**. The workspace itself is markdown documents, research files, and process templates. It lives alongside any application code in this repository - the folders below describe only the documentation tree, not the whole repo.
@@ -168,7 +186,6 @@ It is organised as a phase-gated workspace: product knowledge flows into researc
 
 ```
 __ROOTNAME__/
-├── feature.md                  Master feature inventory (status per feature)
 ├── research/
 │   ├── CHANGELOG.md            Top-level research changelog
 │   ├── external/               Competitor and market-facing research
@@ -190,11 +207,13 @@ __ROOTNAME__/
 │           ├── open-questions.md
 │           ├── information-architecture.md
 │           └── sitemap.md
-├── rules/                      Workspace rules
-│   ├── file-naming-rule.md
-│   ├── version-control-rule.md
-│   └── product-decision.md
-└── project-management/         Institutional memory
+└── project-management/         Institutional memory and the workspace's own docs
+    ├── README.md               This guide
+    ├── feature.md              Master feature inventory (status per feature)
+    ├── rules/                  Workspace rules
+    │   ├── file-naming-rule.md
+    │   ├── version-control-rule.md
+    │   └── product-decision.md
     ├── CHANGELOG.md
     ├── decisionlog.md
     ├── meeting-notes/
@@ -224,7 +243,7 @@ Phase 3 - UX Structure         research/internal/product-knowledge/     Sign-off
 
 | Content type | Destination |
 |---|---|
-| Feature inventory | `feature.md` |
+| Feature inventory | `__FEATURE__` |
 | Product vision or overview | `research/internal/product-knowledge/overview/` |
 | Module definitions | `research/internal/product-knowledge/modules/[name]/` |
 | Open product questions | `research/internal/product-knowledge/open-questions.md` |
@@ -267,16 +286,16 @@ Phase 3 - UX Structure         research/internal/product-knowledge/     Sign-off
 - Version numbers on revisable files: `v1`, `v2`, etc. There is no file called "Final."
 - No em dashes in file content - use a regular hyphen.
 
-Full naming rules are in `rules/file-naming-rule.md`.
+Full naming rules are in `__RULES__/file-naming-rule.md`.
 EOF
 
 # ---------------------------------------------------------------------------
 # rules/ docs
 # ---------------------------------------------------------------------------
-write_if_absent "rules/file-naming-rule.md" <<'EOF'
+write_if_absent "$RULES/file-naming-rule.md" <<'EOF'
 # File Naming Rule
 
-Consistent file naming keeps the project navigable as it grows. These rules apply to every file and folder created inside the workspace tree (`research/`, `rules/`, `project-management/`, `feature.md`).
+Consistent file naming keeps the project navigable as it grows. These rules apply to every file and folder created inside the workspace tree (`research/` and `project-management/`, including `__RULES__/` and `__FEATURE__`).
 
 ---
 
@@ -339,7 +358,7 @@ Decision and change log entries are added directly into `decisionlog.md` and `ch
 | `Research notes.md` | `user-interview-p01-2026-06.md` |
 EOF
 
-write_if_absent "rules/version-control-rule.md" <<'EOF'
+write_if_absent "$RULES/version-control-rule.md" <<'EOF'
 # Version Control Rule
 
 How files are versioned across the project - covering documentation and assets.
@@ -386,7 +405,7 @@ Start at `v1`. Never use `v0`, `draft`, `final`, `new`, or `latest` as version i
 There is no file called "Final." There is only the current version. If a document is approved, the approval is noted in the Decision Log, not in the file name.
 EOF
 
-write_if_absent "rules/product-decision.md" <<'EOF'
+write_if_absent "$RULES/product-decision.md" <<'EOF'
 # Product Decision Rule
 
 How product decisions get made, recorded, and changed. Complements `file-naming-rule.md` and `version-control-rule.md`.
@@ -416,7 +435,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Seed living documents
 # ---------------------------------------------------------------------------
-write_if_absent "feature.md" <<'EOF'
+write_if_absent "$FEATURE" <<'EOF'
 # Feature List
 
 A complete, maintained inventory of every feature __PROJECT__ has or plans to have. This is the authoritative reference for what is built, in progress, or on the roadmap.
@@ -766,7 +785,7 @@ Always markdown tables, never Mermaid. Empathy map is four quadrants (Says / Thi
 
 ## Placement and naming
 
-Generated artifacts go in the routing-correct folder and follow kebab-case and the dating/versioning conventions in [`rules/file-naming-rule.md`](../../../../rules/file-naming-rule.md).
+Generated artifacts go in the routing-correct folder and follow kebab-case and the dating/versioning conventions in [`__RULES__/file-naming-rule.md`](../../../../__RULES__/file-naming-rule.md).
 
 | Artifact | Location |
 | --- | --- |

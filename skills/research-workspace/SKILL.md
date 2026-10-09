@@ -1,13 +1,13 @@
 ---
 name: research-workspace
-description: Sets up and looks after the product research workspace for any project - a research/ tree split into internal (product knowledge) and external (competitor and market) research, worked through in signed-off phases, plus project-management/, rules/ and feature.md. Invoke to build the workspace (per-folder READMEs, rules docs, seed living documents and the UX visualization guide) or to look up where a file belongs and how it must be named. Use whenever setting up a new project workspace, adding files to it, or checking a naming, placement or phase rule. Works for any product; the project name is configurable.
+description: Sets up and looks after the product research workspace for any project - a research/ tree split into internal (product knowledge) and external (competitor and market) research, worked through in signed-off phases, plus project-management/, which also holds the workspace guide, the feature list and the rules. Invoke to build the workspace (per-folder READMEs, rules docs, seed living documents and the UX visualization guide) or to look up where a file belongs and how it must be named. Use whenever setting up a new project workspace, adding files to it, or checking a naming, placement or phase rule. Works for any product; the project name is configurable.
 ---
 
 # Research Workspace
 
 This skill sets up and looks after a reusable, project-agnostic **product research workspace**. It does two things:
 
-1. **Scaffolds** the entire folder structure automatically - every folder, its README, the root `README.md` guide, the `rules/` documents, and the seed living documents (feature inventory, changelogs, open questions, decision log, modules index).
+1. **Scaffolds** the entire folder structure automatically - every folder, its README, the workspace guide (`project-management/README.md`), the `project-management/rules/` documents, and the seed living documents (feature inventory, changelogs, open questions, decision log, modules index).
 2. **Enforces** every naming rule, routing rule, phase gate, and golden rule below whenever files are created, moved, or named **inside the workspace tree**. It never renames or moves existing files, and repo-level conventional files (`README.md`, `CLAUDE.md`, `package.json`, etc.) are out of scope - see the exceptions under the naming rules and the coexistence rule below.
 
 The structure encodes a proven workflow: product knowledge -> research -> UX structure, with institutional-memory docs and per-module work areas alongside. All research lives under a single `research/` tree split into **external** (competitor and market-facing) and **internal** (the product's own knowledge). It is generic - drop it into any project and pass that project's name.
@@ -39,6 +39,8 @@ The script is **idempotent and non-destructive**: it `mkdir -p`s every folder an
 
 Project-management docs always live in `project-management/` - every Armaze skill and agent uses that exact folder name. A workspace scaffolded before that has a `project-management-log/` instead; the script folds it into `project-management/` (nothing already there is overwritten - a clash is left in place and reported) and rewrites the workspace's references to the old name. That is the one move the script makes.
 
+The workspace adds only `research/` and `project-management/` at the project root: the workspace guide, `feature.md` and `rules/` all live inside `project-management/`, so the repo's own `README.md` is never touched. A workspace scaffolded before that has `feature.md` and `rules/` (and its guide as `README.md`) at the root; the script detects that and keeps using those files where they are rather than starting second copies. When this document names `project-management/rules/`, `project-management/feature.md` or `project-management/README.md`, read the root path in such a workspace.
+
 After running, confirm to the user which folders/files were created versus already present.
 
 ---
@@ -48,7 +50,7 @@ After running, confirm to the user which folders/files were created versus alrea
 The scaffold is **additive-only** and describes the documentation workspace, not the whole repository. When the target root is an existing project (it has `package.json`, `Gemfile`, `src/`, or any other application files):
 
 - **Never move, relocate, or reorganize existing files.** `package.json`, lockfiles, configs, and source folders stay exactly where developers expect them - at the repo root.
-- **Never create an `app/` (or similar) wrapper folder** to separate the code from the docs. The workspace folders (`research/`, `rules/`, `project-management/`, `feature.md`) are simply added alongside the existing files.
+- **Never create an `app/` (or similar) wrapper folder** to separate the code from the docs. The workspace folders (`research/` and `project-management/`) are simply added alongside the existing files.
 - The structure diagram below shows only what the scaffold adds. An existing repo will have other files at `[root]/` - that is expected and correct.
 - If the user wants the docs kept separate from the code, scaffold **into a subfolder** by passing it as `target-root` (e.g. `./docs`) - still moving nothing.
 
@@ -58,7 +60,6 @@ The scaffold is **additive-only** and describes the documentation workspace, not
 
 ```
 [root]/
-├── feature.md                  Master feature inventory (status per feature)
 ├── research/
 │   ├── CHANGELOG.md            Top-level research changelog
 │   ├── external/               Competitor and market-facing research
@@ -80,11 +81,13 @@ The scaffold is **additive-only** and describes the documentation workspace, not
 │           ├── open-questions.md
 │           ├── information-architecture.md
 │           └── sitemap.md
-├── rules/
-│   ├── file-naming-rule.md
-│   ├── version-control-rule.md
-│   └── product-decision.md
-└── project-management/         Institutional memory
+└── project-management/         Institutional memory and the workspace's own docs
+    ├── README.md               The workspace guide
+    ├── feature.md              Master feature inventory (status per feature)
+    ├── rules/
+    │   ├── file-naming-rule.md
+    │   ├── version-control-rule.md
+    │   └── product-decision.md
     ├── CHANGELOG.md
     ├── decisionlog.md
     ├── meeting-notes/
@@ -97,7 +100,7 @@ The scaffold is **additive-only** and describes the documentation workspace, not
 
 ## Mandatory File Naming Rules
 
-These apply to every file and folder created or edited **inside the workspace tree** (`research/`, `rules/`, `project-management/`, `feature.md`, and the folder readmes the scaffold generates).
+These apply to every file and folder created or edited **inside the workspace tree** (`research/` and `project-management/`, and the folder readmes the scaffold generates).
 
 1. **Kebab-case only.** Lowercase words separated by hyphens. No spaces, no underscores, no PascalCase, no camelCase. (e.g. `user-personas`, `feature-matrix.md`)
 2. **No capital letters** in workspace folder or file names (e.g. `feature-matrix.md`, not `Feature-Matrix.md`).
@@ -182,7 +185,7 @@ Phase 3 - UX Structure         research/internal/product-knowledge/          Sig
 
 | Content type | Destination |
 |---|---|
-| Feature inventory | `feature.md` |
+| Feature inventory | `project-management/feature.md` |
 | Product vision or overview | `research/internal/product-knowledge/overview/` |
 | Module definitions | `research/internal/product-knowledge/modules/[name]/` |
 | Open product questions | `research/internal/product-knowledge/open-questions.md` |
@@ -239,7 +242,7 @@ If a master-doc sync skill is installed in the project, then after any create, e
 | `research/internal/product-knowledge/ux-research/`, IA, sitemap | Lead Designer |
 | `research/internal/product-knowledge/modules/` | Product Lead |
 | `project-management/` | Product Lead |
-| `rules/` | Product Lead |
+| `project-management/rules/` | Product Lead |
 
 ---
 
@@ -248,8 +251,8 @@ If a master-doc sync skill is installed in the project, then after any create, e
 Running the script creates/ensures:
 
 - **The folder tree** of the workspace, with a purpose `README.md` in each content folder (`profiles/`, `overview/`, `user-personas/`, `ux-research/`, `meeting-notes/`, `requirement-updates/`).
-- **Root `README.md`** - structure, phase workflow, golden rules, naming conventions, and the routing table. If a lowercase `readme.md` already exists, that one is targeted instead and left untouched, so no case-duplicate pair is ever created; run `fix-file-casing.sh` to normalise it.
-- **`rules/` docs**: `file-naming-rule.md`, `version-control-rule.md`, `product-decision.md`.
-- **Seed living documents**: `feature.md`; the three `CHANGELOG.md` files (`research/`, `research/external/`, `research/internal/`); the competitor working docs (`feature-matrix.md`, `pricing-comparison.md`, `pain-points.md`, `opportunities.md`); `research/internal/product-knowledge/` `open-questions.md`, `information-architecture.md`, `sitemap.md`; the UX visualization guide at `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` (read first by `ux-visualization-assistant`; this copy wins over the one built into that skill); `project-management/decisionlog.md` and `CHANGELOG.md`; a sample `feedback/date/01.feedback.md`; and the modules index at `research/internal/product-knowledge/modules/README.md`.
+- **Workspace guide** at `project-management/README.md` - structure, phase workflow, golden rules, naming conventions, and the routing table. The repo's own root `README.md` is never written. (In an older workspace whose guide is the root `README.md`, an existing lowercase `readme.md` is targeted instead and left untouched, so no case-duplicate pair is ever created; run `fix-file-casing.sh` to normalise it.)
+- **`project-management/rules/` docs**: `file-naming-rule.md`, `version-control-rule.md`, `product-decision.md`.
+- **Seed living documents**: `project-management/feature.md`; the three `CHANGELOG.md` files (`research/`, `research/external/`, `research/internal/`); the competitor working docs (`feature-matrix.md`, `pricing-comparison.md`, `pain-points.md`, `opportunities.md`); `research/internal/product-knowledge/` `open-questions.md`, `information-architecture.md`, `sitemap.md`; the UX visualization guide at `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` (read first by `ux-visualization-assistant`; this copy wins over the one built into that skill); `project-management/decisionlog.md` and `CHANGELOG.md`; a sample `feedback/date/01.feedback.md`; and the modules index at `research/internal/product-knowledge/modules/README.md`.
 
 Generated docs use the project name passed to the script (or the directory name by default). Anything that already exists is left untouched.

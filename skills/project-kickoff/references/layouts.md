@@ -3,13 +3,19 @@
 Which templates go where. Paths on the left are in `templates/`; paths on the
 right are in the project. `templates/claude/` is written to `.claude/`.
 
+Docs go in `project-management/`, like everything else an Armaze skill writes;
+only `CLAUDE.md`, `AGENTS.md`, `.claude/` and `.mcp.json` sit at the root,
+because the tools only look for them there. If the project already has a root
+`docs/` holding one of these files, leave it there and write nothing new beside
+it.
+
 ## Every project
 
 | Template | Written to |
 | --- | --- |
 | `CLAUDE.template.md` | `CLAUDE.md` (+ `AGENTS.md` symlink, made by `finish.zsh`) |
-| `docs/brief.md` | `docs/brief.md` |
-| `docs/architecture.md` | `docs/architecture.md` |
+| `docs/brief.md` | `project-management/docs/brief.md` |
+| `docs/architecture.md` | `project-management/docs/architecture.md` |
 | `project-management/decisions.md` | `project-management/decisions.md` |
 | `project-management/plans/README.md` | `project-management/plans/README.md` |
 | `claude/settings.json` | `.claude/settings.json` |
@@ -21,17 +27,18 @@ right are in the project. `templates/claude/` is written to `.claude/`.
 
 | Type | Template | Written to (one area) | Written to (several areas) |
 | --- | --- | --- | --- |
-| Website | `web/docs/content.md`, `web/docs/seo.md` | `docs/` | `apps/web/docs/` |
-| SaaS | `saas/docs/billing.md`, `saas/docs/tenancy.md`, `saas/docs/data-model.md` | `docs/` | `docs/` (shared: the backend serves every app) |
-| Mobile | `mobile/docs/app-store.md`, `mobile/docs/release.md` | `docs/` | `apps/mobile/docs/` |
+| Website | `web/docs/content.md`, `web/docs/seo.md` | `project-management/docs/` | `project-management/docs/web/` |
+| SaaS | `saas/docs/billing.md`, `saas/docs/tenancy.md`, `saas/docs/data-model.md` | `project-management/docs/` | `project-management/docs/` (shared: the backend serves every app) |
+| Mobile | `mobile/docs/app-store.md`, `mobile/docs/release.md` | `project-management/docs/` | `project-management/docs/mobile/` |
 
 ## One area or several
 
 - **One area** - a single type, or **Website + SaaS** (one web app holding both
-  the marketing pages and the product). Everything sits at the root as above.
-- **Several areas** - **Mobile together with Website and/or SaaS**. Shared
-  product docs stay at the root; each platform gets its own folder with a
-  `CLAUDE.md` from `area/CLAUDE.template.md`:
+  the marketing pages and the product). Everything goes where the tables say.
+- **Several areas** - **Mobile together with Website and/or SaaS**. Every doc
+  stays in `project-management/docs/`, an area's own in a subfolder named after
+  it (`web/`, `mobile/`); each platform gets its own code folder with a
+  `CLAUDE.md` from `area/CLAUDE.template.md`, and no docs folder of its own:
   - `apps/web/` - the website and/or SaaS front end.
   - `apps/mobile/` - the mobile app.
   - `backend/` - when SaaS is picked, or the mobile app needs a backend.

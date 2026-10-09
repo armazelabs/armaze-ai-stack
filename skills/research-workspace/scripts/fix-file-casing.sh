@@ -55,7 +55,9 @@ done
 cd "$ROOT"
 
 # The tree this skill governs. Application source, configs, and the tool
-# directories (.claude/, node_modules/) are deliberately out of scope.
+# directories (.claude/, node_modules/) are deliberately out of scope. A
+# workspace keeps rules/ and feature.md in project-management/; rules and
+# feature.md at the root are an older workspace's layout.
 SCOPE_DIRS="research rules project-management design-system"
 ROOT_FILES="feature.md"
 

@@ -10,7 +10,7 @@ The project-wide rules in the root `CLAUDE.md` apply here too. This file adds wh
 
 ## Docs for this area
 
-<!-- kickoff: Links to this area's docs (e.g. docs/app-store.md), or "Shared docs are in the root docs/." -->
+<!-- kickoff: Links to this area's docs in project-management/docs/<area>/ (e.g. project-management/docs/mobile/app-store.md, written from the project root), or "Shared docs are in project-management/docs/." -->
 
 ## Commands
 

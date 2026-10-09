@@ -38,7 +38,7 @@ flowchart TD
 
 Authoritative sources for this repo:
 
-- **FIGMA.md** - the project's full Figma guide (`FIGMA.md`, repo root): file key(s),
+- **FIGMA.md** - the project's full Figma guide (`project-management/design/FIGMA.md`): file key(s),
   viewport, file structure, and the component and variable catalogue. **Open it before
   acting.** It is the project cartridge this generic skill reads from; if a fact you
   need is missing, add it there.
@@ -47,6 +47,12 @@ Authoritative sources for this repo:
 - **The project's design-token CSS** (see FIGMA.md for the path) - the source of truth
   for all token *values*.
 - **CLAUDE.md** - the short version of the repo's rules.
+- **Where these live.** `project-management/design/` holds the project's Figma docs: `FIGMA.md`, a
+  generated `DESIGN.md`, and the registries `figma-library-keys.md` and `figma-screen-keys.md` - every
+  Armaze skill keeps its docs in `project-management/`. An older project has `FIGMA.md` at the repo root
+  and the registries in a root `design/`: if those exist, keep reading and updating them there and never
+  start second copies. Below, `FIGMA.md` and `project-management/design/figma-*-keys.md` mean whichever location the
+  project uses.
 
 > Reading Figma is safe; **writing** to it is gated and belongs to the
 > **code-to-figma** skill. This skill never edits the Figma file.
@@ -66,10 +72,10 @@ Before the intake or any sync, confirm the docs the skill reads actually exist.
 - **FIGMA.md missing.** The cartridge that names the Figma file and the token paths is gone. You can still
   act on a link the user pastes directly (a Figma file/frame URL, or a claude.ai/design handoff link), but
   offer to bootstrap a minimal FIGMA.md - ask for the Figma file link/key, the viewport, and the token-CSS
-  path - and write it so the next run has a cartridge. Never invent a key or path.
+  path - and write it to `project-management/design/FIGMA.md` so the next run has a cartridge. Never invent a key or path.
 - **DESIGN.md (or whatever token spec FIGMA.md links) missing.** Not blocking for design -> code: write the
   reconciled values into the token CSS (the source of truth). Offer to (re)generate DESIGN.md from the tokens
-  afterward.
+  afterward (a new one goes in `project-management/design/DESIGN.md`).
 - **The token CSS itself missing, or FIGMA.md's path to it is wrong.** Ask the user for the correct path and
   fix it in FIGMA.md before mirroring values in.
 
@@ -132,9 +138,9 @@ router and navigation (and any tab bar / entry point) so it is reachable - a des
 that wiring, so add it and confirm the route/nav placement with the user.
 
 **Use the maps to locate things.** Before diffing, consult FIGMA.md's "Files, keys, and the screen map":
-the **screen map** (`design/figma-screen-keys.md`) resolves a changed frame to its **code screen/file** (and gives its frame node-id) so
+the **screen map** (`project-management/design/figma-screen-keys.md`) resolves a changed frame to its **code screen/file** (and gives its frame node-id) so
 you can go straight to it instead of asking for a node-id or guessing; the **published-key registry**
-(`design/figma-library-keys.md`) maps
+(`project-management/design/figma-library-keys.md`) maps
 a changed Figma variable/style/component back to its code token/component; its **Status / Last updated** column flags
 rows to re-verify. If the screen map lacks the
 frame or its node-id no longer resolves (a frame was recreated), match by name on the `📱 Screens` page and
@@ -152,7 +158,7 @@ current screen-frame naming convention.
 
 **Keep the registries current (write-back).** The registries are docs this skill *does* update (it never
 edits the Figma file). After reconciling a Figma-side change into code, maintain
-`design/figma-library-keys.md`: re-stamp each reconciled row's **`Status / Last updated`** to `in sync` with
+`project-management/design/figma-library-keys.md`: re-stamp each reconciled row's **`Status / Last updated`** to `in sync` with
 the date; if an asset exists in Figma but has no row (added directly in Figma), read its `.key` and add one;
 flag a row whose asset is gone as an **orphan**, and for a renamed asset update the name (the key persists).
 Do the same freshness upkeep on the screen map, whose rows carry each screen's **frame name as well as its

@@ -102,7 +102,7 @@ Match the number and style of diagrams in the existing profiles. For a project's
 - Write to `research/external/competitor-analysis/profiles/[competitor-name].md`
 - The filename is **kebab-case, lowercase, no numbers** (for example `acme.md`, `acme-platform.md`)
 - **No em dashes** anywhere in the content - use a regular hyphen (`-`)
-- This is **Phase 2 - Research** work per the workspace phase rules (see `rules/` and the root readme)
+- This is **Phase 2 - Research** work per the workspace phase rules (see `project-management/rules/` and the workspace guide, `project-management/README.md` - at the project root in an older workspace)
 - Seed the Changelog with the first row, for example:
 
 | Date | Sections affected | Summary of changes | Reason |

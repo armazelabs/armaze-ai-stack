@@ -51,7 +51,7 @@ Trigger manually for: "generate a [artifact]", "review this [diagram]", "improve
 - Default to a single fenced `mermaid` block or one markdown table - the artifact must render on GitHub and in VS Code (with the Mermaid preview extension) with no extra setup.
 - Lead with a one-line statement of which artifact and why, then the diagram/table.
 - Keep examples small and scannable; expand only when the user asks.
-- Place generated files in the routing-correct folder and follow kebab-case, dated/versioned naming per `rules/file-naming-rule.md`.
+- Place generated files in the routing-correct folder and follow kebab-case, dated/versioned naming per `project-management/rules/file-naming-rule.md` (`rules/file-naming-rule.md` at the project root in an older workspace).
 
 ## Usage examples
 

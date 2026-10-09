@@ -37,7 +37,7 @@ flowchart TD
 
 Authoritative sources for this repo:
 
-- **FIGMA.md** - the project's full Figma guide (`FIGMA.md`, repo root): file key(s),
+- **FIGMA.md** - the project's full Figma guide (`project-management/design/FIGMA.md`): file key(s),
 viewport, file structure, component and variable catalogue, naming, and the
 code <-> Figma workflow. **Open it before acting.** It is the project cartridge
 this generic skill reads from; if a fact you need is missing, add it there.
@@ -47,6 +47,12 @@ radii, and the decision changelog). Log design decisions there.
 truth for token *values*. Edit values there and reflect them into Figma; never
 hand-edit divergent values into Figma.
 - **CLAUDE.md** - the short version of the repo's rules.
+- **Where these live.** `project-management/design/` holds the project's Figma docs: `FIGMA.md`, a
+generated `DESIGN.md`, and the registries `figma-library-keys.md` and `figma-screen-keys.md` - every
+Armaze skill keeps its docs in `project-management/`. An older project has `FIGMA.md` at the repo root
+and the registries in a root `design/`: if those exist, keep reading and updating them there and never
+start second copies. Below, `FIGMA.md` and `project-management/design/figma-*-keys.md` mean whichever location the
+project uses.
 
 ---
 
@@ -63,11 +69,11 @@ stale/invalid file key or "file not found / no access" the same way: surface it,
 - **FIGMA.md missing.** There is no cartridge, so nothing project-specific to read (no Figma file, no
 token path, no catalogue). Do not proceed blind: offer to bootstrap a minimal FIGMA.md - ask the user
 for the Figma file link/key, the viewport, and the path to the design-token CSS (plus the design docs it
-links, if any), write those into a new `FIGMA.md` at the repo root, then continue. Never invent a key,
+links, if any), write those into a new `project-management/design/FIGMA.md`, then continue. Never invent a key,
 viewport, or path.
 - **DESIGN.md (or whatever token spec FIGMA.md links) missing.** Not blocking. Token *values* live in the
 code (the token CSS is the source of truth), so read them straight from there. Note the doc is absent and
-offer to (re)generate it from the tokens; do not block the export on it.
+offer to (re)generate it from the tokens (a new one goes in `project-management/design/DESIGN.md`); do not block the export on it.
 - **The token CSS itself missing, or FIGMA.md's path to it is wrong.** Ask the user for the correct path
 and fix it in FIGMA.md; never hardcode values to work around it.
 
@@ -199,7 +205,7 @@ does **not** dirty the published library either - verified 2026-07-28 on the 51-
 required for a move alone**. (Do re-check this rather than assuming; a content edit in the same run is what
 flips a component to `CHANGED`.)
 - **Record the page.** When a family gets or changes its page, name that page in the key registry
-`design/figma-library-keys.md` and in FIGMA.md's File structure, so the next run builds against the real
+`project-management/design/figma-library-keys.md` and in FIGMA.md's File structure, so the next run builds against the real
 shape instead of re-creating the old one.
 
 **A misnamed frame is a defect - fix it, don't document around it.** Whenever a run takes you past a
@@ -313,7 +319,7 @@ components/styles - keys must be known. Full flow in the cross-file section belo
  auto-layout; padding/gaps bound to the spacing tokens; primary CTAs are the button
  component at FILL width. Follow FIGMA.md for header/section spacing.
 7. **Record the screen mapping:** once a screen frame exists, record its **frame name** *and* Figma
-**frame node-id** + code path in the screen map `design/figma-screen-keys.md` (a fixed name; FIGMA.md links
+**frame node-id** + code path in the screen map `project-management/design/figma-screen-keys.md` (a fixed name; FIGMA.md links
 it) so `figma-to-code` can find the exact frame and target the right code file on the return trip. Record
 the name, not just the id: the id is the fast path, the name is the **fallback** `figma-to-code` uses when a
 frame has been recreated, and a map that omits it leaves that fallback guessing.
@@ -334,7 +340,7 @@ consumes; a person publishes and enables.
 1. **Build the DS in the library file** - Foundations + component-family pages + Cover, exactly as in
  "Build / update a frame". Screens do NOT go here in the split model.
 2. **Capture keys.** As you create/update each component, component set, style, and variable, read its
- `.key` and record it in the published-key registry `design/figma-library-keys.md` (a fixed name; FIGMA.md's "Files, keys, and the screen map"
+ `.key` and record it in the published-key registry `project-management/design/figma-library-keys.md` (a fixed name; FIGMA.md's "Files, keys, and the screen map"
 section names it). Required: a consuming file **cannot enumerate** a
  library's published components/styles, so the keys must be captured now or the screens file can never
  import them.
@@ -363,9 +369,9 @@ between code and Figma, code wins for token *values* unless the user says otherw
 - **On a genuine conflict** (both sides changed the same thing since the last sync), do not silently
 overwrite - flag it and let the user choose.
 - **Record what you pushed.** After a successful export, update the two fixed registries: library asset
-keys in **`design/figma-library-keys.md`**, and each exported screen's **frame name + frame node-id + code
+keys in **`project-management/design/figma-library-keys.md`**, and each exported screen's **frame name + frame node-id + code
 path** in
-**`design/figma-screen-keys.md`**. **Stamp each row's Status / Last updated (sync state + date)** as you add or re-verify it, and
+**`project-management/design/figma-screen-keys.md`**. **Stamp each row's Status / Last updated (sync state + date)** as you add or re-verify it, and
 flag a row whose asset is gone (an orphan) rather than deleting it silently. That is what lets the next run
 and figma-to-code find things instead of blind-diffing. **Renames count as something you pushed** - if the
 run renamed any frame, list the old -> new pairs in the summary and re-stamp those rows.
