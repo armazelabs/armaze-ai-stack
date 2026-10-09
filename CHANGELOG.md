@@ -2,6 +2,21 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.15.0 - 2026-10-09
+
+**New skill: product-teardown.** Add it to any project with `aistack add product-teardown`. It needs Orca.
+
+### Added
+
+- **product-teardown** researches a website, SaaS product, Figma file or mobile app one module at a time, in Orca's browser. It maps the product and proposes the modules, and you confirm them. It then sends up to three modules at once to background agents. For each screen and every state it can reach (empty, error, success, menus, modals), an agent:
+  - saves a JPEG screenshot
+  - extracts the page's headings, verbatim copy, links, buttons and every form field (label, type, placeholder, required, options, validation messages, help text), so the screen can be redesigned from the write-up
+  - writes up functionality, user flows and a UX analysis, adding what docs, reviews and videos say, with citations
+- Everything lands in the module's folder in the research tree: `research/teardown-<product>-<date>.md`, with the screenshots in `research/screenshots/`. For your own product it also fills the module definition and user flows.
+- When a module comes back thin, it suggests three to five competitors or alternatives. Once you confirm, it studies them the same way, adds a "How others do it" section and creates their competitor profiles.
+- Logins are kept in `.claude/product-teardown.local.env`, git-ignored and readable only by you. A helper types the saved login into the page, so the password never shows in the conversation. In a logged-in product the skill creates `teardown-test` records when it needs them, never deletes anything, and never touches billing, invites or settings.
+- **project-kickoff** offers product-teardown for every project type.
+
 ## 0.14.0 - 2026-10-09
 
 **The research tree moves into `project-management/`.** This applies to new workspaces; one that already has `research/` at the project root keeps it there, and the skills keep using it. Run `aistack update` in each project.
