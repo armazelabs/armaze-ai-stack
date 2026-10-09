@@ -1,17 +1,17 @@
 ---
 name: create-competitor-profile
-description: Researches a new competitor from scratch and produces a complete, sourced competitor profile that matches the standardized section structure used across research/external/competitor-analysis/profiles/. Conducts multi-source research, classifies confidence, writes inline citations, and generates the Mermaid feature map and user-flow diagrams - so a brand-new profile lands consistent with any profiles the project already has. Use whenever adding a competitor that does not yet have a profile.
+description: Researches a new competitor from scratch and produces a complete, sourced competitor profile that matches the standardized section structure used across project-management/research/external/competitor-analysis/profiles/. Conducts multi-source research, classifies confidence, writes inline citations, and generates the Mermaid feature map and user-flow diagrams - so a brand-new profile lands consistent with any profiles the project already has. Use whenever adding a competitor that does not yet have a profile.
 ---
 
 # Create Competitor Profile
 
-This skill stands up a brand-new competitor profile from scratch. It researches a competitor across many public sources and writes a complete, sourced profile that matches the standardized structure already used by the existing profiles in `research/external/competitor-analysis/profiles/` - so a new file lands consistent with them instead of drifting into its own format.
+This skill stands up a brand-new competitor profile from scratch. It researches a competitor across many public sources and writes a complete, sourced profile that matches the standardized structure already used by the existing profiles in `project-management/research/external/competitor-analysis/profiles/` - so a new file lands consistent with them instead of drifting into its own format.
 
 It produces one file: the profile itself, at the correct path with the correct naming. It does not edit any other analysis file.
 
 ## When to Use This Skill
 
-- Adding a competitor that does not yet have a profile in `research/external/competitor-analysis/profiles/`
+- Adding a competitor that does not yet have a profile in `project-management/research/external/competitor-analysis/profiles/`
 - Standing up the first profile for a competitor in a new market segment
 - Turning loose competitor notes or a quick scan into a full, sourced, structured profile
 
@@ -48,7 +48,7 @@ Every profile follows the same section order. Match it exactly, top to bottom:
 14. `## Sources and method` - method and data-quality notes, then a bulleted list of referenced URLs with descriptions
 15. `## Changelog` - a reverse-chronological table (Date | Sections affected | Summary of changes | Reason), newest first, append-only
 
-Open the existing files in `research/external/competitor-analysis/profiles/` and treat them as the gold-standard worked examples. Match their depth, formatting, and tone. When in doubt about how a section should read, copy the shape of the existing profiles. If the folder is empty (this is the project's first profile), the structure above is the authority - aim for a thorough profile in the region of 500 lines.
+Open the existing files in `project-management/research/external/competitor-analysis/profiles/` and treat them as the gold-standard worked examples. Match their depth, formatting, and tone. When in doubt about how a section should read, copy the shape of the existing profiles. If the folder is empty (this is the project's first profile), the structure above is the authority - aim for a thorough profile in the region of 500 lines.
 
 ## The Research Workflow
 
@@ -99,7 +99,7 @@ Match the number and style of diagrams in the existing profiles. For a project's
 
 ## File Naming & Placement
 
-- Write to `research/external/competitor-analysis/profiles/[competitor-name].md`
+- Write to `project-management/research/external/competitor-analysis/profiles/[competitor-name].md`. An older workspace keeps `research/` at the project root instead of in `project-management/`; if a root `research/` exists, use it and never start a second tree.
 - The filename is **kebab-case, lowercase, no numbers** (for example `acme.md`, `acme-platform.md`)
 - **No em dashes** anywhere in the content - use a regular hyphen (`-`)
 - This is **Phase 2 - Research** work per the workspace phase rules (see `project-management/rules/` and the workspace guide, `project-management/README.md` - at the project root in an older workspace)

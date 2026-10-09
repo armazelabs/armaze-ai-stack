@@ -5,7 +5,7 @@ description: Helps teams choose and create the right UX visualization - user flo
 
 # UX Visualization Assistant
 
-Picks the right UX visualization for the goal at hand and generates it to the project standard. The single source of truth for method, shape, and selection is the project's guide at `research/internal/product-knowledge/ux-research/ux-visualization-guide.md` - always read it first and follow it. When the project has none, use `references/ux-visualization-guide.md` in this skill's folder instead. The project's copy always wins: a team may have tuned it.
+Picks the right UX visualization for the goal at hand and generates it to the project standard. The single source of truth for method, shape, and selection is the project's guide at `project-management/research/internal/product-knowledge/ux-research/ux-visualization-guide.md` - always read it first and follow it. When the project has none, use `references/ux-visualization-guide.md` in this skill's folder instead. The project's copy always wins: a team may have tuned it. An older workspace keeps `research/` at the project root instead of in `project-management/`; if a root `research/` exists, use it and never start a second tree.
 
 ## Purpose
 
@@ -15,7 +15,7 @@ Help anyone on the team turn a UX goal ("I need to show how a user signs up", "c
 
 Activate automatically when the work involves:
 
-- Creating or updating files in `research/external/`, `research/internal/`, the information architecture or sitemap (`research/internal/product-knowledge/information-architecture.md`, `research/internal/product-knowledge/sitemap.md`), module user flows (`research/internal/product-knowledge/modules/*/userflows.md`), or `research/internal/product-knowledge/modules/*/research/`.
+- Creating or updating files in `project-management/research/external/`, `project-management/research/internal/`, the information architecture or sitemap (`project-management/research/internal/product-knowledge/information-architecture.md`, `project-management/research/internal/product-knowledge/sitemap.md`), module user flows (`project-management/research/internal/product-knowledge/modules/*/userflows.md`), or `project-management/research/internal/product-knowledge/modules/*/research/`.
 - Any mention of: user flow, task flow, user journey, experience map, empathy map, persona, competitive analysis, feature matrix, information architecture, sitemap, service design, prioritization, journey map, or "which diagram should I use".
 - Requests to draw, diagram, map, chart, or visualize a user, flow, journey, or structure.
 
@@ -55,7 +55,7 @@ Trigger manually for: "generate a [artifact]", "review this [diagram]", "improve
 
 ## Usage examples
 
-**Automatic.** A user writes a flow description in a module's `userflows.md` (e.g. `research/internal/product-knowledge/modules/game-lobby/userflows.md`) describing "browse and join a game with a login check". The skill recognizes branching with a decision, confirms it is a user flow (not a task flow), and generates a `flowchart TD` with the login decision and an error path.
+**Automatic.** A user writes a flow description in a module's `userflows.md` (e.g. `project-management/research/internal/product-knowledge/modules/game-lobby/userflows.md`) describing "browse and join a game with a login check". The skill recognizes branching with a decision, confirms it is a user flow (not a task flow), and generates a `flowchart TD` with the login decision and an error path.
 
 **Manual.** "Which visualization should I use to compare us against three competitors?" The skill answers: a competitive analysis feature matrix (a table, because comparison is tabular), and generates the matrix with a consistent feature list and yes/partial/no marks.
 
@@ -63,7 +63,7 @@ Trigger manually for: "generate a [artifact]", "review this [diagram]", "improve
 
 ## Best practices and constraints
 
-- Always read the guide first and follow it - the project's `research/internal/product-knowledge/ux-research/ux-visualization-guide.md`, or this skill's `references/ux-visualization-guide.md` when the project has none. If guide and request conflict, surface it.
+- Always read the guide first and follow it - the project's `project-management/research/internal/product-knowledge/ux-research/ux-visualization-guide.md`, or this skill's `references/ux-visualization-guide.md` when the project has none. If guide and request conflict, surface it.
 - Pick the shape that renders clearest - tables for matrices, Mermaid for flows; do not force everything into one form.
 - One artifact per goal; if the user needs several, generate them separately.
 - Ask exactly one clarifying question only when the artifact choice is genuinely ambiguous; otherwise recommend and proceed.

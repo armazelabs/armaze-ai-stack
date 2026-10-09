@@ -133,6 +133,6 @@ Use `YYYY-MM-DD` dates. Cite the sources behind each entry in the Summary or Rea
 ## Related Skills
 
 - **content-research-writer** - use it for the underlying research, citation, and section-feedback mechanics while drafting updates.
-- The competitor profile structure is standardized across profiles (see `research/external/competitor-analysis/profiles/`); match it exactly when proposing changes.
+- The competitor profile structure is standardized across profiles (see `project-management/research/external/competitor-analysis/profiles/`); match it exactly when proposing changes. An older workspace keeps `research/` at the project root instead of in `project-management/`; if a root `research/` exists, use it and never start a second tree.
 
 This skill is invoked manually whenever competitor intelligence needs a refresh.

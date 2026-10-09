@@ -1,6 +1,6 @@
 # UX Visualization Guide
 
-The default standard for choosing and shaping UX artifacts. The `ux-visualization-assistant` skill follows it when the project has no guide of its own at `research/internal/product-knowledge/ux-research/ux-visualization-guide.md`; a project's own guide always wins. Where the guide and a request conflict, the conflict gets surfaced rather than silently resolved.
+The default standard for choosing and shaping UX artifacts. The `ux-visualization-assistant` skill follows it when the project has no guide of its own at `project-management/research/internal/product-knowledge/ux-research/ux-visualization-guide.md`; a project's own guide always wins. Where the guide and a request conflict, the conflict gets surfaced rather than silently resolved.
 
 ## Quick-decision table
 
@@ -101,9 +101,11 @@ Generated artifacts go in the routing-correct folder and follow kebab-case and t
 
 | Artifact | Location |
 | --- | --- |
-| Module user flows | `research/internal/product-knowledge/modules/<module>/userflows.md` |
-| Information architecture | `research/internal/product-knowledge/information-architecture.md` |
-| Sitemap | `research/internal/product-knowledge/sitemap.md` |
-| Personas | `research/internal/product-knowledge/user-personas/` |
-| Empathy maps, journeys, experience maps | `research/internal/product-knowledge/ux-research/` |
-| Competitive analysis | `research/external/competitor-analysis/` |
+| Module user flows | `project-management/research/internal/product-knowledge/modules/<module>/userflows.md` |
+| Information architecture | `project-management/research/internal/product-knowledge/information-architecture.md` |
+| Sitemap | `project-management/research/internal/product-knowledge/sitemap.md` |
+| Personas | `project-management/research/internal/product-knowledge/user-personas/` |
+| Empathy maps, journeys, experience maps | `project-management/research/internal/product-knowledge/ux-research/` |
+| Competitive analysis | `project-management/research/external/competitor-analysis/` |
+
+An older workspace keeps `research/` at the project root; there, read these paths without the `project-management/` prefix.

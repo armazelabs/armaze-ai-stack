@@ -4,10 +4,10 @@
 #
 # Builds a phase-gated product documentation structure organised around a
 # single research/ tree split into external (competitor/market-facing) and
-# internal (the product's own knowledge) research, plus project-management/
-# for institutional memory - which also holds the workspace guide, the
-# feature list and the rules/ folder, so nothing but research/ and
-# project-management/ is added at the project root.
+# internal (the product's own knowledge) research, inside project-management/
+# - which also holds the institutional memory, the workspace guide, the
+# feature list and the rules/ folder, so project-management/ is the only
+# folder added at the project root.
 #
 # Idempotent and non-destructive:
 #   - Directories are created with `mkdir -p` (safe to re-run).
@@ -53,9 +53,17 @@ fi
 if [ "$DOCS" = "." ]; then RULES="rules"; FEATURE="feature.md"
 else RULES="$DOCS/rules"; FEATURE="$DOCS/feature.md"; fi
 
+# The research tree goes in project-management/research/. A workspace started
+# before that has research/ at the root and keeps it there, for the same reason.
+if [ -d "research" ]; then RESEARCH="research"; else RESEARCH="project-management/research"; fi
+# From research/internal/product-knowledge/ux-research/ back up to the project
+# root, for relative links written into docs that live there.
+UP="../../../.."
+[ "$RESEARCH" = "research" ] || UP="../../../../.."
+
 # write_if_absent <relative-path> then heredoc on stdin.
-# Placeholders __PROJECT__, __ROOTNAME__, __GUIDE__, __FEATURE__ and __RULES__
-# are substituted before writing.
+# Placeholders __PROJECT__, __ROOTNAME__, __GUIDE__, __FEATURE__, __RULES__,
+# __RESEARCH__ and __UP__ are substituted before writing.
 write_if_absent() {
   local path="$1"
   mkdir -p "$(dirname "$path")"
@@ -64,7 +72,8 @@ write_if_absent() {
     cat >/dev/null   # consume heredoc
   else
     sed -e "s|__PROJECT__|${PROJECT}|g" -e "s|__ROOTNAME__|${ROOTNAME}|g" \
-        -e "s|__GUIDE__|${GUIDE}|g" -e "s|__FEATURE__|${FEATURE}|g" -e "s|__RULES__|${RULES}|g" >"$path"
+        -e "s|__GUIDE__|${GUIDE}|g" -e "s|__FEATURE__|${FEATURE}|g" -e "s|__RULES__|${RULES}|g" \
+        -e "s|__RESEARCH__|${RESEARCH}|g" -e "s|__UP__|${UP}|g" >"$path"
     created=$((created + 1))
   fi
 }
@@ -143,8 +152,8 @@ fi
 # Container folders (no readme - they hold a changelog or seed docs instead)
 # ---------------------------------------------------------------------------
 mkdir -p \
-  research/external/competitor-analysis \
-  research/internal/product-knowledge/modules \
+  "$RESEARCH/external/competitor-analysis" \
+  "$RESEARCH/internal/product-knowledge/modules" \
   "$RULES" \
   project-management/feedback/date
 
@@ -153,12 +162,12 @@ mkdir -p \
 # ---------------------------------------------------------------------------
 
 # Phase 2 - External research
-folder_readme "research/external/competitor-analysis/profiles" "One file per competitor (direct and indirect) - overview, strengths, weaknesses, pricing, UX notes." "Phase 2 - Research. Sign-off: Product Lead + Lead Designer."
+folder_readme "$RESEARCH/external/competitor-analysis/profiles" "One file per competitor (direct and indirect) - overview, strengths, weaknesses, pricing, UX notes." "Phase 2 - Research. Sign-off: Product Lead + Lead Designer."
 
 # Phase 1 - Internal product knowledge
-folder_readme "research/internal/product-knowledge/overview"      "Product vision, purpose, positioning, persona hierarchy." "Phase 1 - Product Knowledge. Sign-off: Product Lead."
-folder_readme "research/internal/product-knowledge/user-personas" "Persona profiles: goals, pain points, behaviours." "Phase 1 - Product Knowledge."
-folder_readme "research/internal/product-knowledge/ux-research"   "Usability tests, kickoff findings, moodboard references." "Phase 2 - Research."
+folder_readme "$RESEARCH/internal/product-knowledge/overview"      "Product vision, purpose, positioning, persona hierarchy." "Phase 1 - Product Knowledge. Sign-off: Product Lead."
+folder_readme "$RESEARCH/internal/product-knowledge/user-personas" "Persona profiles: goals, pain points, behaviours." "Phase 1 - Product Knowledge."
+folder_readme "$RESEARCH/internal/product-knowledge/ux-research"   "Usability tests, kickoff findings, moodboard references." "Phase 2 - Research."
 
 # Cross-phase institutional memory
 folder_readme "project-management/meeting-notes"      "Notes from every team meeting with decisions and actions." "Cross-phase. Owner: Product Lead."
@@ -186,30 +195,30 @@ It is organised as a phase-gated workspace: product knowledge flows into researc
 
 ```
 __ROOTNAME__/
-├── research/
-│   ├── CHANGELOG.md            Top-level research changelog
-│   ├── external/               Competitor and market-facing research
-│   │   ├── CHANGELOG.md
-│   │   └── competitor-analysis/
-│   │       ├── profiles/                One file per competitor
-│   │       ├── feature-matrix.md        Side-by-side comparison
-│   │       ├── pricing-comparison.md
-│   │       ├── pain-points.md
-│   │       └── opportunities.md
-│   └── internal/               The product's own knowledge and research
-│       ├── CHANGELOG.md
-│       └── product-knowledge/
-│           ├── overview/                Vision, persona hierarchy
-│           ├── modules/                 Per-module workspace (definition, userflows, notes, research)
-│           ├── user-personas/
-│           ├── ux-research/             Kickoff findings, moodboard references
-│           │   └── ux-visualization-guide.md   How UX artifacts are chosen and drawn
-│           ├── open-questions.md
-│           ├── information-architecture.md
-│           └── sitemap.md
-└── project-management/         Institutional memory and the workspace's own docs
+└── project-management/         The whole workspace: research, institutional memory, its own docs
     ├── README.md               This guide
     ├── feature.md              Master feature inventory (status per feature)
+    ├── research/
+    │   ├── CHANGELOG.md            Top-level research changelog
+    │   ├── external/               Competitor and market-facing research
+    │   │   ├── CHANGELOG.md
+    │   │   └── competitor-analysis/
+    │   │       ├── profiles/                One file per competitor
+    │   │       ├── feature-matrix.md        Side-by-side comparison
+    │   │       ├── pricing-comparison.md
+    │   │       ├── pain-points.md
+    │   │       └── opportunities.md
+    │   └── internal/               The product's own knowledge and research
+    │       ├── CHANGELOG.md
+    │       └── product-knowledge/
+    │           ├── overview/                Vision, persona hierarchy
+    │           ├── modules/                 Per-module workspace (definition, userflows, notes, research)
+    │           ├── user-personas/
+    │           ├── ux-research/             Kickoff findings, moodboard references
+    │           │   └── ux-visualization-guide.md   How UX artifacts are chosen and drawn
+    │           ├── open-questions.md
+    │           ├── information-architecture.md
+    │           └── sitemap.md
     ├── rules/                  Workspace rules
     │   ├── file-naming-rule.md
     │   ├── version-control-rule.md
@@ -231,9 +240,9 @@ This tree shows only the documentation workspace. Application files (`package.js
 Work flows through three phases in order. Nothing moves to a later phase until the prior phase has sign-off, and every gate approval is logged in `project-management/decisionlog.md`.
 
 ```
-Phase 1 - Product Knowledge    research/internal/product-knowledge/     Sign-off: Product Lead
-Phase 2 - Research             research/external/ + research/internal/  Sign-off: Product Lead + Lead Designer
-Phase 3 - UX Structure         research/internal/product-knowledge/     Sign-off: Product Lead + Lead Designer + Stakeholder
+Phase 1 - Product Knowledge    __RESEARCH__/internal/product-knowledge/     Sign-off: Product Lead
+Phase 2 - Research             __RESEARCH__/external/ + __RESEARCH__/internal/  Sign-off: Product Lead + Lead Designer
+Phase 3 - UX Structure         __RESEARCH__/internal/product-knowledge/     Sign-off: Product Lead + Lead Designer + Stakeholder
                                (information-architecture.md, sitemap.md)
 ```
 
@@ -244,20 +253,20 @@ Phase 3 - UX Structure         research/internal/product-knowledge/     Sign-off
 | Content type | Destination |
 |---|---|
 | Feature inventory | `__FEATURE__` |
-| Product vision or overview | `research/internal/product-knowledge/overview/` |
-| Module definitions | `research/internal/product-knowledge/modules/[name]/` |
-| Open product questions | `research/internal/product-knowledge/open-questions.md` |
-| User personas | `research/internal/product-knowledge/user-personas/` |
-| Market or industry research | `research/external/` |
-| User interviews, surveys, usability tests | `research/internal/product-knowledge/ux-research/` |
-| Competitor profile | `research/external/competitor-analysis/profiles/` |
-| Feature comparison | `research/external/competitor-analysis/feature-matrix.md` |
-| Competitor pricing | `research/external/competitor-analysis/pricing-comparison.md` |
-| Competitor pain points | `research/external/competitor-analysis/pain-points.md` |
-| Strategic opportunities | `research/external/competitor-analysis/opportunities.md` |
-| Module-specific research | `research/internal/product-knowledge/modules/[name]/research/` |
-| Information architecture | `research/internal/product-knowledge/information-architecture.md` |
-| Sitemap | `research/internal/product-knowledge/sitemap.md` |
+| Product vision or overview | `__RESEARCH__/internal/product-knowledge/overview/` |
+| Module definitions | `__RESEARCH__/internal/product-knowledge/modules/[name]/` |
+| Open product questions | `__RESEARCH__/internal/product-knowledge/open-questions.md` |
+| User personas | `__RESEARCH__/internal/product-knowledge/user-personas/` |
+| Market or industry research | `__RESEARCH__/external/` |
+| User interviews, surveys, usability tests | `__RESEARCH__/internal/product-knowledge/ux-research/` |
+| Competitor profile | `__RESEARCH__/external/competitor-analysis/profiles/` |
+| Feature comparison | `__RESEARCH__/external/competitor-analysis/feature-matrix.md` |
+| Competitor pricing | `__RESEARCH__/external/competitor-analysis/pricing-comparison.md` |
+| Competitor pain points | `__RESEARCH__/external/competitor-analysis/pain-points.md` |
+| Strategic opportunities | `__RESEARCH__/external/competitor-analysis/opportunities.md` |
+| Module-specific research | `__RESEARCH__/internal/product-knowledge/modules/[name]/research/` |
+| Information architecture | `__RESEARCH__/internal/product-knowledge/information-architecture.md` |
+| Sitemap | `__RESEARCH__/internal/product-knowledge/sitemap.md` |
 | Meeting notes | `project-management/meeting-notes/` |
 | Requirement updates | `project-management/requirement-updates/` |
 | Team / stakeholder feedback | `project-management/feedback/` |
@@ -273,7 +282,7 @@ Phase 3 - UX Structure         research/internal/product-knowledge/     Sign-off
 3. One topic per file. No monolith documents.
 4. No file called "Final." Use version numbers.
 5. No phase skipping. Product knowledge before research, research before UX structure.
-6. Every open question has an owner. See `research/internal/product-knowledge/open-questions.md`.
+6. Every open question has an owner. See `__RESEARCH__/internal/product-knowledge/open-questions.md`.
 7. The module master docs are auto-generated. Never edit `master-doc.md` by hand.
 
 ---
@@ -295,14 +304,14 @@ EOF
 write_if_absent "$RULES/file-naming-rule.md" <<'EOF'
 # File Naming Rule
 
-Consistent file naming keeps the project navigable as it grows. These rules apply to every file and folder created inside the workspace tree (`research/` and `project-management/`, including `__RULES__/` and `__FEATURE__`).
+Consistent file naming keeps the project navigable as it grows. These rules apply to every file and folder created inside the workspace tree (`__RESEARCH__/` and `project-management/`, including `__RULES__/` and `__FEATURE__`).
 
 ---
 
 ## General Rules
 
 1. **Kebab-case only.** Workspace folder and file names use lowercase words separated by hyphens. No spaces, no underscores, no PascalCase, no camelCase.
-2. **No numbers in folder names.** Folders are named by purpose, not by sequence (e.g., `research/` not `01-research/`).
+2. **No numbers in folder names.** Folders are named by purpose, not by sequence (e.g., `__RESEARCH__/` not `01-research/`).
 3. **Lowercase only.** No capital letters in workspace folder or file names.
 4. **No em dashes in file content.** Use a regular hyphen (`-`) instead of an em dash in all written content.
 5. **Include the date** on all time-sensitive files (research, meeting notes, competitor profiles, changelogs).
@@ -396,7 +405,7 @@ Start at `v1`. Never use `v0`, `draft`, `final`, `new`, or `latest` as version i
 
 - Commit frequently - at minimum, after completing each task.
 - Commit messages should be descriptive: `Add competitor profile for X` not `Update files`.
-- Use branch names in the format `[type]/[description]` - e.g., `docs/module-notes`, `research/competitor-x`.
+- Use branch names in the format `[type]/[description]` - e.g., `docs/module-notes`, `__RESEARCH__/competitor-x`.
 
 ---
 
@@ -412,7 +421,7 @@ How product decisions get made, recorded, and changed. Complements `file-naming-
 
 ## Principles
 
-- Product details (module names, features, user roles, business goals) are never inferred or assumed. They come directly from what the product owner provides. If a detail is unknown, leave a placeholder and flag it in `research/internal/product-knowledge/open-questions.md`.
+- Product details (module names, features, user roles, business goals) are never inferred or assumed. They come directly from what the product owner provides. If a detail is unknown, leave a placeholder and flag it in `__RESEARCH__/internal/product-knowledge/open-questions.md`.
 - Every decision is logged in `project-management/decisionlog.md` with date, owner, and reason.
 - Phase-gate approvals are decisions and must be logged the same way.
 
@@ -461,7 +470,7 @@ A complete, maintained inventory of every feature __PROJECT__ has or plans to ha
 Never mark a feature as "Planned" without a clear owner. Update statuses after every sprint or design review.
 EOF
 
-write_if_absent "research/CHANGELOG.md" <<'EOF'
+write_if_absent "$RESEARCH/CHANGELOG.md" <<'EOF'
 # Research Changelog
 
 A chronological record of changes across all research - both external (competitor) and internal (product knowledge). Each `external/` and `internal/` folder keeps its own scoped changelog; this file is the top-level roll-up.
@@ -485,7 +494,7 @@ A chronological record of changes across all research - both external (competito
 _No entries yet._
 EOF
 
-write_if_absent "research/external/CHANGELOG.md" <<'EOF'
+write_if_absent "$RESEARCH/external/CHANGELOG.md" <<'EOF'
 # External Research Changelog
 
 A chronological record of changes to external research - competitor profiles, pricing comparisons, feature matrices, pain points, and opportunities.
@@ -509,7 +518,7 @@ A chronological record of changes to external research - competitor profiles, pr
 _No entries yet._
 EOF
 
-write_if_absent "research/internal/CHANGELOG.md" <<'EOF'
+write_if_absent "$RESEARCH/internal/CHANGELOG.md" <<'EOF'
 # Internal Research Changelog
 
 A chronological record of changes to internal research - product knowledge, modules, personas, information architecture, sitemap, and UX research.
@@ -533,7 +542,7 @@ A chronological record of changes to internal research - product knowledge, modu
 _No entries yet._
 EOF
 
-write_if_absent "research/external/competitor-analysis/feature-matrix.md" <<'EOF'
+write_if_absent "$RESEARCH/external/competitor-analysis/feature-matrix.md" <<'EOF'
 # Competitor Feature Matrix
 
 Side-by-side comparison of __PROJECT__ against direct and indirect competitors.
@@ -557,7 +566,7 @@ Add a column for each competitor as its profile is completed in `profiles/`.
 -
 EOF
 
-write_if_absent "research/external/competitor-analysis/pricing-comparison.md" <<'EOF'
+write_if_absent "$RESEARCH/external/competitor-analysis/pricing-comparison.md" <<'EOF'
 # Pricing Comparison
 
 A structured analysis of how competitors price their products - tier structures, feature gating, trial models, and revenue streams. Informs __PROJECT__'s own monetisation decisions.
@@ -584,7 +593,7 @@ YYYY-MM-DD
 _No entries yet._
 EOF
 
-write_if_absent "research/external/competitor-analysis/pain-points.md" <<'EOF'
+write_if_absent "$RESEARCH/external/competitor-analysis/pain-points.md" <<'EOF'
 # Competitor Pain Points
 
 User and market pain points surfaced through competitor analysis - the friction, gaps, and complaints that recur across competing products. These are the problems __PROJECT__ can solve better.
@@ -609,7 +618,7 @@ User and market pain points surfaced through competitor analysis - the friction,
 _No entries yet._
 EOF
 
-write_if_absent "research/external/competitor-analysis/opportunities.md" <<'EOF'
+write_if_absent "$RESEARCH/external/competitor-analysis/opportunities.md" <<'EOF'
 # Opportunities
 
 Synthesised strategic opportunities identified through the full competitor analysis - where __PROJECT__ can lead, differentiate, or capture underserved ground.
@@ -634,7 +643,7 @@ Synthesised strategic opportunities identified through the full competitor analy
 _No entries yet._
 EOF
 
-write_if_absent "research/internal/product-knowledge/open-questions.md" <<'EOF'
+write_if_absent "$RESEARCH/internal/product-knowledge/open-questions.md" <<'EOF'
 # Open Questions - Master List
 
 > Every unresolved product question lives here. Review weekly. No question should stay unanswered for more than two weeks.
@@ -654,7 +663,7 @@ write_if_absent "research/internal/product-knowledge/open-questions.md" <<'EOF'
 | - | - | - | - | - | - |
 EOF
 
-write_if_absent "research/internal/product-knowledge/information-architecture.md" <<'EOF'
+write_if_absent "$RESEARCH/internal/product-knowledge/information-architecture.md" <<'EOF'
 # Information Architecture
 
 How __PROJECT__'s content, features, and navigation are structured. The IA is the skeleton everything else is built on - navigation, flows, and screen layouts all follow from it.
@@ -669,7 +678,7 @@ How __PROJECT__'s content, features, and navigation are structured. The IA is th
 _To be defined once product knowledge and research are signed off (Phase 3)._
 EOF
 
-write_if_absent "research/internal/product-knowledge/sitemap.md" <<'EOF'
+write_if_absent "$RESEARCH/internal/product-knowledge/sitemap.md" <<'EOF'
 # Sitemap
 
 A map of every screen in __PROJECT__ and how they connect. Useful for onboarding new team members and for catching gaps in coverage before design begins.
@@ -685,7 +694,7 @@ EOF
 
 # The ux-visualization-assistant skill reads this guide first. The project's copy
 # wins over the one built into that skill, so a team can tune it here.
-write_if_absent "research/internal/product-knowledge/ux-research/ux-visualization-guide.md" <<'EOF'
+write_if_absent "$RESEARCH/internal/product-knowledge/ux-research/ux-visualization-guide.md" <<'EOF'
 # UX Visualization Guide
 
 The single source of truth for choosing and shaping UX artifacts on **__PROJECT__**. The `ux-visualization-assistant` skill reads this file first and follows it; where this guide and a request conflict, the conflict gets surfaced rather than silently resolved.
@@ -785,16 +794,16 @@ Always markdown tables, never Mermaid. Empathy map is four quadrants (Says / Thi
 
 ## Placement and naming
 
-Generated artifacts go in the routing-correct folder and follow kebab-case and the dating/versioning conventions in [`__RULES__/file-naming-rule.md`](../../../../__RULES__/file-naming-rule.md).
+Generated artifacts go in the routing-correct folder and follow kebab-case and the dating/versioning conventions in [`__RULES__/file-naming-rule.md`](__UP__/__RULES__/file-naming-rule.md).
 
 | Artifact | Location |
 | --- | --- |
-| Module user flows | `research/internal/product-knowledge/modules/<module>/userflows.md` |
-| Information architecture | `research/internal/product-knowledge/information-architecture.md` |
-| Sitemap | `research/internal/product-knowledge/sitemap.md` |
-| Personas | `research/internal/product-knowledge/user-personas/` |
-| Empathy maps, journeys, experience maps | `research/internal/product-knowledge/ux-research/` |
-| Competitive analysis | `research/external/competitor-analysis/` |
+| Module user flows | `__RESEARCH__/internal/product-knowledge/modules/<module>/userflows.md` |
+| Information architecture | `__RESEARCH__/internal/product-knowledge/information-architecture.md` |
+| Sitemap | `__RESEARCH__/internal/product-knowledge/sitemap.md` |
+| Personas | `__RESEARCH__/internal/product-knowledge/user-personas/` |
+| Empathy maps, journeys, experience maps | `__RESEARCH__/internal/product-knowledge/ux-research/` |
+| Competitive analysis | `__RESEARCH__/external/competitor-analysis/` |
 EOF
 
 write_if_absent "project-management/decisionlog.md" <<'EOF'
@@ -865,10 +874,10 @@ EOF
 # ---------------------------------------------------------------------------
 # Modules index (lives inside product-knowledge/modules)
 # ---------------------------------------------------------------------------
-write_if_absent "research/internal/product-knowledge/modules/README.md" <<'EOF'
+write_if_absent "$RESEARCH/internal/product-knowledge/modules/README.md" <<'EOF'
 # modules
 
-Each product module gets its own subfolder here, under `research/internal/product-knowledge/modules/`. This is where the module definition, its user flows, module-specific research, and notes live together.
+Each product module gets its own subfolder here, under `__RESEARCH__/internal/product-knowledge/modules/`. This is where the module definition, its user flows, module-specific research, and notes live together.
 
 ## Structure per Module
 
@@ -878,7 +887,7 @@ modules/
     ├── [module-name].md   module definition: what it does, personas, design status, changelog
     ├── userflows.md       user and task flows for the module
     ├── notes.md           open questions, decisions log, research gaps
-    ├── research/          individual research files (.md) - auto-synced to master-doc.md   (when research exists)
+    ├── __RESEARCH__/          individual research files (.md) - auto-synced to master-doc.md   (when research exists)
     └── master-doc.md      auto-generated combined research document - do not edit manually  (when research exists)
 ```
 
@@ -886,7 +895,7 @@ modules/
 
 1. Create a subfolder named after the module in kebab-case (e.g., `onboarding`, `checkout`).
 2. Add `[module-name].md` with the module definition, `userflows.md` with its flows, and `notes.md` for open items.
-3. Add individual research files inside `research/` - one topic per file. If a master-doc sync skill is installed, `master-doc.md` is generated automatically when files in `research/` change. Do not edit it manually.
+3. Add individual research files inside `__RESEARCH__/` - one topic per file. If a master-doc sync skill is installed, `master-doc.md` is generated automatically when files in `__RESEARCH__/` change. Do not edit it manually.
 
 ## Current Modules
 

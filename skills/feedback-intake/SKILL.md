@@ -35,7 +35,7 @@ This is the required order of operations.
 1. **Collect the raw input.** A pasted block, a meeting note, or a FigJam board reference. For FigJam, read it via the Figma MCP (see below). Split it into discrete, atomic feedback items - one idea per entry.
 2. **Categorize each item.** Apply the 9-category guide in the readme using the keyword cues. Multi-tag when an item spans domains (e.g. UX + Copy / Content). When uncertain or two categories tie, tag both and append `(needs confirmation)`.
 3. **Suggest severity.** Map the language of impact/urgency to the scale: blocker/broken/"can't ship" -> Critical; major user impact -> High; "should fix" -> Medium; minor/polish -> Low; "would be nice" -> Nice-to-have.
-4. **Set Module / Area, Reviewer, Source, Time.** Pull from the input. Write `Module / Area` as a markdown link to the module readme (e.g. `[Game Lobby](../../research/internal/product-knowledge/modules/game-lobby/README.md)`); use `Global` for cross-cutting items. Never infer product details - if a module or source is unclear, leave a placeholder and flag it (see Product Knowledge Rule below).
+4. **Set Module / Area, Reviewer, Source, Time.** Pull from the input. Write `Module / Area` as a markdown link to the module readme (e.g. `[Game Lobby](../research/internal/product-knowledge/modules/game-lobby/README.md)`; in an older workspace with `research/` at the project root, `../../research/...`); use `Global` for cross-cutting items. Never infer product details - if a module or source is unclear, leave a placeholder and flag it (see Product Knowledge Rule below).
 5. **Run the dedup check** across existing `*.feedback.md` files (see Deduplication).
 6. **Prepare the draft.** Show, for each proposed entry: the date file it lands in, the next id, all fields filled, the dedup result, and the updated header Summary. Do not touch any file yet.
 7. **Present the draft for review** and wait for explicit approval.
@@ -96,7 +96,7 @@ The register is the standing overview. For ad-hoc slices it does not pre-group, 
 
 ## Product Knowledge Rule
 
-Per the project's `CLAUDE.md`, never infer or assume product details (module names, features, roles). If the input does not make the module, source, or author clear, use a placeholder, flag it in the draft, and - if it is an open product question - note it for `research/internal/product-knowledge/open-questions.md`.
+Per the project's `CLAUDE.md`, never infer or assume product details (module names, features, roles). If the input does not make the module, source, or author clear, use a placeholder, flag it in the draft, and - if it is an open product question - note it for `project-management/research/internal/product-knowledge/open-questions.md`.
 
 ## Tips
 
