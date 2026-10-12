@@ -21,7 +21,6 @@ import {
   uncoveredSeconds,
 } from "../templates/tracking/engine/blocks.mjs";
 import {
-  computerLabel,
   computerMonths,
   historyPaths,
   logPath,
@@ -64,7 +63,6 @@ import {
   plan,
   presentDays,
   renderHtml,
-  spanText,
   statsFor,
   typeRollup,
   weekLabel,
@@ -693,8 +691,6 @@ test("timesheets are found per computer, in its folder or still flat", () => {
     assert.equal(path.relative(dir, monthFilePath("2026-11", "mini-0c0c", dir)), path.join("computers", "mini-0c0c", "2026-11.md"));
     assert.equal(path.relative(dir, logPath("mini-0c0c", dir)), "log.mini-0c0c.jsonl");
     assert.equal(path.relative(dir, logPath("desk-1a2b", dir)), path.join("computers", "desk-1a2b", "log.jsonl"));
-    assert.equal(computerLabel("studio-3f9a"), "studio");
-    assert.equal(computerLabel("studio"), "studio");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -979,15 +975,6 @@ test("a day's tasks group by type in the config's order, timed tasks in time ord
   ]);
 });
 
-test("a task's line on the computer's own PDF says when, where and in which session", () => {
-  const day = { sessions: [{ ref: "4c11d0a2", label: "fix checkout validation bug" }] };
-  assert.equal(
-    spanText({ when: [{ start: "09:10", end: "11:20" }], sessions: ["4c11d0a2"] }, day, "studio"),
-    '09:10-11:20 · studio · "fix checkout validation bug"',
-  );
-  assert.equal(spanText({ manual: true, givenSeconds: 3600 }, day, "studio"), "studio · manual, 1h given");
-});
-
 test("weeks are whole Monday to Sunday, labelled across month and year edges", () => {
   assert.deepEqual(weeksOverlapping("2026-10").map((week) => week.start), ["2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26"]);
   assert.equal(weekLabel("2026-10-05", "2026-10-11"), "5 - 11 October 2026");
@@ -1002,10 +989,10 @@ test("a month's week rows count their whole week, future weeks included", () => 
     ["2026-10-01", 6 * HOUR],
     ["2026-10-06", 20 * HOUR],
   ]);
-  const rows = weekRows(totals, { week: 40 * HOUR, month: 160 * HOUR }, "2026-10", new Map([["2026-10-06", 5 * HOUR]]));
+  const rows = weekRows(totals, { week: 40 * HOUR, month: 160 * HOUR }, "2026-10");
   assert.equal(rows.length, 5);
   assert.deepEqual([rows[0].done, rows[0].left, rows[0].before], [30 * HOUR, 10 * HOUR, { start: "2026-09-28", end: "2026-09-30", seconds: 24 * HOUR }]);
-  assert.deepEqual([rows[1].done, rows[1].own, rows[1].left], [20 * HOUR, 5 * HOUR, 20 * HOUR]);
+  assert.deepEqual([rows[1].done, rows[1].left], [20 * HOUR, 20 * HOUR]);
   assert.deepEqual([rows[4].done, rows[4].left, rows[4].after.start], [0, 40 * HOUR, "2026-11-01"]);
   // No budget: the hours, with no cap and nothing left.
   assert.deepEqual([weekRows(totals, null, "2026-10")[1].cap, weekRows(totals, null, "2026-10")[1].left], [null, null]);
@@ -1030,31 +1017,26 @@ test("a run on the 1st writes last month too, and one PDF for the whole week, al
   ]);
 });
 
-test("the stat boxes show done, left and the total, own hours first on a computer's PDF", () => {
+test("the stat boxes show done, left and the total", () => {
   const labels = (stats) => stats.map((entry) => `${entry.value} ${entry.label}`);
   const week = { done: 26.5 * HOUR, cap: 40 * HOUR, left: 13.5 * HOUR };
-  assert.deepEqual(labels(statsFor({ kind: "week", own: false, figures: week, total: 26.5 * HOUR, dayCount: 4 })), [
+  assert.deepEqual(labels(statsFor({ kind: "week", figures: week, total: 26.5 * HOUR, dayCount: 4 })), [
     "26h 30m Done this week",
     "13h 30m Remaining",
     "40h Week total",
   ]);
-  assert.deepEqual(labels(statsFor({ kind: "week", own: true, figures: week, total: 18 * HOUR, dayCount: 3 })), [
-    "18h This computer",
-    "26h 30m of 40h Project done",
-    "13h 30m Project left",
-  ]);
   assert.deepEqual(
-    labels(statsFor({ kind: "month", own: false, figures: { done: 170 * HOUR, cap: 160 * HOUR, left: -10 * HOUR }, total: 170 * HOUR, dayCount: 20 })),
+    labels(statsFor({ kind: "month", figures: { done: 170 * HOUR, cap: 160 * HOUR, left: -10 * HOUR }, total: 170 * HOUR, dayCount: 20 })),
     ["170h Done so far", "10h Over budget by", "160h Month total"],
   );
-  assert.deepEqual(labels(statsFor({ kind: "month", own: false, figures: null, total: 10 * HOUR, dayCount: 2 })), [
+  assert.deepEqual(labels(statsFor({ kind: "month", figures: null, total: 10 * HOUR, dayCount: 2 })), [
     "10h Total",
     "2 Tracked days",
     "5h Average day",
   ]);
 });
 
-test("the client PDF names no computer and carries no times or sessions", () => {
+test("the PDF names no computer and carries no times or sessions", () => {
   const own = [
     {
       date: DAY,
@@ -1066,7 +1048,7 @@ test("the client PDF names no computer and carries no times or sessions", () => 
       sessions: [{ ref: "4c11d0a2", label: "fix checkout validation bug" }, { ref: "9be0f113", label: "webhook retries" }],
     },
   ];
-  const view = (days, computer) => ({
+  const view = (days) => ({
     project: "acme-shop",
     period: "Week of 14 - 20 September 2026",
     kind: "week",
@@ -1074,17 +1056,13 @@ test("the client PDF names no computer and carries no times or sessions", () => 
     days,
     categories: ["Development", "Research"],
     stats: [],
-    computer,
     weeks: null,
   });
-  const client = renderHtml(view(mergeDays([presentDays(own).days]), null));
+  const client = renderHtml(view(mergeDays([presentDays(own).days])));
   for (const leak of ["studio", "4c11d0a2", "fix checkout", "webhook", "09:10", "12:00"]) {
     assert.equal(client.includes(leak), false, leak);
   }
   assert.match(client, /Research &amp; exploration/);
-  const mine = renderHtml(view(presentDays(own).days, "studio"));
-  assert.match(mine, /09:10-11:20 · studio · &quot;fix checkout validation bug&quot;/);
-  assert.match(mine, /12:00-13:00 · studio · &quot;webhook retries&quot;/);
 });
 
 // --- the hour budget -------------------------------------------------------
@@ -1187,8 +1165,7 @@ test("every computer's timesheet counts toward the one budget, upkeep rows not a
     const onDisk = recordedDays(["2026-10"], { dir });
     assert.equal(onDisk.get("2026-10-05"), 15 * HOUR);
     assert.equal(onDisk.get("2026-10-06"), 3 * HOUR);
-    assert.equal(recordedDays(["2026-10"], { dir, only: "desk-1a2b" }).get("2026-10-06"), undefined);
-
+  
     // A computer's freshly measured month replaces what its file says.
     const fresh = { id: "desk-1a2b", months: new Map([["2026-10", { month: "2026-10", days: [{ date: "2026-10-05", seconds: 12 * HOUR, tasks: [] }] }]]) };
     assert.equal(recordedDays(["2026-10"], { dir, fresh }).get("2026-10-05"), 17 * HOUR);

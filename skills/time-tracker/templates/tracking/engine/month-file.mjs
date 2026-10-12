@@ -139,7 +139,7 @@ export function needsBullets(task) {
 
 /**
  * Whether a named, measured task still needs its `When` - the clock times it
- * happened, which the computer's own PDF prints under it. Manual rows have no
+ * happened, kept in the timesheet. Manual rows have no
  * transcript to read times from.
  */
 export function needsTimes(task) {

@@ -151,8 +151,8 @@ function dayLabel(date) {
 }
 
 /**
- * How much of a row was logged by hand. A computer's own row is all or
- * nothing; a client row merged from several computers can be part of each,
+ * How much of a row was logged by hand. One computer's row is all or
+ * nothing; a row merged from several computers can be part of each,
  * which is why the merge carries `manualSeconds` rather than a flag.
  */
 export function manualShare(task) {
@@ -260,26 +260,6 @@ export function groupByType(tasks, categories = []) {
 }
 
 /**
- * The line under a task on a computer's own PDF: when it happened, on which
- * computer, in which session - `09:10-11:20 · studio · "fix checkout bug"`.
- * A manual row says so instead of a session. Never called for the client PDF.
- */
-export function spanText(task, day, computer) {
-  const parts = [];
-  if (task.when?.length > 0) parts.push(task.when.map((range) => `${range.start}-${range.end}`).join(", "));
-  parts.push(computer);
-  if (task.manual) {
-    parts.push(
-      task.givenSeconds != null ? `manual, ${formatDuration(task.givenSeconds)} given` : "manual",
-    );
-  } else if (task.sessions?.length > 0) {
-    const legend = new Map((day.sessions ?? []).map((session) => [session.ref, session.label]));
-    parts.push(task.sessions.map((ref) => `"${legend.get(ref) ?? `session ${ref}`}"`).join(" / "));
-  }
-  return parts.join(" · ");
-}
-
-/**
  * Fold several computers' days into one timesheet that does not show how
  * many there were.
  *
@@ -339,33 +319,18 @@ function leftStat(left, label) {
 
 /**
  * The stat boxes for a PDF. With a budget: done, left and the total for the
- * span - and on a computer's own PDF its own hours first, beside the
- * project's. Without one: the total, the days and the average day.
+ * span. Without one: the total, the days and the average day.
  */
-export function statsFor({ kind, own, figures, total, dayCount }) {
+export function statsFor({ kind, figures, total, dayCount }) {
   const average = dayCount > 0 ? total / dayCount : 0;
   if (!figures || figures.cap == null) {
     return [
-      stat(formatDuration(total), own ? "This computer" : "Total"),
+      stat(formatDuration(total), "Total"),
       stat(String(dayCount), "Tracked days"),
       stat(formatDuration(average), "Average day"),
     ];
   }
   const span = kind === "week" ? "week" : "month";
-  if (own) {
-    return kind === "week"
-      ? [
-          stat(formatDuration(total), "This computer"),
-          stat(`${formatDuration(figures.done)} of ${formatDuration(figures.cap)}`, "Project done"),
-          leftStat(figures.left, "Project left"),
-        ]
-      : [
-          stat(formatDuration(total), "This computer"),
-          stat(formatDuration(figures.done), "Project done"),
-          leftStat(figures.left, "Remaining"),
-          stat(formatDuration(figures.cap), "Month total"),
-        ];
-  }
   return [
     stat(formatDuration(figures.done), kind === "week" ? "Done this week" : "Done so far"),
     leftStat(figures.left, "Remaining"),
@@ -373,13 +338,13 @@ export function statsFor({ kind, own, figures, total, dayCount }) {
   ];
 }
 
-/** `28-30 Sep (24h) are on September's timesheet.` - for a week crossing the month's edge. */
-function edgeNote(edge, label) {
+/** `28-30 Sep (24h) are on September's PDF.` - for a week crossing the month's edge. */
+function edgeNote(edge) {
   if (!edge || edge.seconds <= 0) return "";
   const [, month] = edge.start.split("-").map(Number);
   return (
     `${shortSpan(edge.start, edge.end)} (${formatDuration(edge.seconds)}) ` +
-    `${edge.start === edge.end ? "is" : "are"} on ${MONTH_NAMES[month - 1]}'s ${label}.`
+    `${edge.start === edge.end ? "is" : "are"} on ${MONTH_NAMES[month - 1]}'s PDF.`
   );
 }
 
@@ -390,14 +355,12 @@ function dayHtml(day, view) {
       const tasks = group.tasks
         .map((task) => {
           const manual = manualTag(task);
-          const span = view.computer ? spanText(task, day, view.computer) : null;
           return (
             `<div class="row${task.fallback ? " fallback" : ""}">` +
             `<span class="name">${escapeHtml(task.name)}` +
             (manual ? `<span class="tag manual">${manual}</span>` : "") +
             `</span><span class="dots"></span>` +
             `<span class="time mono">${formatDuration(task.seconds)}</span></div>` +
-            (span ? `<div class="span">${escapeHtml(span)}</div>` : "") +
             (task.details?.length > 0
               ? `<ul class="details">${task.details.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
               : "")
@@ -426,10 +389,8 @@ function hours(seconds) {
 
 function weekTableHtml(view) {
   const budget = view.weeks.some((row) => row.cap != null);
-  const own = view.computer != null;
   const head =
     "<tr><th>Week</th><th>Dates</th><th class=\"right\">Done</th>" +
-    (own ? '<th class="right">This computer</th>' : "") +
     (budget ? '<th class="right">Cap</th><th class="right">Left</th>' : "") +
     "</tr>";
   const body = view.weeks
@@ -444,7 +405,6 @@ function weekTableHtml(view) {
         `<td>${shortSpan(row.start, row.end)}${current ? '<span class="tag">This week</span>' : ""}` +
         `${upcoming ? '<span class="tag soft">Upcoming</span>' : ""}</td>` +
         `<td class="mono right">${hours(row.done)}</td>` +
-        (own ? `<td class="mono right">${hours(row.own ?? 0)}</td>` : "") +
         (budget
           ? `<td class="mono right muted">${formatDuration(row.cap)}</td><td class="mono right">${left}</td>`
           : "") +
@@ -481,7 +441,7 @@ function weekSectionsHtml(view) {
       if (days.length === 0) return "";
       const subtotal = days.reduce((sum, day) => sum + day.seconds, 0);
       const crosses = row.before || row.after;
-      const notes = [edgeNote(row.beforeNote, view.edgeLabel), edgeNote(row.afterNote, view.edgeLabel)]
+      const notes = [edgeNote(row.beforeNote), edgeNote(row.afterNote)]
         .filter(Boolean)
         .join(" ");
       return `<div class="week-head">
@@ -502,10 +462,8 @@ function weekSectionsHtml(view) {
  * `config.json`, and they do not belong on a document that gets sent onward.
  * Do not reintroduce a footer or a subtitle line explaining them.
  *
- * The client view never names a computer and never carries clock times or
- * sessions - `view.computer` is null for it, and the merge has already dropped
- * them. A computer's own view names it once, in the subtitle, and prints when
- * and in which session each task happened under the task.
+ * It never names a computer and never carries clock times or sessions - the
+ * merge has already dropped them. They stay in each computer's timesheet.
  *
  * Within each day the tasks are grouped by work type, each type with its
  * subtotal; under each task sit its outcome bullets and, for hours logged by
@@ -518,8 +476,8 @@ function weekSectionsHtml(view) {
  * saying to whoever reads the figures. They are the person's own words; the
  * engine never writes one.
  *
- * `view` is `{ project, period, kind, today, days, categories, stats,
- * computer, weeks, monthCap, edgeLabel, notices }`; `weeks` only for a month.
+ * `view` is `{ project, period, kind, today, days, categories, stats, weeks,
+ * monthCap, notices }`; `weeks` only for a month.
  */
 export function renderHtml(view) {
   const total = view.days.reduce((sum, day) => sum + day.seconds, 0);
@@ -629,12 +587,6 @@ export function renderHtml(view) {
   .row .name { color: #2b2f38; }
   .row .time { color: #16181d; }
   .row.fallback .name { color: #4b5260; font-style: italic; }
-  /* When and where a task happened - the computer's own PDF only. */
-  .span {
-    padding-left: 10px; margin: -1px 0 1px; color: #6b7280; font-size: 8pt;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    break-before: avoid;
-  }
   /* Outcome bullets sit under their task, indented and a step quieter, so the
      name and time still read as the row and the list reads as its substance. */
   .details {
@@ -675,7 +627,7 @@ export function renderHtml(view) {
 <body>
 <header>
   <h1>${name} - time tracking</h1>
-  <div class="subtitle">${escapeHtml(view.period)}${view.computer ? ` · ${escapeHtml(view.computer)}` : ""}</div>
+  <div class="subtitle">${escapeHtml(view.period)}</div>
 </header>
 
 ${(view.notices ?? []).map((note) => `<p class="notice">${escapeHtml(note)}</p>`).join("\n")}
@@ -687,7 +639,7 @@ ${view.weeks ? weekTableHtml(view) : ""}
 
 <h2>Daily breakdown</h2>
 ${breakdown}
-<div class="grand"><span>Total${view.computer ? " (this computer)" : ""}</span><span class="mono">${formatDuration(total)}</span></div>
+<div class="grand"><span>Total</span><span class="mono">${formatDuration(total)}</span></div>
 
 <h2>By type</h2>
 <table>
@@ -927,7 +879,7 @@ function render(job, context) {
 
   let weeks = null;
   if (job.kind === "month") {
-    weeks = weekRows(project, weekCaps(config), job.month, null).map((row) => ({
+    weeks = weekRows(project, weekCaps(config), job.month).map((row) => ({
       ...row,
       beforeNote: row.before && { ...row.before, seconds: spanSeconds(project, row.before.start, row.before.end) },
       afterNote: row.after && { ...row.after, seconds: spanSeconds(project, row.after.start, row.after.end) },
@@ -941,11 +893,9 @@ function render(job, context) {
     today: context.today,
     days,
     categories: config.categories ?? [],
-    stats: statsFor({ kind: job.kind, own: false, figures: caps ? figures : null, total, dayCount: days.length }),
-    computer: null,
+    stats: statsFor({ kind: job.kind, figures: caps ? figures : null, total, dayCount: days.length }),
     weeks,
     monthCap: spanCaps?.month ?? null,
-    edgeLabel: "PDF",
     notices: exceptionNotes(config, job.start, job.end),
   });
 

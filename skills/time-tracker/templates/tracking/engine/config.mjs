@@ -285,15 +285,6 @@ export function describeTidy({ moved, deleted, kept }) {
   return `Tidied this computer's tracking files: ${parts.join("; ")}.`;
 }
 
-/**
- * A computer's name as people read it: `studio-3f9a` -> `studio`. The four
- * random characters only keep two computers both called "studio" apart in
- * file names; on a PDF they are noise.
- */
-export function computerLabel(id) {
-  return String(id).replace(/-[0-9a-f]{4}$/, "");
-}
-
 /** Where this computer's name is kept - once per computer, for every project it tracks. */
 export function machinePath() {
   return path.join(homedir(), ".claude", "time-tracker", "machine.json");

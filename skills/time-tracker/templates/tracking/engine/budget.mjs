@@ -99,16 +99,13 @@ export function spanFigures(totals, start, end, cap) {
  * matches the budget the prompt hook enforces - and so the rows need not add
  * up to the month. `before` and `after` are the parts of the week outside
  * the month, with what they record, for the note under a week's heading.
- *
- * `own` is one computer's totals, for its own PDF's extra column.
  */
-export function weekRows(totals, caps, month, own = null) {
+export function weekRows(totals, caps, month) {
   const first = `${month}-01`;
   const last = monthEnd(month);
   return weeksOverlapping(month).map((week, index) => {
     const cap = caps?.weekFor ? caps.weekFor(week.start) : caps?.week;
     const row = { n: index + 1, ...week, ...spanFigures(totals, week.start, week.end, cap) };
-    if (own) row.own = spanSeconds(own, week.start, week.end);
     if (week.start < first) {
       const end = addDays(first, -1);
       row.before = { start: week.start, end, seconds: spanSeconds(totals, week.start, end) };
@@ -187,16 +184,13 @@ export function exceptionNotes(config, start, end) {
  * re-measured in memory, used in place of what its files on disk say. That is
  * how the prompt hook counts the minutes since the last collect without
  * rewriting the timesheet on every prompt.
- *
- * `only` limits it to one computer's timesheet - its share, for its own PDF.
  */
-export function recordedDays(months, { dir = TRACKING_DIR, fresh = null, only = null } = {}) {
+export function recordedDays(months, { dir = TRACKING_DIR, fresh = null } = {}) {
   const totals = new Map();
   for (const month of new Set(months)) {
     const ids = new Set(monthFileIds(month, dir));
     if (fresh?.months.has(month)) ids.add(fresh.id);
     for (const id of ids) {
-      if (only && id !== only) continue;
       let file = fresh?.id === id ? fresh.months.get(month) : null;
       if (!file) {
         const source = monthFilePath(month, id, dir);
