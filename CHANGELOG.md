@@ -2,6 +2,17 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.17.0 - 2026-10-12
+
+**time-tracker tidies its folder.** After `aistack update`, say **"update time tracker setup"** in each project that tracks time, commit, then pull on your other computers.
+
+### Changed
+
+- **time-tracker** keeps each computer's files in a folder of its own: `computers/<computer>/2026-10.md` and `computers/<computer>/log.jsonl`, instead of `2026-10.<computer>.md` and `log.<computer>.jsonl` side by side at the top of `tracking/`.
+- **time-tracker** writes one set of PDFs, merging every computer: `reports/2026-10.pdf` and `reports/weekly/<first day>.pdf`. `client/` is renamed `reports/`. Each computer no longer gets PDFs of its own; its clock times and sessions stay in its timesheet.
+- **time-tracker** setup sorts an existing install into the new layout. It moves every computer's timesheets and log into `computers/` and `client/` to `reports/`, and deletes the per-computer PDFs and `weekly/`, which git history keeps. A flat timesheet that differs from its copy in `computers/` is left in place and named for a hand merge. Check flags a folder that still needs sorting.
+- **time-tracker** keeps reading old-style files from a computer that hasn't pulled the update yet, so its hours still count. On its first session with the new version, each computer moves its own files into its folder. It never moves another computer's files, which that computer may still be writing.
+
 ## 0.16.0 - 2026-10-09
 
 **New skill: site-to-figma.** Add it to any project with `aistack add site-to-figma`. It needs Orca and the Figma MCP server.
