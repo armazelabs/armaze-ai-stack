@@ -2,7 +2,7 @@
 //
 //   node <tracking>/engine/log.mjs record --named 2026-09-08,2026-09-09 --session 4c11d0a
 //
-// One JSON object per line in <tracking>/log.<computer>.jsonl, appended
+// One JSON object per line in <tracking>/computers/<computer>/log.jsonl, appended
 // newest-last - one per computer, so two computers never append to the same
 // file, and each reads commits forward from where it itself left off. It
 // records the days named, the commits consumed, the session that did it and
@@ -23,7 +23,7 @@
 //     measured, so a log-driven skip would lose real days.
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { formatDuration } from "./blocks.mjs";
@@ -207,7 +207,9 @@ export function monthTotal(month, id) {
 }
 
 export function appendEntry(id, entry) {
-  appendFileSync(logPath(id), `${JSON.stringify(entry)}\n`);
+  const file = logPath(id);
+  mkdirSync(path.dirname(file), { recursive: true });
+  appendFileSync(file, `${JSON.stringify(entry)}\n`);
   return entry;
 }
 

@@ -9,13 +9,24 @@
 // Layout, from this file outwards:
 //   <repo>/<project-management>/<tracking>/engine/config.mjs   <- here
 //   <repo>/<project-management>/<tracking>/config.json
-//   <repo>/<project-management>/<tracking>/<YYYY-MM>.<computer>.md
-//   <repo>/<project-management>/<tracking>/log.<computer>.jsonl
+//   <repo>/<project-management>/<tracking>/computers/<computer>/<YYYY-MM>.md
+//   <repo>/<project-management>/<tracking>/computers/<computer>/log.jsonl
+//   <repo>/<project-management>/<tracking>/reports/              <- the PDFs
 //   <repo>/<project-management>/<tracking>/cache/
 //   ~/.claude/time-tracker/machine.json                        <- which computer this is
 
 import { homedir } from "node:os";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -30,6 +41,8 @@ export const REPO_ROOT = path.resolve(PM_DIR, "..");
 
 export const CACHE_DIR = path.join(TRACKING_DIR, "cache");
 export const CONFIG_PATH = path.join(TRACKING_DIR, "config.json");
+/** The PDFs - every computer merged into one, the ones to read and send. */
+export const REPORTS_DIR = path.join(TRACKING_DIR, "reports");
 
 const DEFAULT_CONFIG = {
   timeZone: "UTC",
@@ -106,45 +119,170 @@ export function historyPaths(repoRoot = REPO_ROOT) {
 }
 
 /**
- * One timesheet per computer. Every such file carries the computer's name as
- * its id, as in `2026-09.studio-3f9a.md`, so no two computers ever write to
- * the same file and nothing they commit conflicts in git. Each computer is
- * one worker: its hours count in full, whoever sits at it.
+ * One folder per computer, `computers/<id>/`, holding that computer's
+ * timesheets and log. The id is the computer's name, as in `studio-3f9a`, so
+ * no two computers ever write to the same file and nothing they commit
+ * conflicts in git. Each computer is one worker: its hours count in full,
+ * whoever sits at it.
  *
- * An id of two parts, `<person>.<computer>`, is a timesheet from a computer
- * still on the version before this one. It is read wherever timesheets are
- * merged - its hours are real - until that computer upgrades and renames it.
+ * Before the folders, a timesheet sat at the top as `<YYYY-MM>.<id>.md` and
+ * the log as `log.<id>.jsonl`. A computer still on that version keeps writing
+ * there until it pulls this one, so those names are still read wherever
+ * timesheets are merged - their hours are real. Only the computer that owns
+ * them moves them (`tidyOwnStrays`): moving another computer's file while it
+ * is still writing it is exactly the conflict the per-computer split avoids.
+ *
+ * An id of two parts, `<person>.<computer>`, is older still: a timesheet from
+ * the per-person version, flat by definition.
  */
-export function monthFilePath(month, id) {
-  return path.join(TRACKING_DIR, `${month}.${id}.md`);
+export function computerDir(id, dir = TRACKING_DIR) {
+  return path.join(dir, "computers", id);
 }
 
-export function monthFilePattern(id) {
-  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^(\\d{4}-\\d{2})\\.${escaped}\\.md$`);
+export function legacyMonthPath(month, id, dir = TRACKING_DIR) {
+  return path.join(dir, `${month}.${id}.md`);
 }
 
-export function logPath(id) {
-  return path.join(TRACKING_DIR, `log.${id}.jsonl`);
+export function legacyLogPath(id, dir = TRACKING_DIR) {
+  return path.join(dir, `log.${id}.jsonl`);
+}
+
+/**
+ * Where a computer's timesheet for `month` is: its folder, or the old flat
+ * name when only that exists - so a computer not yet upgraded is still read,
+ * and still written where it writes. A new file goes in the folder.
+ */
+export function monthFilePath(month, id, dir = TRACKING_DIR) {
+  const current = path.join(computerDir(id, dir), `${month}.md`);
+  const legacy = legacyMonthPath(month, id, dir);
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
+/** A computer's log, found the same way as its timesheets. */
+export function logPath(id, dir = TRACKING_DIR) {
+  const current = path.join(computerDir(id, dir), "log.jsonl");
+  const legacy = legacyLogPath(id, dir);
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
+function list(dir) {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+const MONTH_NAME = /^(\d{4}-\d{2})\.md$/;
+const ID_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Every month one computer has a timesheet for, in its folder or flat. */
+export function computerMonths(id, dir = TRACKING_DIR) {
+  const legacy = new RegExp(`^(\\d{4}-\\d{2})\\.${escapeRegExp(id)}\\.md$`);
+  const months = [
+    ...list(computerDir(id, dir)).map((name) => MONTH_NAME.exec(name)?.[1]),
+    ...list(dir).map((name) => legacy.exec(name)?.[1]),
+  ];
+  return [...new Set(months.filter(Boolean))].sort();
 }
 
 /**
  * Every file id with a timesheet for `month` - every computer's, not-yet-
- * upgraded ones included. Found from the file names, so a new computer never
- * has to be registered anywhere a teammate could also be writing.
+ * upgraded ones included. Found from the folder and file names, so a new
+ * computer never has to be registered anywhere a teammate could also be
+ * writing.
  */
 export function monthFileIds(month, dir = TRACKING_DIR) {
-  const pattern = new RegExp(`^${month}\\.([a-z0-9-]+(?:\\.[a-z0-9-]+)?)\\.md$`);
-  let names = [];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    // No tracking folder yet - nothing recorded.
+  const legacy = new RegExp(`^${month}\\.([a-z0-9-]+(?:\\.[a-z0-9-]+)?)\\.md$`);
+  const ids = [
+    ...list(path.join(dir, "computers")).filter(
+      (id) => ID_NAME.test(id) && existsSync(path.join(computerDir(id, dir), `${month}.md`)),
+    ),
+    ...list(dir).map((name) => legacy.exec(name)?.[1]),
+  ];
+  return [...new Set(ids.filter(Boolean))].sort();
+}
+
+/**
+ * Move this computer's own flat files into its folder: each `<YYYY-MM>.<id>.md`
+ * and `log.<id>.jsonl`. Its flat PDFs (`<YYYY-MM>.<id>.pdf`, `weekly/<day>.<id>.pdf`)
+ * are deleted - the PDFs in `reports/` cover every computer, and git keeps the
+ * old ones. Only ever this computer's: see `computerDir`.
+ *
+ * A timesheet already in the folder wins. A flat one that matches it is
+ * dropped; one that differs is left where it is and named in `kept`, for a
+ * person to look at. The flat log is older than anything in the folder, so it
+ * goes first when both exist.
+ *
+ * Returns `{ moved, deleted, kept }`, as names relative to `dir`.
+ */
+export function tidyOwnStrays(id, dir = TRACKING_DIR) {
+  const done = { moved: [], deleted: [], kept: [] };
+  const own = computerDir(id, dir);
+  const escaped = escapeRegExp(id);
+  const month = new RegExp(`^(\\d{4}-\\d{2})\\.${escaped}\\.md$`);
+  const pdf = new RegExp(`^\\d{4}-\\d{2}(?:-\\d{2})?\\.${escaped}\\.pdf$`);
+  const rel = (file) => path.relative(dir, file);
+  const into = (from, to) => {
+    mkdirSync(path.dirname(to), { recursive: true });
+    renameSync(from, to);
+    done.moved.push(`${rel(from)} -> ${rel(to)}`);
+  };
+
+  for (const name of list(dir)) {
+    const found = month.exec(name);
+    if (!found) continue;
+    const from = path.join(dir, name);
+    const to = path.join(own, `${found[1]}.md`);
+    if (!existsSync(to)) into(from, to);
+    else if (readFileSync(from, "utf8") === readFileSync(to, "utf8")) {
+      unlinkSync(from);
+      done.deleted.push(rel(from));
+    } else done.kept.push(rel(from));
   }
-  return names
-    .map((name) => pattern.exec(name)?.[1])
-    .filter(Boolean)
-    .sort();
+
+  const flatLog = legacyLogPath(id, dir);
+  if (existsSync(flatLog)) {
+    const to = path.join(own, "log.jsonl");
+    if (!existsSync(to)) into(flatLog, to);
+    else {
+      const older = readFileSync(flatLog, "utf8");
+      const newer = readFileSync(to, "utf8");
+      const temporary = `${to}.${process.pid}.tmp`;
+      writeFileSync(temporary, `${older}${older && !older.endsWith("\n") ? "\n" : ""}${newer}`);
+      renameSync(temporary, to);
+      unlinkSync(flatLog);
+      done.moved.push(`${rel(flatLog)} -> ${rel(to)}`);
+    }
+  }
+
+  for (const folder of [dir, path.join(dir, "weekly")]) {
+    for (const name of list(folder)) {
+      if (!pdf.test(name)) continue;
+      rmSync(path.join(folder, name), { force: true });
+      done.deleted.push(rel(path.join(folder, name)));
+    }
+  }
+  try {
+    rmdirSync(path.join(dir, "weekly"));
+  } catch {
+    // Absent, or still holding another computer's PDFs - left alone.
+  }
+  return done;
+}
+
+/** One line on what `tidyOwnStrays` did, or null when it did nothing. */
+export function describeTidy({ moved, deleted, kept }) {
+  if (moved.length + deleted.length + kept.length === 0) return null;
+  const parts = [];
+  if (moved.length > 0) parts.push(`moved ${moved.length} file${moved.length === 1 ? "" : "s"} into computers/`);
+  if (deleted.length > 0) parts.push(`removed ${deleted.length} old per-computer file${deleted.length === 1 ? "" : "s"}`);
+  if (kept.length > 0) parts.push(`left ${kept.join(", ")} (differs from the copy in computers/ - check it)`);
+  return `Tidied this computer's tracking files: ${parts.join("; ")}.`;
 }
 
 /**

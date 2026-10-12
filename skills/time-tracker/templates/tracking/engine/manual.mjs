@@ -42,7 +42,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { formatDuration, toLocalDay } from "./blocks.mjs";
-import { REPO_ROOT, currentComputer, loadConfig, monthFileIds, monthFilePath, monthOf } from "./config.mjs";
+import {
+  REPO_ROOT,
+  currentComputer,
+  describeTidy,
+  loadConfig,
+  monthFileIds,
+  monthFilePath,
+  monthOf,
+  tidyOwnStrays,
+} from "./config.mjs";
 import { budgetFor, roomProblem } from "./budget.mjs";
 import { appendEntry, monthTotal } from "./log.mjs";
 import {
@@ -173,6 +182,8 @@ function main() {
   const config = loadConfig();
   const computer = currentComputer();
   const today = toLocalDay(Date.now(), config.timeZone);
+  const tidied = describeTidy(tidyOwnStrays(computer.fileId));
+  if (tidied) console.log(tidied);
 
   const date = flag("date");
   const task = flag("task")?.trim();

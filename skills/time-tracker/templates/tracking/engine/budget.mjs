@@ -18,7 +18,7 @@
 //
 // What counts is what the timesheets record: every computer's, measured and
 // manual, after the multipliers, less any timesheet-upkeep rows - the same
-// hours the client PDF shows. It can only count the timesheets in this
+// hours the PDF shows. It can only count the timesheets in this
 // checkout, so another computer's hours count once it pushes and you pull.
 //
 // The PDFs print these figures too: a week's done / left / cap, and for a
@@ -33,7 +33,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { formatDuration, toLocalDay } from "./blocks.mjs";
-import { TRACKING_DIR, loadConfig, monthFileIds, monthOf } from "./config.mjs";
+import { TRACKING_DIR, loadConfig, monthFileIds, monthFilePath, monthOf } from "./config.mjs";
 import { appendEntry, readLog } from "./log.mjs";
 import { parseMonthFile, withoutTrackerRows } from "./month-file.mjs";
 
@@ -199,7 +199,7 @@ export function recordedDays(months, { dir = TRACKING_DIR, fresh = null, only = 
       if (only && id !== only) continue;
       let file = fresh?.id === id ? fresh.months.get(month) : null;
       if (!file) {
-        const source = path.join(dir, `${month}.${id}.md`);
+        const source = monthFilePath(month, id, dir);
         if (!existsSync(source)) continue;
         file = parseMonthFile(readFileSync(source, "utf8"));
       }

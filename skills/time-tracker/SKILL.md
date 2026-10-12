@@ -11,8 +11,8 @@ description: >
   re-measures and reports it, and prompts stop once the week or month is used
   up. One command brings it fully up to date: remeasure the hours, name and
   type every unnamed day, ask about manual hours, re-render the monthly and
-  whole-week PDFs with hours done, left and total - the computer's own, and
-  one merged, anonymous client PDF with a week-by-week breakdown. Sets itself up in any project, in any language - no package.json or build tooling needed - inside
+  whole-week PDFs with hours done, left and total - every computer merged into
+  one anonymous, client-ready PDF with a week-by-week breakdown. Sets itself up in any project, in any language - no package.json or build tooling needed - inside
   project-management/tracking/. Use for "set up time tracking", "add a time
   tracker", "update tracker", "update tracking", "updatetracking", "how many
   hours have I worked", "label my time", "time tracking report", "log manual
@@ -39,17 +39,17 @@ ignored even though their transcripts exist.
 
 **Every timesheet belongs to one computer.** Setup names the computer, once,
 in `~/.claude/time-tracker/machine.json` - a short name plus four random
-characters, like `studio-3f9a`. That name is the **file id**, which suffixes
-every file the computer writes - `<month>.<fileid>.md`, `log.<fileid>.jsonl`,
-`cache/<month>.<fileid>.pending.json` - so no two computers ever write the
-same file, and nothing conflicts in git. No git identity is involved: hours
+characters, like `studio-3f9a`. That name is the **file id**, and the
+computer's files live in a folder of that name - `computers/<fileid>/<month>.md`,
+`computers/<fileid>/log.jsonl` (and `cache/<month>.<fileid>.pending.json`) - so
+no two computers ever write the same file, and nothing conflicts in git. No git identity is involved: hours
 come from this computer's own transcripts, and only commits **made on this
 computer** - its git reflog - are evidence. If the engine says this computer
 has no name, run Setup.
 
 **Every computer counts in full.** A computer is a worker: two computers
 running at the same time are two people's hours, or one person's two streams
-of work, and both are billed. The client PDF and the budget add every
+of work, and both are billed. The PDFs and the budget add every
 computer's timesheet together. An install upgraded from the per-person version
 carries `fullCountFrom` in `config.json` - the Monday of the month's first week
 at the upgrade - and days before it keep the hours already recorded, since
@@ -60,9 +60,7 @@ reported.
 sessions every stretch of time came from. The month file records each task's
 clock times (`When`) and sessions (`Session`, by the first eight characters of
 the session id), and under each day a legend naming every session by its
-opening prompt. The computer's own PDF prints that under each task -
-`09:10-11:20 · studio · "fix checkout validation bug"`; the client PDF never
-does.
+opening prompt. That detail stays in the timesheet; the PDFs never print it.
 
 ## Pick the mode from what was asked
 
@@ -149,10 +147,23 @@ records are deleted (nothing reads them now), and `fullCountFrom` is written
 history. Two people who shared one computer both map to the same new file -
 setup leaves both and says so; merge them by hand. `people` in `config.json`
 is left for computers still on the older version and can be deleted once every
-computer has upgraded. Old weekly PDF folders (`weekly/<YYYY-MM>/`) are listed
-as safe to delete. **Upgrade every computer on the project the same day**: a
+computer has upgraded. Old weekly PDF folders (`reports/weekly/<YYYY-MM>/`)
+are listed as safe to delete. **Upgrade every computer on the project the same day**: a
 computer on the older version cannot read the new month files. Say what it
 migrated.
+
+An install from before the **per-computer folders** - `<month>.<computer>.md`,
+`log.<computer>.jsonl` and each computer's PDFs flat in `tracking/`, the
+merged PDFs in `client/` - is sorted: every computer's timesheets and log move
+to `computers/<computer>/`, `client/` becomes `reports/`, and the per-computer
+PDFs (`<month>.<computer>.pdf`, `weekly/`) are deleted - the PDFs in
+`reports/` cover every computer, and git keeps the old ones. A flat timesheet
+whose folder copy already differs is left in place and named; merge it by
+hand. Tell the person to commit, and to pull on their other computers soon. A
+computer that has not pulled yet keeps writing flat files; the tracker reads
+them, and that computer moves its own into its folder on its next session
+once it has the new engine - never another computer's, which would conflict
+with what that computer is still writing.
 
 When someone runs setup on a new computer for a project that already has the
 tracker, setup only names the computer, and its timesheet starts beside the
@@ -246,7 +257,7 @@ The one command. Triggered by "update tracker", "update tracking",
    node <engine>/log.mjs record --named <the days you named> --session <session id>
    ```
 
-   Comma-separate the days. This appends one line to `<tracking>/log.<fileid>.jsonl`
+   Comma-separate the days. This appends one line to `<tracking>/computers/<fileid>/log.jsonl`
    saying what was named, which commits were consumed, and the month total -
    and moves the commit watermark that step 1 reads next time. Manual hours
    are not passed here - `manual.mjs` already logged each one. Do it last, once
@@ -256,8 +267,8 @@ The one command. Triggered by "update tracker", "update tracking",
 
 Then report the days you named, any manual hours added, the month total, the
 hour budget (`node <engine>/budget.mjs` - used and left this week and this
-month, and say plainly if either is over), where the PDFs landed - the
-client PDF first, since it is the one that gets sent - and whose timesheets it
+month, and say plainly if either is over), where the PDFs landed - the month's
+first, since it is the one that gets sent - and whose timesheets they
 merged. If the collector or the report printed **Unnamed** days, say so
 plainly: their hours are on the PDFs as "Research & exploration", which a
 client reads as less than a named task. If no
@@ -335,8 +346,7 @@ record. They count against the hour budget at their recorded size:
 `manual.mjs` refuses an `add`, or a `set` that lengthens a row, when it would
 take that day's week or month past it, and says how much is left. Relay that
 and ask how they want to adjust - never split an entry across days or shave
-it to squeeze it in unasked. They carry a **Manual** tag on both PDFs, client
-one included. No collect ever trims or regrows them.
+it to squeeze it in unasked. They carry a **Manual** tag on the PDFs. No collect ever trims or regrows them.
 
 ## The hour budget
 
@@ -345,7 +355,7 @@ everyone on it. A Monday-to-Sunday week - even one that crosses into the next
 month - may use a quarter of it; the month never more than all of it. It counts
 recorded hours: every computer's timesheet in the checkout, measured and
 manual, after the multipliers, less timesheet-upkeep rows - the same hours the
-client PDF shows, and the done / left / total the PDFs print.
+PDFs show, and the done / left / total the PDFs print.
 `node <engine>/budget.mjs` prints where this week and month stand.
 
 - **SessionStart** re-measures and tells the session (and the person) the
@@ -366,7 +376,7 @@ stretch of days the person chose - a list of
 inside it gets `weeklyHours`; a day inside it is held to `monthlyHours` for
 its month, and `"monthlyHours": null` lifts the month cap for those days.
 Leave either out to keep the usual figure. The `note` is the person's own
-words, printed under the heading of every PDF, client and personal, whose span
+words, printed under the heading of every PDF whose span
 touches the exception's months - say what changed and why, the way they want
 the client to read it. Add or change one only when the person asks, with the
 dates and the note in their words.
@@ -378,7 +388,7 @@ person's call.
 
 ## The log and the watermark
 
-`<tracking>/log.<fileid>.jsonl` is one line per update: days named, commits consumed,
+`<tracking>/computers/<fileid>/log.jsonl` is one line per update: days named, commits consumed,
 session, month total - and one line, `"kind": "manual"`, per manual entry added,
 changed or removed, with the hours given and recorded and the person's own
 description as its `note`. It is an audit trail for a client-facing timesheet - and
@@ -415,25 +425,19 @@ node <engine>/report.mjs --last-month --all-weeks
 node <engine>/report.mjs --month 2026-08          # that month only
 ```
 
-Each run writes two sets of PDFs over the same spans. **Weeks are whole,
-Monday to Sunday**: the week of Mon 28 Sep - Sun 4 Oct is one PDF,
-`weekly/2026-09-28.<fileid>.pdf`, with days from both months. A week with no
-tracked days gets no PDF.
+Each run writes one PDF per span, the one to read and to send:
 
-**This computer's own** - its timesheet alone:
+- **Monthly** - `<tracking>/reports/<month>.pdf`.
+- **Weekly** - `<tracking>/reports/weekly/<first day>.pdf`.
 
-- **Monthly** - `<tracking>/<month>.<fileid>.pdf`.
-- **Weekly** - `<tracking>/weekly/<first day>.<fileid>.pdf`.
+**Weeks are whole, Monday to Sunday**: the week of Mon 28 Sep - Sun 4 Oct is
+one PDF, `reports/weekly/2026-09-28.pdf`, with days from both months. A week
+with no tracked days gets no PDF. There are no per-computer PDFs: a computer's
+own detail - each task's clock times and session - is its timesheet,
+`computers/<fileid>/<month>.md`.
 
-Its boxes put this computer's hours beside the project's: this computer, the
-project's hours done of the cap, and what is left. Under every task sits a
-line saying when it happened, on which computer and in which session -
-`09:10-11:20 · studio · "fix checkout validation bug"`, or `studio · manual,
-2h given` for hours logged by hand.
-
-**Client** - the one to send. Every computer's timesheet found in the tracking
-folder, merged into one: `<tracking>/client/<month>.pdf` and
-`<tracking>/client/weekly/<first day>.pdf`. It shows **no names, no computers,
+Every computer's timesheet found in the tracking folder is merged into one.
+It shows **no names, no computers,
 no sessions, no clock times, and nothing that reveals how many people worked**:
 days are unioned and their hours summed, the same task of the same type on the
 same day is one row with its time summed and bullets pooled (tagged **Partly
@@ -464,7 +468,7 @@ What every PDF shows:
   logged by hand, a **Manual** tag. Then **By type** and **By task** tables.
 - **Unnamed time as "Research & exploration"** - typed Research, no bullets,
   hours counted. A PDF is never refused for an unnamed day; the report prints
-  a note listing them (and, for the client PDF, whose they are), so they can
+  a note listing them and whose they are, so they can
   be named with "update tracker" on that computer.
 
 A routine update writes only the current week; finished weeks keep the PDF from
@@ -474,8 +478,7 @@ say so - the markdown record is complete either way.
 
 **The PDF is client-facing.** It shows the project, the span, the hour budget,
 the days, the task names, their work types and Manual tags, their outcome
-bullets and the hours - plus, on a computer's own PDF only, the computer's
-name and each task's times and session. No person name and no email anywhere.
+bullets and the hours. No computer name, no clock times, no session. No person name and no email anywhere.
 No measurement method, no idle cut-off, no multiplier, no timezone. Those are
 the contractor's own settings and they stay in `config.json`. Never add a
 footer or subtitle line explaining them. The one note a PDF carries is a
@@ -485,8 +488,8 @@ budget exception's `note`, written by the person (see **The hour budget**).
 
 - **Never move the boundary on your own.** `trackFrom` is the user's decision.
   Back-date it only when asked, and say what it will pull in.
-- **Never put a person on the PDF.** No name, no email, no who-did-what, and on
-  the client PDF nothing that counts heads - no computer, no session, no clock
+- **Never put a person on the PDF.** No name, no email, no who-did-what, and
+  nothing that counts heads - no computer, no session, no clock
   times - not in the header, the task names or the bullets.
 - **Never name a day from another computer's commits.** The evidence is
   already only the commits made on this one (its reflog); do not widen it with
@@ -496,7 +499,7 @@ budget exception's `note`, written by the person (see **The hour budget**).
   opposite: once a row is named, the engine keeps it. Manual hours go through
   `manual.mjs` and nothing else - never a hand-typed `· manual` row - so the
   row, the day total and the log move together.
-- **The log is append-only.** Never rewrite or prune a `log.<fileid>.jsonl` to tidy it,
+- **The log is append-only.** Never rewrite or prune a `computers/<fileid>/log.jsonl` to tidy it,
   and never add a line for a run that did not happen. An audit trail that is
   edited is not one.
 - **The engine is generated.** Do not hand-edit `<engine>/*.mjs`; change the

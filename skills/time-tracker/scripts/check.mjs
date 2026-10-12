@@ -84,6 +84,23 @@ export function timesheetNames(names, machine) {
   return { own: own.sort(), others: [...others].sort() };
 }
 
+/**
+ * What is left at the top of the tracking folder from before the per-computer
+ * folders: timesheets, logs and PDFs named `<month>.<computer>.*`, the
+ * per-computer `weekly/` and the old `client/`. Setup sorts them into
+ * computers/ and reports/. Two-part names are `timesheetNames`' business.
+ */
+export function flatLeftovers(names) {
+  return names
+    .filter(
+      (name) =>
+        /^(?:\d{4}-\d{2}(?:-\d{2})?|log)\.[a-z0-9][a-z0-9-]*\.(?:md|jsonl|pdf)$/.test(name) ||
+        name === "weekly" ||
+        name === "client",
+    )
+    .sort();
+}
+
 function machineName() {
   const name = readJson(path.join(homedir(), ".claude", "time-tracker", "machine.json"))?.name;
   return typeof name === "string" && /^[a-z0-9][a-z0-9-]*$/.test(name) ? name : null;
@@ -181,10 +198,18 @@ async function runChecks() {
     } else {
       const names = readdirSync(installed.dir);
       const { own, others } = timesheetNames(names, machine);
+      const flat = flatLeftovers(names);
       if (own.length > 0) {
         add("fail", `This computer's timesheet still has the older per-person names (${own[0]}…).`, true);
+      } else if (flat.length > 0) {
+        add(
+          "fail",
+          `Files from before the per-computer folders (${flat.slice(0, 3).join(", ")}${flat.length > 3 ? ", …" : ""}) - ` +
+            "setup sorts them into computers/ and reports/.",
+          true,
+        );
       } else {
-        add("ok", `This computer (${machine}) - its timesheet is ${trackingRel}/<month>.${machine}.md`);
+        add("ok", `This computer (${machine}) - its timesheets are in ${trackingRel}/computers/${machine}/`);
       }
       if (others.length > 0) {
         add(

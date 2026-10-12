@@ -39,12 +39,15 @@ outcome, not a failure, and setup must never stop over it.
 ```
 <repo>/project-management/tracking/
   config.json          trackFrom, timezone, idle gap, multiplier, weekdays
-  log.jsonl            one line per update - audit trail and commit watermark
-  <YYYY-MM>.md         the record
-  <YYYY-MM>.pdf        rendered from the markdown
+  computers/<computer>/
+    <YYYY-MM>.md       the record, one per computer
+    log.jsonl          one line per update - audit trail and commit watermark
+  reports/
+    <YYYY-MM>.pdf      every computer merged, rendered from the markdown
+    weekly/<first day>.pdf
   cache/               labelling evidence, gitignored
-    <YYYY-MM>.pending.json   only the days needing a name - read this one
-    <YYYY-MM>.raw.json       the whole month, for re-checking a settled day
+    <YYYY-MM>.<computer>.pending.json   only the days needing a name - read this one
+    <YYYY-MM>.<computer>.raw.json       the whole month, for re-checking a settled day
   engine/*.mjs         the code
 ```
 

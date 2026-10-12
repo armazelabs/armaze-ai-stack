@@ -6,16 +6,16 @@ its work type, when it happened and in which session, and under it a few
 bullets saying what that time actually delivered.
 
 Everything is per computer. The files carry this computer's name as their file
-id - `<month>.<fileid>.md`, `cache/<month>.<fileid>.pending.json`, where
-`<fileid>` is like `studio-3f9a` - and the evidence holds only the commits
+id - `computers/<fileid>/<month>.md`, `cache/<month>.<fileid>.pending.json`,
+where `<fileid>` is like `studio-3f9a` - and the evidence holds only the commits
 made on this computer and its own sessions. The collector prints the month it wrote, and
-the tracking folder shows the files. Never edit another computer's month file
+its folder shows the files. Never edit another computer's month file
 to name its days: it holds time this computer has no evidence for, and only
 that computer can name it.
 
 ## What the files mean
 
-- `<tracking>/<month>.<fileid>.md` - the record. Human-readable, hand-correctable, and
+- `<tracking>/computers/<fileid>/<month>.md` - the record. Human-readable, hand-correctable, and
   the input to the PDF. This is the only file you edit, and within it only the
   task rows' Task, Type, When and Session cells and their bullets. Never the
   Time cells, never a row marked `· manual` - those belong to `manual.mjs`
@@ -33,7 +33,7 @@ that computer can name it.
   settled days included. Reach for it only when re-checking a day someone has
   already named. Reading it for a routine update means reading a month to name
   a day, which is exactly what `pending.json` exists to avoid.
-- `<tracking>/log.<fileid>.jsonl` - what previous runs did. You append to it at the end
+- `<tracking>/computers/<fileid>/log.jsonl` - what previous runs did. You append to it at the end
   of an update; you do not need to read it to label.
 
 ## Procedure
@@ -83,7 +83,7 @@ that computer can name it.
    to find where topics actually change, and derive each task's minutes from the
    time span it covers rather than splitting the day proportionally.
 
-   Then edit `<tracking>/<month>.<fileid>.md`, replacing that day's
+   Then edit `<tracking>/computers/<fileid>/<month>.md`, replacing that day's
 
    ```
    | Unlabelled | - | 09:05-12:10, 13:30-16:20 | 4c11d0a2, 9be0f113 | 5h 56m |

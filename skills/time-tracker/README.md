@@ -111,27 +111,23 @@ Other things you can say:
 
 Everything lives in `project-management/tracking/`:
 
-- **`2026-10.<computer>.md`**: this computer's timesheet for the month. You can
-  read and edit it like any document.
-- **`2026-10.<computer>.pdf`**: this computer's month as a PDF, plus whole-week
-  ones in `weekly/` (`weekly/2026-10-05.<computer>.pdf` is 5-11 October).
-- **`client/2026-10.pdf`** and **`client/weekly/`**: **the ones to send.**
-  Every computer's timesheet merged into one, with no names, computers or
-  sessions on it.
+- **`reports/2026-10.pdf`** and **`reports/weekly/`** (`2026-10-05.pdf` is
+  5-11 October): **the ones to read and send.** Every computer's timesheet
+  merged into one, with no names, computers or sessions on it.
+- **`computers/<computer>/2026-10.md`**: each computer's timesheet for the
+  month, with its log beside it. You can read and edit it like any document.
 
 Every PDF opens with the hour budget for its span - for a week: hours done
 this week, remaining, and the week's total; for a month: hours done so far,
 remaining, and the month's total. A monthly PDF then has a week-by-week table
 and the days grouped under each week. Within a day, tasks are grouped by type,
-each with its hours and what it delivered. Your own PDF also says when each
-task happened and in which session:
+each with its hours and what it delivered:
 
 ```
 WEEK 2 · 5 - 11 OCT ............................... 26h 30m
 Mon 5 Oct ......................................... 7h 15m
   DEVELOPMENT                                       4h 45m
     Checkout form validation ...................... 3h 15m
-      09:10-11:20 · studio · "fix checkout validation bug"
       • Every checkout field shows a clear error before payment
       • Card number and postcode are checked as they are typed
   RESEARCH                                          2h 30m
@@ -169,15 +165,16 @@ or month is refused, and you're told how much is left.
 
 ## Teams and several computers
 
-- **One timesheet per computer.** Each computer keeps its own in the same
-  folder, so they never conflict in git. The client PDF adds them all together.
+- **One timesheet per computer.** Each computer keeps its own in its own
+  folder under `computers/`, so they never conflict in git. The PDFs add them
+  all together.
 - **Every computer counts in full.** Two computers working at the same time are
   two lots of hours.
 - **Shared budget:** the monthly hours are for the whole project. Your copy only
   counts other computers' hours they've pushed, so pull often.
 
 After an update, commit and push the `tracking/` folder so the other computers
-get it. Pull before making the client PDF.
+get it. Pull before making the PDFs.
 
 ## Good to know
 

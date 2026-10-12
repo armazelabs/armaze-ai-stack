@@ -33,17 +33,17 @@ when the hours have run out.
 
 ## One timesheet per computer
 
-Every computer working on the project keeps its own timesheet, side by side in
-this folder. The first time on a computer, the time-tracker setup asks what to
-call it (kept in `~/.claude/time-tracker/machine.json`, for every project), and
-every file that computer writes ends in that name: `2026-09.<computer>.md`,
-`log.<computer>.jsonl`. No computer writes to another's files, so committing
-them never conflicts. No git name or email is involved.
+Every computer working on the project keeps its own timesheet, in its own
+folder under `computers/`. The first time on a computer, the time-tracker setup
+asks what to call it (kept in `~/.claude/time-tracker/machine.json`, for every
+project), and that name is its folder: `computers/<computer>/2026-09.md`,
+`computers/<computer>/log.jsonl`. No computer writes to another's files, so
+committing them never conflicts. No git name or email is involved.
 
 A computer's hours come from its own transcripts, and only commits made on
 that computer (its git reflog) are used to name its days. **Every computer
 counts in full**: two computers working at the same time are two lots of
-hours, and the client PDF and the budget add them all together. No name or
+hours, and the PDFs in `reports/` and the budget add them all together. No name or
 email ever appears on a PDF.
 
 ## The boundary
@@ -62,7 +62,7 @@ the month never more than all of it. In a five-week month, the last week gets
 whatever the month has left.
 
 What counts is what the timesheets record: every computer's, measured and
-manual, after the multipliers - the hours the client PDF shows, and the
+manual, after the multipliers - the hours the PDFs show, and the
 done / remaining / total every PDF prints. Only the timesheets in your
 checkout count, so another computer's hours count once it pushes and you pull.
 
@@ -93,8 +93,7 @@ example:
 
 A week starting inside it gets `weeklyHours`; a day inside it is held to
 `monthlyHours` for its month (`null`: no month cap). Its `note` is printed
-under the heading of every PDF whose span touches its months, client PDF
-included, in your words.
+under the heading of every PDF whose span touches its months, in your words.
 
 Check where you stand at any time with `node {{ENGINE_REL}}/budget.mjs`.
 
@@ -107,11 +106,10 @@ rendering the PDFs is still "update tracker".
 | File | What it is |
 | --- | --- |
 | `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, work types (`categories`). |
-| `<YYYY-MM>.<computer>.md` | One computer's month: a total per day, the tasks it split into, when and in which session each happened, and what each delivered. |
-| `<YYYY-MM>.<computer>.pdf` | That month as a PDF, with this computer's hours beside the project's and each task's times and session. |
-| `weekly/<first day>.<computer>.pdf` | One PDF per whole Monday-to-Sunday week - the week of 28 Sep is one PDF across both months. |
-| `client/<YYYY-MM>.pdf`, `client/weekly/<first day>.pdf` | **The ones to send.** Every computer's timesheet merged, with no names, computers, sessions or clock times. |
-| `log.<computer>.jsonl` | One line per update and per manual entry: days named, commits used, hours added by hand, month total. |
+| `reports/<YYYY-MM>.pdf` | **The ones to read and send.** The month, every computer's timesheet merged, with no names, computers, sessions or clock times. |
+| `reports/weekly/<first day>.pdf` | The same for one whole Monday-to-Sunday week - the week of 28 Sep is one PDF across both months. |
+| `computers/<computer>/<YYYY-MM>.md` | One computer's month: a total per day, the tasks it split into, when and in which session each happened, and what each delivered. |
+| `computers/<computer>/log.jsonl` | One line per update and per manual entry: days named, commits used, hours added by hand, month total. |
 | `cache/` | Evidence for labelling - prompts, sessions and commits per block. Gitignored. |
 | `engine/` | The measurement code. Generated; re-synced by the skill. |
 
@@ -166,9 +164,8 @@ each task. You can edit them freely; they are kept on every update.
 
 Each task also records **when** it happened and **in which session** - the
 first eight characters of the Claude Code session id - and under each day a
-legend names every session by its opening prompt. Your own PDF prints them
-under each task (`09:10-11:20 · studio · "fix checkout validation bug"`); the
-client's never does.
+legend names every session by its opening prompt. They stay in the timesheet;
+the PDFs never print them.
 
 Unnamed time still goes on the PDFs - as **Research & exploration**, typed
 Research, with no bullets - so no PDF is ever held back. A named task reads
@@ -205,8 +202,8 @@ update.
 Manual hours are always **Research**. They are scaled like measured time -
 hours given times **{{HOURS_MULTIPLIER}}** - and the row keeps both:
 `Research · manual, 2h given` in the Type column, the recorded hours in Time.
-They are tagged **Manual** on both PDFs - on the client one too, so nobody has
-to ask where those hours came from - and no collect ever trims or regrows
+They are tagged **Manual** on the PDFs, so nobody has to ask where those
+hours came from - and no collect ever trims or regrows
 them: the day's total is what was measured plus what you logged. A day can
 hold only manual hours. They count against the hour budget at their recorded
 size, and an entry that would take its week or month over it is refused.
@@ -245,7 +242,7 @@ below the names. The next update names it too.
 
 ## The log
 
-Every update appends a line to this computer's `log.<computer>.jsonl`:
+Every update appends a line to this computer's `computers/<computer>/log.jsonl`:
 
 ```
 7 Sept 18:02 - named 2026-09-07 - commits 79e9f55 - 6h 6m
@@ -260,10 +257,11 @@ reached, so the next run reads forward from there instead of re-reading the
 month. Days are still chosen by which ones lack a name, never by the commits -
 so a morning of uncommitted work is never skipped.
 
-## The client PDF
+## The PDFs
 
-`client/` holds the PDFs that go to the client: every computer's timesheet in
-this folder merged into one, month and weeks alike. They show no names, no
+`reports/` holds the PDFs, the ones you read and the ones that go to the
+client: every computer's timesheet in this folder merged into one, month and
+weeks alike. They show no names, no
 computers, no sessions, no clock times, and nothing that says how many people
 worked - hours are summed per day, and the same task of the same type on the
 same day is one row. A row that pools manual hours with measured ones is tagged
@@ -276,7 +274,7 @@ each is.
 
 - **The hour budget.** A weekly PDF: hours done this week, remaining, and the
   week's total. A monthly PDF: hours done so far, remaining, and the month's
-  total. Your own PDFs put this computer's hours beside the project's.
+  total.
 - **Week by week** on monthly PDFs: a table of every week touching the month,
   upcoming ones included, each counting its whole Monday-to-Sunday week, then
   the days grouped under each week.
@@ -286,8 +284,7 @@ each is.
 ## Weekly PDFs
 
 Alongside the monthly PDF, every update writes the current week's to
-`weekly/<first day>.<computer>.pdf` (and the client's to
-`client/weekly/<first day>.pdf`). Weeks run Monday to Sunday, whole - a week
+`reports/weekly/<first day>.pdf`. Weeks run Monday to Sunday, whole - a week
 that crosses into October is one PDF holding days from both months. Finished
 weeks keep the PDF from their last update; run the report with `--all-weeks`
 to rewrite them all, for instance after correcting an older day.
@@ -300,9 +297,9 @@ Nothing else here needs any dependency beyond Node.
 
 Each computer keeps its own timesheet, and each computer's days are named on
 that computer - it is the one with the transcripts. A day still unnamed on one
-computer shows on the client PDF as "Research & exploration" until it is named
+computer shows on the PDF as "Research & exploration" until it is named
 there and pushed. So after an update on any computer, commit and push its
-timesheet, and pull before sending the client PDF.
+timesheet, and pull before sending a PDF.
 
 A manual entry logged on another computer can be corrected from this one with
 `--computer <name>`; its file must have no uncommitted changes here: pull

@@ -13,14 +13,17 @@
 //
 // Each computer keeps its own timesheet. Setup names the computer it runs on
 // once (kept in ~/.claude/time-tracker/machine.json, for every project), and
-// that name suffixes its files (`2026-09.<computer>.md`), so no two computers
-// ever share a file. No git identity is needed: a computer is a worker, and
+// its files go in a folder of that name (`computers/<computer>/2026-09.md`),
+// so no two computers ever share a file. No git identity is needed: a computer is a worker, and
 // the commits that name its work are the ones made on it.
 //
 // Re-run on an install from before that - one timesheet per person per
 // computer, `2026-09.<person>.<computer>.md` - it renames this computer's
 // files, drops the overlap records nothing reads any more, and writes
-// `fullCountFrom` so the weeks already reported keep their hours.
+// `fullCountFrom` so the weeks already reported keep their hours. An install
+// from before the per-computer folders - every computer's files flat in
+// tracking/, as `2026-09.<computer>.md`, each with its own PDFs beside the
+// client's in client/ - is sorted into computers/<computer>/ and reports/.
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -40,6 +43,8 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+
+import { tidyOwnStrays } from "../templates/tracking/engine/config.mjs";
 
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATES_DIR = path.join(SKILL_DIR, "templates");
@@ -504,10 +509,21 @@ function resolveTrackFrom(trackingDir, todayDay) {
   }
 
   const recorded = [];
-  for (const name of entries(trackingDir)) {
-    if (!/^\d{4}-\d{2}(\.[^.]+){0,2}\.md$/.test(name.name)) continue;
+  const monthFiles = [
+    ...entries(trackingDir)
+      .filter((entry) => /^\d{4}-\d{2}(\.[^.]+){0,2}\.md$/.test(entry.name))
+      .map((entry) => path.join(trackingDir, entry.name)),
+    ...entries(path.join(trackingDir, "computers"))
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) =>
+        entries(path.join(trackingDir, "computers", entry.name))
+          .filter((file) => /^\d{4}-\d{2}\.md$/.test(file.name))
+          .map((file) => path.join(trackingDir, "computers", entry.name, file.name)),
+      ),
+  ];
+  for (const file of monthFiles) {
     try {
-      const text = readFileSync(path.join(trackingDir, name.name), "utf8");
+      const text = readFileSync(file, "utf8");
       for (const [, day] of text.matchAll(/^##\s+(\d{4}-\d{2}-\d{2})/gm)) recorded.push(day);
     } catch {
       // An unreadable month file simply does not vote.
@@ -725,10 +741,9 @@ function isPerPersonInstall(trackingDir, config) {
 }
 
 /**
- * Move this computer onto per-computer timesheets: rename its files, drop its
- * overlap records and the evidence written under the old names (scratch, the
- * next collect rebuilds it), and list the weekly PDF folders from when weeks
- * were split at a month's edge - safe to delete, never deleted here.
+ * Move this computer onto per-computer timesheets: rename its files, and drop
+ * its overlap records and the evidence written under the old names (scratch,
+ * the next collect rebuilds it).
  */
 function migrateToComputer(trackingDir, cacheDir, machine, legacyPerson) {
   const names = entries(trackingDir).filter((entry) => entry.isFile()).map((entry) => entry.name);
@@ -752,12 +767,71 @@ function migrateToComputer(trackingDir, cacheDir, machine, legacyPerson) {
     }
   }
 
-  const oldWeekly = [path.join(trackingDir, "weekly"), path.join(trackingDir, "client", "weekly")].flatMap((dir) =>
-    entries(dir)
-      .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}$/.test(entry.name))
-      .map((entry) => path.join(dir, entry.name)),
-  );
-  return { ...result, activityRemoved, oldWeekly };
+  return { ...result, activityRemoved };
+}
+
+/**
+ * Sort a flat tracking folder into per-computer folders and one reports/.
+ *
+ * Every computer's `<month>.<id>.md` and `log.<id>.jsonl` move to
+ * `computers/<id>/` (`tidyOwnStrays`, the same move each computer makes of
+ * its own files on its next collect). The per-computer PDFs - `<month>.<id>.pdf`
+ * and everything in `weekly/` - are deleted: the PDFs in reports/ cover every
+ * computer, and git keeps the old ones. `client/` becomes `reports/`; where
+ * both hold a file, reports/ has the newer one. Two-part `<person>.<computer>`
+ * files are left flat - that computer has not upgraded, and they are still read.
+ *
+ * Run after `migrateToComputer`, and safe to run again: a sorted folder has
+ * nothing left to move. Returns names relative to `trackingDir`.
+ */
+export function migrateToFolders(trackingDir) {
+  const done = { moved: [], deleted: [], kept: [] };
+  const ids = new Set();
+  for (const entry of entries(trackingDir)) {
+    if (!entry.isFile()) continue;
+    const found = /^(?:\d{4}-\d{2}|log)\.([a-z0-9][a-z0-9-]*)\.(?:md|jsonl)$/.exec(entry.name);
+    if (found) ids.add(found[1]);
+  }
+  for (const id of [...ids].sort()) {
+    const tidied = tidyOwnStrays(id, trackingDir);
+    done.moved.push(...tidied.moved);
+    done.deleted.push(...tidied.deleted);
+    done.kept.push(...tidied.kept);
+  }
+
+  for (const entry of entries(trackingDir)) {
+    if (entry.isFile() && /^\d{4}-\d{2}(?:-\d{2})?\..+\.pdf$/.test(entry.name)) {
+      rmSync(path.join(trackingDir, entry.name));
+      done.deleted.push(entry.name);
+    }
+  }
+  const weekly = path.join(trackingDir, "weekly");
+  if (existsSync(weekly)) {
+    rmSync(weekly, { recursive: true, force: true });
+    done.deleted.push("weekly/");
+  }
+
+  const client = path.join(trackingDir, "client");
+  const reports = path.join(trackingDir, "reports");
+  if (existsSync(client)) {
+    if (!existsSync(reports)) {
+      renameSync(client, reports);
+    } else {
+      const merge = (from, to) => {
+        mkdirSync(to, { recursive: true });
+        for (const entry of entries(from)) {
+          const source = path.join(from, entry.name);
+          const target = path.join(to, entry.name);
+          if (entry.isDirectory()) merge(source, target);
+          else if (!existsSync(target)) renameSync(source, target);
+        }
+      };
+      merge(client, reports);
+      rmSync(client, { recursive: true, force: true });
+    }
+    done.moved.push("client/ -> reports/");
+  }
+  return done;
 }
 
 /**
@@ -868,7 +942,7 @@ function main() {
       return (
         (movedFromRel !== null && text.includes(movedFromRel)) ||
         /track\.mjs|state\.json/.test(text) ||
-        !text.includes("<YYYY-MM>.<computer>.md") ||
+        !text.includes("computers/<computer>/") ||
         !text.includes("Research & exploration") ||
         !text.includes("Subagents count at their own multiplier") ||
         !text.includes("picks the result up on its own") ||
@@ -909,6 +983,13 @@ function main() {
       priorConfig?.people ? gitConfig("user.email") : null,
     ),
   );
+  const folders = migrateToFolders(tracking.dir);
+  // Weekly PDF folders from when weeks were split at a month's edge - safe to
+  // delete, never deleted here.
+  const reportsWeekly = path.join(tracking.dir, "reports", "weekly");
+  const oldWeekly = entries(reportsWeekly)
+    .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}$/.test(entry.name))
+    .map((entry) => path.join(reportsWeekly, entry.name));
   const fullCount =
     perPerson && !configCreated
       ? { ...backfillFullCountFrom(path.join(tracking.dir, "config.json"), firstWeekStart(todayDay)), day: firstWeekStart(todayDay) }
@@ -988,7 +1069,7 @@ function main() {
       machine.created
         ? `named ${machine.name} - saved in ~/.claude/time-tracker/machine.json for every project`
         : `${machine.name}${machine.ignored ? " (already named, --machine ignored)" : ""}`
-    } (its files here end in .${machine.name}.md)`,
+    } (its files here are in ${trackingRel}/computers/${machine.name}/)`,
   );
   for (const [from, to] of migration.moves) {
     console.log(`- ${trackingRel}/${from} -> ${to}: now this computer's timesheet`);
@@ -1016,10 +1097,22 @@ function main() {
         "already recorded; from it on, every computer counts in full",
     );
   }
-  for (const dir of migration.oldWeekly) {
+  if (folders.moved.length + folders.deleted.length > 0) {
+    console.log(
+      `- ${trackingRel}/: sorted into computers/<computer>/ and reports/ - ` +
+        `${folders.moved.length} moved, ${folders.deleted.length} old per-computer PDFs and duplicates removed ` +
+        "(git history keeps them). Commit it, and pull on every other computer soon.",
+    );
+  }
+  for (const name of folders.kept) {
+    console.log(
+      `- ${trackingRel}/${name}: left as it is - the copy in computers/ differs. Merge its days into that one by hand.`,
+    );
+  }
+  for (const dir of oldWeekly) {
     console.log(
       `- ${path.relative(TARGET_ROOT, dir)}/: weekly PDFs from when weeks were cut at the month's edge - ` +
-        "safe to delete, weeks are now whole (weekly/<first day>.<computer>.pdf)",
+        "safe to delete, weeks are now whole (reports/weekly/<first day>.pdf)",
     );
   }
   if (priorConfig?.people) {

@@ -1,18 +1,18 @@
 // Turn this machine's Claude Code transcripts into timesheet data.
 //
 // Run with `node <tracking>/engine/collect.mjs`. It writes the month markdown
-// next to itself, plus an evidence file in cache/ for labelling.
+// to this computer's folder, plus an evidence file in cache/ for labelling.
 //
 // Everything is per computer. The transcripts read are this machine's own,
 // the commits read are the ones made on it (its git reflog), and the files
-// written carry its name - `2026-09.<computer>.md` - so no two computers ever
+// written sit in its own folder - `computers/<computer>/2026-09.md` - so no two computers ever
 // overwrite each other's days. Each computer counts in full: two computers
 // working at the same time are two workers, and their timesheets add up.
 //
 // Every block knows the sessions it came from. The month file records them -
 // each task's clock times and sessions, and a legend naming each session by
-// its opening prompt - so the computer's own PDF can say when and where each
-// task was done.
+// its opening prompt - so the timesheet says when and where each task was
+// done.
 //
 // Only days from `trackFrom` onward are counted - the date written into
 // config.json when the tracker was installed. Days before it are ignored
@@ -50,13 +50,15 @@ import {
   CACHE_DIR,
   REPO_ROOT,
   TRACKING_DIR,
+  computerMonths,
   currentComputer,
+  describeTidy,
   historyPath,
   historyPaths,
   loadConfig,
   monthFilePath,
-  monthFilePattern,
   monthOf,
+  tidyOwnStrays,
   transcriptDir,
   transcriptDirs,
 } from "./config.mjs";
@@ -706,7 +708,13 @@ export function collect({ write = true } = {}) {
     return null;
   }
 
-  if (write) mkdirSync(CACHE_DIR, { recursive: true });
+  if (write) {
+    mkdirSync(CACHE_DIR, { recursive: true });
+    // Files this computer wrote before the per-computer folders - moved in
+    // once, here, by the only computer that writes them.
+    const tidied = describeTidy(tidyOwnStrays(computer.fileId));
+    if (tidied) say(tidied);
+  }
 
   // Time spent updating the tracker is not work. The prompts say when each
   // update began, so those stretches are taken out before anything is
@@ -776,12 +784,7 @@ export function collect({ write = true } = {}) {
   // Rebuild any month with fresh data, plus any month this computer already
   // has on disk, so a month whose transcripts have expired still re-renders.
   // Another computer's months are its own files and are never written here.
-  const months = new Set(byMonth.keys());
-  const ownMonth = monthFilePattern(computer.fileId);
-  for (const name of readdirSync(TRACKING_DIR)) {
-    const found = ownMonth.exec(name);
-    if (found) months.add(found[1]);
-  }
+  const months = new Set([...byMonth.keys(), ...computerMonths(computer.fileId)]);
 
   const clock = (instant) => toLocalTime(instant, config.timeZone);
   const rebuiltMonths = new Map();

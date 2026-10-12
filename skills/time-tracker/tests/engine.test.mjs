@@ -7,7 +7,7 @@
 // temporary folder.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -22,8 +22,12 @@ import {
 } from "../templates/tracking/engine/blocks.mjs";
 import {
   computerLabel,
+  computerMonths,
   historyPaths,
+  logPath,
   monthFileIds,
+  monthFilePath,
+  tidyOwnStrays,
   transcriptDirs,
 } from "../templates/tracking/engine/config.mjs";
 import {
@@ -66,8 +70,8 @@ import {
   weekLabel,
   withoutTrackerRows,
 } from "../templates/tracking/engine/report.mjs";
-import { firstWeekStart, legacyMoves, legacyPersonFor, withTrackerHooks } from "../scripts/setup.mjs";
-import { engineDrift, timesheetNames } from "../scripts/check.mjs";
+import { firstWeekStart, legacyMoves, legacyPersonFor, migrateToFolders, withTrackerHooks } from "../scripts/setup.mjs";
+import { engineDrift, flatLeftovers, timesheetNames } from "../scripts/check.mjs";
 import {
   budgetFrom,
   capsOn,
@@ -650,15 +654,130 @@ test("a mixed day's PDF total equals its visible rows", () => {
 
 // --- one timesheet per computer --------------------------------------------
 
-test("timesheets are found per computer, not-yet-upgraded ones included", () => {
+/** Write `files` (relative name -> content) under `dir`, making folders as needed. */
+function plant(dir, files) {
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    writeFileSync(path.join(dir, name), content);
+  }
+}
+
+/** Every file under `dir`, as sorted relative names. */
+function tree(dir) {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.relative(dir, path.join(entry.parentPath ?? entry.path, entry.name)))
+    .sort();
+}
+
+test("timesheets are found per computer, in its folder or still flat", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-ids-"));
   try {
-    for (const name of ["2026-10.desk-1a2b.md", "2026-10.ann.lap-9f9f.md", "2026-10.desk-1a2b.pdf", "2026-09.desk-1a2b.md"]) {
-      writeFileSync(path.join(dir, name), "");
-    }
-    assert.deepEqual(monthFileIds("2026-10", dir), ["ann.lap-9f9f", "desk-1a2b"]);
+    plant(dir, {
+      "computers/desk-1a2b/2026-10.md": "",
+      "computers/desk-1a2b/2026-09.md": "",
+      "computers/desk-1a2b/log.jsonl": "",
+      // A computer that has not pulled the folders yet, and one older still.
+      "2026-10.mini-0c0c.md": "",
+      "log.mini-0c0c.jsonl": "",
+      "2026-10.ann.lap-9f9f.md": "",
+      "2026-10.desk-1a2b.pdf": "",
+    });
+    assert.deepEqual(monthFileIds("2026-10", dir), ["ann.lap-9f9f", "desk-1a2b", "mini-0c0c"]);
+    assert.deepEqual(monthFileIds("2026-09", dir), ["desk-1a2b"]);
+    assert.deepEqual(computerMonths("desk-1a2b", dir), ["2026-09", "2026-10"]);
+    assert.deepEqual(computerMonths("mini-0c0c", dir), ["2026-10"]);
+    // Each is read where it is; a new one goes in the folder.
+    assert.equal(path.relative(dir, monthFilePath("2026-10", "desk-1a2b", dir)), path.join("computers", "desk-1a2b", "2026-10.md"));
+    assert.equal(path.relative(dir, monthFilePath("2026-10", "mini-0c0c", dir)), "2026-10.mini-0c0c.md");
+    assert.equal(path.relative(dir, monthFilePath("2026-11", "mini-0c0c", dir)), path.join("computers", "mini-0c0c", "2026-11.md"));
+    assert.equal(path.relative(dir, logPath("mini-0c0c", dir)), "log.mini-0c0c.jsonl");
+    assert.equal(path.relative(dir, logPath("desk-1a2b", dir)), path.join("computers", "desk-1a2b", "log.jsonl"));
     assert.equal(computerLabel("studio-3f9a"), "studio");
     assert.equal(computerLabel("studio"), "studio");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a computer tidies only its own flat files into its folder", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-tidy-"));
+  try {
+    plant(dir, {
+      "2026-09.desk-1a2b.md": "september",
+      "2026-10.desk-1a2b.md": "october, flat",
+      "computers/desk-1a2b/2026-10.md": "october, newer",
+      "log.desk-1a2b.jsonl": '{"at":"1"}\n',
+      "computers/desk-1a2b/log.jsonl": '{"at":"2"}\n',
+      "2026-10.desk-1a2b.pdf": "",
+      "weekly/2026-10-05.desk-1a2b.pdf": "",
+      // Another computer's: it is still writing these, so they stay.
+      "2026-10.mini-0c0c.md": "theirs",
+      "log.mini-0c0c.jsonl": "",
+      "weekly/2026-10-05.mini-0c0c.pdf": "",
+    });
+    const done = tidyOwnStrays("desk-1a2b", dir);
+    assert.deepEqual(tree(dir), [
+      "2026-10.desk-1a2b.md",
+      "2026-10.mini-0c0c.md",
+      path.join("computers", "desk-1a2b", "2026-09.md"),
+      path.join("computers", "desk-1a2b", "2026-10.md"),
+      path.join("computers", "desk-1a2b", "log.jsonl"),
+      "log.mini-0c0c.jsonl",
+      path.join("weekly", "2026-10-05.mini-0c0c.pdf"),
+    ]);
+    // The folder's copy wins; a flat one that differs is left for a person.
+    assert.deepEqual(done.kept, ["2026-10.desk-1a2b.md"]);
+    assert.equal(readFileSync(path.join(dir, "computers/desk-1a2b/2026-10.md"), "utf8"), "october, newer");
+    // The flat log is the older one, so it goes first.
+    assert.equal(readFileSync(path.join(dir, "computers/desk-1a2b/log.jsonl"), "utf8"), '{"at":"1"}\n{"at":"2"}\n');
+    // Run again: nothing more to do.
+    assert.deepEqual(tidyOwnStrays("desk-1a2b", dir), { moved: [], deleted: [], kept: ["2026-10.desk-1a2b.md"] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("setup sorts a flat tracking folder into computers/ and reports/", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "time-tracker-folders-"));
+  try {
+    plant(dir, {
+      "config.json": "{}",
+      "readme.md": "",
+      "engine/config.mjs": "",
+      "2026-09.desk-1a2b.md": "a",
+      "2026-10.desk-1a2b.md": "b",
+      "log.desk-1a2b.jsonl": "",
+      "2026-10.desk-1a2b.pdf": "",
+      "2026-10.mini-0c0c.md": "c",
+      "log.mini-0c0c.jsonl": "",
+      "2026-10.mini-0c0c.pdf": "",
+      "2026-10.ann.lap-9f9f.md": "older version",
+      "weekly/2026-10-05.desk-1a2b.pdf": "",
+      "weekly/2026-09/2026-09-28.desk-1a2b.pdf": "",
+      "client/2026-10.pdf": "old",
+      "client/weekly/2026-10-05.pdf": "",
+      "reports/2026-10.pdf": "new",
+    });
+    migrateToFolders(dir);
+    assert.deepEqual(tree(dir), [
+      "2026-10.ann.lap-9f9f.md",
+      path.join("computers", "desk-1a2b", "2026-09.md"),
+      path.join("computers", "desk-1a2b", "2026-10.md"),
+      path.join("computers", "desk-1a2b", "log.jsonl"),
+      path.join("computers", "mini-0c0c", "2026-10.md"),
+      path.join("computers", "mini-0c0c", "log.jsonl"),
+      "config.json",
+      path.join("engine", "config.mjs"),
+      "readme.md",
+      path.join("reports", "2026-10.pdf"),
+      path.join("reports", "weekly", "2026-10-05.pdf"),
+    ]);
+    assert.equal(readFileSync(path.join(dir, "reports/2026-10.pdf"), "utf8"), "new");
+    assert.ok(!existsSync(path.join(dir, "client")));
+    // Sorted already: a second run changes nothing.
+    assert.deepEqual(migrateToFolders(dir), { moved: [], deleted: [], kept: [] });
+    assert.deepEqual(flatLeftovers(readdirSync(dir)), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -712,6 +831,10 @@ test("check names this computer's leftover files and the computers not upgraded"
   assert.deepEqual(
     timesheetNames(["2026-10.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl", "2026-10.bob.lap-9f9f.md", "2026-10.desk-1a2b.md"], "desk-1a2b"),
     { own: ["2026-10.ann.desk-1a2b.md", "log.ann.desk-1a2b.jsonl"], others: ["bob.lap-9f9f"] },
+  );
+  assert.deepEqual(
+    flatLeftovers(["2026-10.desk-1a2b.md", "log.desk-1a2b.jsonl", "2026-10.desk-1a2b.pdf", "weekly", "client", "computers", "reports", "config.json", "2026-10.ann.lap-9f9f.md"]),
+    ["2026-10.desk-1a2b.md", "2026-10.desk-1a2b.pdf", "client", "log.desk-1a2b.jsonl", "weekly"],
   );
 });
 
@@ -888,25 +1011,22 @@ test("a month's week rows count their whole week, future weeks included", () => 
   assert.deepEqual([weekRows(totals, null, "2026-10")[1].cap, weekRows(totals, null, "2026-10")[1].left], [null, null]);
 });
 
-test("a run on the 1st writes last month too, and one PDF for the whole week", () => {
+test("a run on the 1st writes last month too, and one PDF for the whole week, all in reports/", () => {
   const relative = (job) => path.relative(TRACKING_DIR, job.pdf);
-  const jobs = plan({ today: "2026-10-01", month: "2026-10", explicit: false, allWeeks: false }, "desk-1a2b");
+  const jobs = plan({ today: "2026-10-01", month: "2026-10", explicit: false, allWeeks: false });
   assert.deepEqual(jobs.map(relative), [
-    "2026-09.desk-1a2b.pdf",
-    "2026-10.desk-1a2b.pdf",
-    path.join("weekly", "2026-09-28.desk-1a2b.pdf"),
-    path.join("client", "2026-09.pdf"),
-    path.join("client", "2026-10.pdf"),
-    path.join("client", "weekly", "2026-09-28.pdf"),
+    path.join("reports", "2026-09.pdf"),
+    path.join("reports", "2026-10.pdf"),
+    path.join("reports", "weekly", "2026-09-28.pdf"),
   ]);
   assert.equal(jobs[2].period, "Week of 28 September - 4 October 2026");
   assert.ok(jobs.every((job) => job.html.startsWith(CACHE_DIR)));
   // Every week begun so far, once each.
-  const all = plan({ today: "2026-10-08", month: "2026-10", explicit: false, allWeeks: true }, "desk-1a2b", () => false);
-  assert.deepEqual(all.filter((job) => !job.team).map(relative), [
-    "2026-10.desk-1a2b.pdf",
-    path.join("weekly", "2026-09-28.desk-1a2b.pdf"),
-    path.join("weekly", "2026-10-05.desk-1a2b.pdf"),
+  const all = plan({ today: "2026-10-08", month: "2026-10", explicit: false, allWeeks: true }, () => false);
+  assert.deepEqual(all.map(relative), [
+    path.join("reports", "2026-10.pdf"),
+    path.join("reports", "weekly", "2026-09-28.pdf"),
+    path.join("reports", "weekly", "2026-10-05.pdf"),
   ]);
 });
 
@@ -1057,7 +1177,8 @@ test("every computer's timesheet counts toward the one budget, upkeep rows not a
   try {
     const month = (days) =>
       renderMonthFile({ month: "2026-10", days: days.map(([date, seconds]) => ({ date, seconds, tasks: [{ name: "Work", type: "Development", seconds }] })) });
-    writeFileSync(path.join(dir, "2026-10.desk-1a2b.md"), month([["2026-10-05", 10 * HOUR]]));
+    mkdirSync(path.join(dir, "computers", "desk-1a2b"), { recursive: true });
+    writeFileSync(path.join(dir, "computers", "desk-1a2b", "2026-10.md"), month([["2026-10-05", 10 * HOUR]]));
     writeFileSync(path.join(dir, "2026-10.bob.lap-9f9f.md"), month([["2026-10-05", 5 * HOUR], ["2026-10-06", 2 * HOUR]]));
     writeFileSync(
       path.join(dir, "2026-10.studio-3f9a.md"),

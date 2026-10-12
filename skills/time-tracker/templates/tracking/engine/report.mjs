@@ -9,23 +9,19 @@
 // one PDF, with days from both months in it. A month's PDF carries a table of
 // every week that touches it, then its days grouped under those weeks.
 //
-// Every PDF comes twice. The computer's own:
+// One PDF per span, covering every computer - the one to read and to send:
 //
-//   <tracking>/<YYYY-MM>.<computer>.pdf                    the month
-//   <tracking>/weekly/<first day>.<computer>.pdf           each week
+//   <tracking>/reports/<YYYY-MM>.pdf                       the month
+//   <tracking>/reports/weekly/<first day>.pdf              each week
 //
-// which shows this computer's hours, when each task happened and in which
-// session - and the client's, the one to send:
+// It merges every computer's timesheet found in this folder into one, with no
+// names, no computers, no sessions and no clock times - nothing that splits
+// the work by who or where. The same task, of the same work type, on the same
+// day is one row, its time summed and its bullets pooled. A computer's own
+// detail - when each task happened, in which session - is its timesheet,
+// `computers/<computer>/<YYYY-MM>.md`, which needs no PDF of its own.
 //
-//   <tracking>/client/<YYYY-MM>.pdf
-//   <tracking>/client/weekly/<first day>.pdf
-//
-// The client PDF merges every computer's timesheet found in this folder into
-// one, with no names, no computers, no sessions and no clock times - nothing
-// that splits the work by who or where. The same task, of the same work type,
-// on the same day is one row, its time summed and its bullets pooled.
-//
-// Both show the project's hour budget for their span: hours done, hours left
+// It shows the project's hour budget for its span: hours done, hours left
 // and the total, from every timesheet here (budget.mjs). Unnamed time is
 // shown, as "Research & exploration", rather than holding a PDF back: it is
 // real time, and the update that names it is one "update tracker" away.
@@ -47,8 +43,8 @@ import { fileURLToPath } from "node:url";
 import { formatDuration, weekdayOf } from "./blocks.mjs";
 import {
   CACHE_DIR,
+  REPORTS_DIR,
   TRACKING_DIR,
-  computerLabel,
   currentComputer,
   loadConfig,
   logPath,
@@ -710,7 +706,7 @@ ${breakdown}
 `;
 }
 
-/** Above this, a merged day on the client PDF reads as more than one person. */
+/** Above this, a merged day on the PDF reads as more than one person. */
 const LONG_DAY_SECONDS = 12 * 60 * 60;
 
 function parseArgs(config) {
@@ -745,18 +741,18 @@ function parseArgs(config) {
 
 /**
  * Which PDFs this run writes, as jobs: `{ kind, start, end, period, pdf,
- * html, team }` (and `month` for a month).
+ * html }` (and `month` for a month).
  *
  * The routine run is the month so far and the week so far. When the current
  * week began in last month, last month is written too - its last days are
  * usually named on the first update of the next, and without this they would
  * never reach its PDF. `--all-weeks` writes every week of the month that has
- * begun. Every job has a client twin.
+ * begun.
  *
- * `hasTimesheet(month)` says whether this computer has a timesheet for a
+ * `hasTimesheet(month)` says whether any computer has a timesheet for a
  * month; pure otherwise, so it is testable.
  */
-export function plan(args, id, hasTimesheet = () => true) {
+export function plan(args, hasTimesheet = () => true) {
   const jobs = [];
   const monthJob = (month) => ({
     kind: "month",
@@ -764,15 +760,15 @@ export function plan(args, id, hasTimesheet = () => true) {
     start: `${month}-01`,
     end: monthEnd(month),
     period: monthLabel(month),
-    pdf: path.join(TRACKING_DIR, `${month}.${id}.pdf`),
-    html: path.join(CACHE_DIR, `${month}.${id}.html`),
+    pdf: path.join(REPORTS_DIR, `${month}.pdf`),
+    html: path.join(CACHE_DIR, `${month}.month.html`),
   });
   const weekJob = (week) => ({
     kind: "week",
     ...week,
     period: `Week of ${weekLabel(week.start, week.end)}`,
-    pdf: path.join(TRACKING_DIR, "weekly", `${week.start}.${id}.pdf`),
-    html: path.join(CACHE_DIR, `${week.start}.${id}.week.html`),
+    pdf: path.join(REPORTS_DIR, "weekly", `${week.start}.pdf`),
+    html: path.join(CACHE_DIR, `${week.start}.week.html`),
   });
   const begun = (month) => weeksOverlapping(month).filter((week) => week.start <= args.today);
 
@@ -790,17 +786,7 @@ export function plan(args, id, hasTimesheet = () => true) {
   }
 
   const seen = new Set();
-  const own = jobs.filter((job) => !seen.has(job.pdf) && seen.add(job.pdf));
-  const team = own.map((job) => ({
-    ...job,
-    team: true,
-    pdf:
-      job.kind === "month"
-        ? path.join(TRACKING_DIR, "client", `${job.month}.pdf`)
-        : path.join(TRACKING_DIR, "client", "weekly", `${job.start}.pdf`),
-    html: path.join(CACHE_DIR, `${job.start}.client.${job.kind}.html`),
-  }));
-  return [...own, ...team];
+  return jobs.filter((job) => !seen.has(job.pdf) && seen.add(job.pdf));
 }
 
 /** The months a span touches, in order. */
@@ -846,23 +832,11 @@ function lastUpdate(id) {
 }
 
 /**
- * The days a PDF covers, as it shows them. A computer's own PDF reads its own
- * timesheet; the client PDF reads every computer's and merges them. Unnamed
- * rows become "Research & exploration" first, so the terminal can still say
- * whose they were.
+ * The days a PDF covers, as it shows them: every computer's timesheet, merged.
+ * Unnamed rows become "Research & exploration" first, so the terminal can
+ * still say whose they were.
  */
-function daysFor(job, computer) {
-  if (!job.team) {
-    if (job.kind === "month" && !existsSync(monthFilePath(job.month, computer.fileId))) {
-      throw new Error(
-        `No timesheet for ${job.month}. Run \`node ${path.join(TRACKING_DIR, "engine", "collect.mjs")}\` first.`,
-      );
-    }
-    const [{ days }] = readRange([computer.fileId], job.start, job.end);
-    const presented = presentDays(days);
-    return { days: presented.days, unnamed: presented.unnamed.map((date) => ({ id: computer.fileId, date })) };
-  }
-
+function daysFor(job) {
   const unnamed = [];
   const lists = readRange(idsIn(job.start, job.end), job.start, job.end).map(({ id, days }) => {
     const presented = presentDays(days);
@@ -875,44 +849,46 @@ function daysFor(job, computer) {
 /** Write one PDF, or say why not. Returns a line for the summary. */
 function render(job, context) {
   const { computer, config } = context;
-  const { days, unnamed } = daysFor(job, computer);
+  const { days, unnamed } = daysFor(job);
   if (days.length === 0) {
     // A week with no tracked days is not a failure - there is simply nothing
     // to bill - but a month with none is, since it was asked for by name.
-    if (job.kind === "week") return `${job.period}${job.team ? " (client)" : ""}: no tracked days, no PDF.`;
-    throw new Error(`${job.month} has no recorded days.`);
+    if (job.kind === "week") return `${job.period}: no tracked days, no PDF.`;
+    throw new Error(
+      `${job.month} has no recorded days. Run \`node ${path.join(TRACKING_DIR, "engine", "collect.mjs")}\` first.`,
+    );
   }
 
   // Said once per month, on the month jobs: unnamed time is on the PDF as
   // research, and a named task reads better to a client.
   if (job.kind === "month" && unnamed.length > 0) {
-    const where = job.team
-      ? unnamed.map((entry) => `${entry.date} (${entry.id})`).join(", ")
-      : unnamed.map((entry) => entry.date).join(", ");
+    const where = unnamed.map((entry) => `${entry.date} (${entry.id})`).join(", ");
     console.warn(
-      `Note: ${job.team ? "client " : ""}${job.month} shows unnamed time as "${FALLBACK_NAME}" on ${where}. ` +
+      `Note: ${job.month} shows unnamed time as "${FALLBACK_NAME}" on ${where}. ` +
         "\"update tracker\" on that computer names it.",
     );
   }
-  if (job.kind === "month" && !job.team) {
+  if (job.kind === "month") {
     // Missing bullets and types thin the report but do not falsify it, so
     // they warn rather than block - an older month named before they
-    // existed must still render.
-    const bare = days.filter((day) => day.tasks.some((task) => !task.fallback && needsBullets(task)));
+    // existed must still render. Said of this computer's timesheet only,
+    // the one an "update tracker" here can fix.
+    const mine = presentDays(readRange([computer.fileId], job.start, job.end)[0].days).days;
+    const bare = mine.filter((day) => day.tasks.some((task) => !task.fallback && needsBullets(task)));
     if (bare.length > 0) {
       console.warn(
         `Warning: ${bare.map((day) => day.date).join(", ")} ${bare.length === 1 ? "has" : "have"} ` +
           "tasks with fewer than two outcome bullets. \"update tracker\" writes them.",
       );
     }
-    const untyped = days.filter((day) => day.tasks.some(needsType));
+    const untyped = mine.filter((day) => day.tasks.some(needsType));
     if (untyped.length > 0) {
       console.warn(
         `Warning: ${untyped.map((day) => day.date).join(", ")} ${untyped.length === 1 ? "has" : "have"} ` +
           "tasks with no work type. \"update tracker\" adds them.",
       );
     }
-    for (const day of days) {
+    for (const day of mine) {
       const tasked = day.tasks.reduce((sum, task) => sum + task.seconds, 0);
       if (Math.abs(tasked - day.seconds) >= 60) {
         console.warn(
@@ -922,7 +898,7 @@ function render(job, context) {
       }
     }
   }
-  if (job.team && job.kind === "month") {
+  if (job.kind === "month") {
     // The one thing a merge cannot hide is a day longer than one person could
     // work. Say so here, where only the sender sees it, and leave the choice
     // of whether to send to them - trimming hours to disguise it would misbill.
@@ -930,14 +906,13 @@ function render(job, context) {
     if (long.length > 0) {
       console.warn(
         `Note: ${long.map((day) => `${day.date} (${formatDuration(day.seconds)})`).join(", ")} - ` +
-          "over 12 hours in one day on the client PDF, which a reader may take as more than one person.",
+          "over 12 hours in one day on the PDF, which a reader may take as more than one person.",
       );
     }
   }
 
-  // The budget: every computer's timesheet for the project's figures, this
-  // one's alone for its own share. Weeks cross months, so the months either
-  // side are read too.
+  // The budget: every computer's timesheet. Weeks cross months, so the months
+  // either side are read too.
   const caps = budgetCaps(config);
   // The caps for this span: a week's from its Monday, a month's from its last
   // day - an exception that lifts the month cap lifts it for the month's PDF.
@@ -947,23 +922,18 @@ function render(job, context) {
       ? monthsOf(weekOf(job.start).start, weekOf(job.end).end)
       : monthsOf(job.start, job.end);
   const project = recordedDays(reach);
-  const ownTotals = job.team ? null : recordedDays(reach, { only: computer.fileId });
   const figures = spanFigures(project, job.start, job.end, job.kind === "week" ? spanCaps?.week : spanCaps?.month);
   const total = days.reduce((sum, day) => sum + day.seconds, 0);
 
   let weeks = null;
   if (job.kind === "month") {
-    // The note under a week's heading speaks for the PDF's own timesheet: the
-    // client's is everyone's, a computer's is its own.
-    const noteTotals = ownTotals ?? project;
-    weeks = weekRows(project, weekCaps(config), job.month, ownTotals).map((row) => ({
+    weeks = weekRows(project, weekCaps(config), job.month, null).map((row) => ({
       ...row,
-      beforeNote: row.before && { ...row.before, seconds: spanSeconds(noteTotals, row.before.start, row.before.end) },
-      afterNote: row.after && { ...row.after, seconds: spanSeconds(noteTotals, row.after.start, row.after.end) },
+      beforeNote: row.before && { ...row.before, seconds: spanSeconds(project, row.before.start, row.before.end) },
+      afterNote: row.after && { ...row.after, seconds: spanSeconds(project, row.after.start, row.after.end) },
     }));
   }
 
-  const own = !job.team;
   const html = renderHtml({
     project: context.project,
     period: job.period,
@@ -971,11 +941,11 @@ function render(job, context) {
     today: context.today,
     days,
     categories: config.categories ?? [],
-    stats: statsFor({ kind: job.kind, own, figures: caps ? figures : null, total, dayCount: days.length }),
-    computer: own ? computerLabel(computer.fileId) : null,
+    stats: statsFor({ kind: job.kind, own: false, figures: caps ? figures : null, total, dayCount: days.length }),
+    computer: null,
     weeks,
     monthCap: spanCaps?.month ?? null,
-    edgeLabel: own ? "timesheet" : "PDF",
+    edgeLabel: "PDF",
     notices: exceptionNotes(config, job.start, job.end),
   });
 
@@ -1012,14 +982,14 @@ function main() {
   const config = loadConfig();
   const computer = currentComputer();
   const args = parseArgs(config);
-  const jobs = plan(args, computer.fileId, (month) => existsSync(monthFilePath(month, computer.fileId)));
+  const jobs = plan(args, (month) => monthFileIds(month).length > 0);
 
-  // Whose timesheets the client PDFs merge, and how fresh each is, so a
+  // Whose timesheets the PDFs merge, and how fresh each is, so a
   // stale computer shows up. Terminal only: the PDF itself never says how
   // many computers there were. A two-part id is a computer still on the
   // older version - its hours count, but it should upgrade.
   const spans = new Map();
-  for (const job of jobs.filter((each) => each.team)) {
+  for (const job of jobs) {
     for (const month of monthsOf(job.start, job.end)) spans.set(month, true);
   }
   for (const month of spans.keys()) {
@@ -1031,7 +1001,7 @@ function main() {
       return id === computer.fileId ? label : `${label} (last update ${lastUpdate(id) ?? "never"}${old})`;
     });
     console.log(
-      `Client PDFs for ${month} merge ${ids.length} timesheet${ids.length === 1 ? "" : "s"}: ${notes.join(", ")}.` +
+      `PDFs for ${month} merge ${ids.length} timesheet${ids.length === 1 ? "" : "s"}: ${notes.join(", ")}.` +
         " Pull first to include the latest from other computers.",
     );
   }
