@@ -7,9 +7,9 @@ description: >
   the session and plain-language outcome bullets under every task, plus manual
   hours for work done away from Claude Code, tagged as manual research. One
   timesheet per computer, each counted in full. Each project has a monthly
-  hours budget, a quarter of it per week: every session start and end
-  re-measures and reports it, and prompts stop once the week or month is used
-  up. One command brings it fully up to date: remeasure the hours, name and
+  hours budget, a quarter of it per week and a fifth of that per weekday:
+  every session start and end re-measures and reports it, and prompts stop
+  once the day, week or month is used up. One command brings it fully up to date: remeasure the hours, name and
   type every unnamed day, ask about manual hours, re-render the monthly and
   whole-week PDFs with hours done, left and total - every computer merged into
   one anonymous, client-ready PDF with a week-by-week breakdown. Sets itself up in any project, in any language - no package.json or build tooling needed - inside
@@ -356,25 +356,33 @@ month - may use a quarter of it; the month never more than all of it. It counts
 recorded hours: every computer's timesheet in the checkout, measured and
 manual, after the multipliers, less timesheet-upkeep rows - the same hours the
 PDFs show, and the done / left / total the PDFs print.
-`node <engine>/budget.mjs` prints where this week and month stand.
+
+A weekday (Monday to Friday) may use a fifth of its week - 8 hours of 40 -
+fixed, so spare hours never move to a later day. `dailyHours` in `config.json`
+replaces the fifth when set (`null` keeps it). Saturday and Sunday have no day
+cap, only the week's and month's. The day is shared by every computer, like the
+week. The PDFs print each weekday's cap after its total (`6h of 8h`, or an
+`over by` tag).
+`node <engine>/budget.mjs` prints where today, this week and month stand.
 
 - **SessionStart** re-measures and tells the session (and the person) the
-  week's and month's hours used and left.
+  day's, week's and month's hours used and left.
 - **UserPromptSubmit** re-measures in memory and refuses the prompt once the
-  week or the month is used up, until the week or the month reopens. Tracker
+  day, the week or the month is used up, until the next day, week or month
+  reopens. Tracker
   requests ("update tracker", "log manual hours", "check time tracker",
   "update time tracker setup", `/time-tracker`) still go through, and `TIME_TRACKER_OVERRIDE=1` in the environment lets everything
   through.
 - **SessionEnd** re-measures so the record is current.
-- **Over budget is recorded, not trimmed.** A collect that finds the week or
-  month over prints a warning and logs one `"kind": "over-budget"` line per
-  week or month that crossed. Report it; never trim rows to fit.
+- **Over budget is recorded, not trimmed.** A collect that finds the day, week
+  or month over prints a warning and logs one `"kind": "over-budget"` line per
+  day, week or month that crossed. Report it; never trim rows to fit.
 
 **Exceptions.** `budgetExceptions` in `config.json` changes the budget for a
 stretch of days the person chose - a list of
 `{ "from", "to", "weeklyHours", "monthlyHours", "note" }`. A week starting
-inside it gets `weeklyHours`; a day inside it is held to `monthlyHours` for
-its month, and `"monthlyHours": null` lifts the month cap for those days.
+inside it gets `weeklyHours`, and its weekdays a fifth of that - over
+`dailyHours` too; a day inside it is held to `monthlyHours` for its month, and `"monthlyHours": null` lifts the month cap for those days.
 Leave either out to keep the usual figure. The `note` is the person's own
 words, printed under the heading of every PDF whose span
 touches the exception's months - say what changed and why, the way they want

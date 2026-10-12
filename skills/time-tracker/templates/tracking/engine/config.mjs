@@ -65,6 +65,9 @@ const DEFAULT_CONFIG = {
   // quarter of it and the month never more than all of it - see budget.mjs.
   // Null means no budget: nothing is checked or blocked.
   monthlyHours: null,
+  // A weekday's hours, Monday to Friday. Null means a fifth of the week -
+  // 8 of 40. Weekends have no day cap; see budget.mjs.
+  dailyHours: null,
   workdays: [0, 1, 2, 3, 4, 5, 6],
   sentinel: "TIME-TRACKER-AUTOMATION",
   // The work types a task can carry - the Type column, and the "By type" table

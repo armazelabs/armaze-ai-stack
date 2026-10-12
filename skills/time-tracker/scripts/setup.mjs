@@ -581,9 +581,9 @@ function backfillCategories(configPath, categories) {
 
 /**
  * Bring an existing config.json up to the hour budget: add
- * `subagentMultiplier` if it is missing, and set `monthlyHours` when
- * `--monthly-hours` was given. Reports whether `monthlyHours` is still unset,
- * so the skill knows to ask.
+ * `subagentMultiplier` and `dailyHours` if they are missing, and set
+ * `monthlyHours` when `--monthly-hours` was given. Reports whether
+ * `monthlyHours` is still unset, so the skill knows to ask.
  */
 function backfillBudget(configPath, monthlyHours) {
   let config;
@@ -594,21 +594,28 @@ function backfillBudget(configPath, monthlyHours) {
   }
   const added = [];
   const next = {};
-  // Insert after hoursMultiplier, where the template puts them.
+  // Insert after hoursMultiplier and monthlyHours, where the template puts
+  // them. `dailyHours` goes in as null - a fifth of the week - which is not
+  // news worth reporting.
   for (const [key, value] of Object.entries(config)) {
     next[key] = value;
+    if (key === "monthlyHours" && !("dailyHours" in config)) next.dailyHours = null;
     if (key !== "hoursMultiplier") continue;
     if (!("subagentMultiplier" in config)) {
       next.subagentMultiplier = 1.2;
       added.push("subagentMultiplier 1.2");
     }
-    if (!("monthlyHours" in config)) next.monthlyHours = null;
+    if (!("monthlyHours" in config)) {
+      next.monthlyHours = null;
+      next.dailyHours = null;
+    }
   }
   if (!("subagentMultiplier" in next)) {
     next.subagentMultiplier = 1.2;
     added.push("subagentMultiplier 1.2");
   }
   if (!("monthlyHours" in next)) next.monthlyHours = null;
+  if (!("dailyHours" in next)) next.dailyHours = null;
   if (monthlyHours.given && next.monthlyHours !== monthlyHours.value) {
     next.monthlyHours = monthlyHours.value;
     added.push(`monthlyHours ${monthlyHours.value}`);
@@ -903,6 +910,7 @@ function main() {
     HOURS_MULTIPLIER: multiplier.value,
     MONTHLY_HOURS: monthlyHours.value ?? "null",
     WEEKLY_HOURS: monthlyHours.value == null ? "a quarter of `monthlyHours`" : `${monthlyHours.value / 4}`,
+    DAILY_HOURS: monthlyHours.value == null ? "a fifth of the week's" : `${monthlyHours.value / 20}`,
     TRACK_FROM: trackFrom.day,
     ENGINE_REL: engineRel,
     CMD_COLLECT: `node ${shellPath(`${engineRel}/collect.mjs`)}`,
@@ -937,7 +945,8 @@ function main() {
       // or from before unnamed time went on the PDFs as research - or from
       // before subagent time and tracker updates were measured as they are now
       // (including the turns an agent's report wakes the main session for),
-      // or from before tasks carried a work type and manual hours existed.
+      // or from before tasks carried a work type and manual hours existed,
+      // or from before weekdays had a cap of their own.
       const text = readFileSync(readmePath, "utf8");
       return (
         (movedFromRel !== null && text.includes(movedFromRel)) ||
@@ -947,7 +956,8 @@ function main() {
         !text.includes("Subagents count at their own multiplier") ||
         !text.includes("picks the result up on its own") ||
         !text.includes("check time tracker") ||
-        !text.includes("manual.mjs")
+        !text.includes("manual.mjs") ||
+        !text.includes("dailyHours")
       );
     } catch {
       return false;

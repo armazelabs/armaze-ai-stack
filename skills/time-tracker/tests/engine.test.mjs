@@ -71,8 +71,10 @@ import {
 import { firstWeekStart, legacyMoves, legacyPersonFor, migrateToFolders, withTrackerHooks } from "../scripts/setup.mjs";
 import { engineDrift, flatLeftovers, timesheetNames } from "../scripts/check.mjs";
 import {
+  blockedMessage,
   budgetFrom,
   capsOn,
+  dayCapOn,
   describeBudget,
   exceptionNotes,
   recordedDays,
@@ -1098,7 +1100,7 @@ test("a week gets a quarter of the month, counted across the month's edge", () =
 });
 
 test("a used-up week closes until next Monday", () => {
-  const totals = new Map([["2026-10-06", 25 * HOUR], ["2026-10-07", 16 * HOUR]]);
+  const totals = new Map([["2026-10-05", 34 * HOUR], ["2026-10-07", 7 * HOUR]]);
   const budget = budgetFrom(totals, BUDGET, "2026-10-07");
   assert.equal(budget.exhausted, true);
   assert.deepEqual(budget.over, ["week"]);
@@ -1148,6 +1150,65 @@ test("a budget exception sets the week's cap and can lift the month's, only insi
   assert.deepEqual(exceptionNotes(config, "2026-09-01", "2026-09-30"), []);
   // A malformed entry is ignored.
   assert.deepEqual(capsOn({ ...BUDGET, budgetExceptions: [{ from: "12 Oct", weeklyHours: 80 }] }, "2026-10-12"), { week: 40 * HOUR, month: 160 * HOUR });
+});
+
+test("a weekday gets a fifth of its week, a weekend no day cap", () => {
+  assert.equal(dayCapOn(BUDGET, "2026-10-12"), 8 * HOUR);
+  assert.equal(dayCapOn(BUDGET, "2026-10-16"), 8 * HOUR);
+  assert.equal(dayCapOn(BUDGET, "2026-10-17"), null);
+  assert.equal(dayCapOn(BUDGET, "2026-10-18"), null);
+  assert.equal(dayCapOn({}, "2026-10-12"), null);
+  // dailyHours replaces the fifth, but an exception setting the week's hours wins inside it.
+  const config = { ...BUDGET, dailyHours: 6, budgetExceptions: [{ from: "2026-10-19", to: "2026-10-25", weeklyHours: 20 }] };
+  assert.equal(dayCapOn(config, "2026-10-12"), 6 * HOUR);
+  assert.equal(dayCapOn(config, "2026-10-21"), 4 * HOUR);
+  assert.equal(dayCapOn({ ...config, budgetExceptions: [{ from: "2026-10-19", to: "2026-10-25", monthlyHours: null }] }, "2026-10-21"), 6 * HOUR);
+});
+
+test("a used-up day pauses prompts until tomorrow, but not manual hours", () => {
+  const budget = budgetFrom(new Map([["2026-10-12", 8 * HOUR]]), BUDGET, "2026-10-12");
+  assert.deepEqual(budget.today, { date: "2026-10-12", used: 8 * HOUR, cap: 8 * HOUR, left: 0 });
+  assert.equal(budget.exhausted, true);
+  assert.deepEqual(budget.over, []);
+  assert.equal(budget.reopens, "2026-10-13");
+  assert.equal(roomProblem(budget, 3 * HOUR), null);
+  assert.match(describeBudget(budget), /^Today \(Mon 12 Oct\): 8h of 8h used, 0m left\. This week/);
+  assert.match(blockedMessage(budget), /today's hours are used up/);
+  assert.match(blockedMessage(budget), /paused until Tue 13 Oct/);
+  assert.deepEqual(budgetFrom(new Map([["2026-10-12", 9 * HOUR]]), BUDGET, "2026-10-12").over, ["day"]);
+  // Friday used up with the week not: Saturday is open again.
+  assert.equal(budgetFrom(new Map([["2026-10-16", 8 * HOUR]]), BUDGET, "2026-10-16").reopens, "2026-10-17");
+  // Day and week both used up: next Monday.
+  const both = budgetFrom(new Map([["2026-10-12", 32 * HOUR], ["2026-10-16", 8 * HOUR]]), BUDGET, "2026-10-16");
+  assert.equal(both.reopens, "2026-10-19");
+  assert.match(blockedMessage(both), /today's and this week's hours are/);
+});
+
+test("a weekend day is held only by the week and the month", () => {
+  const budget = budgetFrom(new Map([["2026-10-17", 10 * HOUR]]), BUDGET, "2026-10-17");
+  assert.deepEqual(budget.today, { date: "2026-10-17", used: 10 * HOUR, cap: null, left: null });
+  assert.equal(budget.exhausted, false);
+  assert.match(describeBudget(budget), /^Today \(Sat 17 Oct\): 10h used, no daily cap at weekends\. /);
+});
+
+test("the PDF shows a weekday's cap after its total, and nothing at weekends", () => {
+  const day = (date, hours) => ({ date, seconds: hours * HOUR, tasks: [{ name: "Checkout", type: "Development", seconds: hours * HOUR }] });
+  const html = renderHtml({
+    project: "acme-shop",
+    period: "Week of 12 - 18 October 2026",
+    kind: "week",
+    today: "2026-10-18",
+    days: [day("2026-10-12", 6), day("2026-10-13", 9), day("2026-10-17", 3)],
+    categories: ["Development"],
+    stats: [],
+    weeks: null,
+    dayCap: (date) => dayCapOn(BUDGET, date),
+  });
+  assert.match(html, /6h<span class="day-cap"> of 8h<\/span><\/span>/);
+  assert.match(html, /9h<span class="day-cap"> of 8h<\/span><span class="tag over">over by 1h<\/span>/);
+  assert.match(html, /3h<\/span>\s*<\/div>/);
+  // No budget, no caps.
+  assert.equal(renderHtml({ project: "x", period: "p", kind: "week", today: "2026-10-18", days: [day("2026-10-12", 6)], categories: [], stats: [], weeks: null }).includes("day-cap\">"), false);
 });
 
 test("every computer's timesheet counts toward the one budget, upkeep rows not at all", () => {

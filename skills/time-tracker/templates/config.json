@@ -5,6 +5,7 @@
   "hoursMultiplier": {{HOURS_MULTIPLIER}},
   "subagentMultiplier": 1.2,
   "monthlyHours": {{MONTHLY_HOURS}},
+  "dailyHours": null,
   "workdays": [0, 1, 2, 3, 4, 5, 6],
   "sentinel": "TIME-TRACKER-AUTOMATION",
   "categories": [

@@ -61,6 +61,11 @@ into the next month) may use a quarter of it - **{{WEEKLY_HOURS}}** hours - and
 the month never more than all of it. In a five-week month, the last week gets
 whatever the month has left.
 
+A weekday (Monday to Friday) may use **{{DAILY_HOURS}}** hours, the same every
+day, so a short Monday does not make Tuesday longer. That is a fifth of the
+week unless `dailyHours` in `config.json` sets another figure. Saturday and
+Sunday have no day cap, only what the week and month have left.
+
 What counts is what the timesheets record: every computer's, measured and
 manual, after the multipliers - the hours the PDFs show, and the
 done / remaining / total every PDF prints. Only the timesheets in your
@@ -70,15 +75,16 @@ checkout count, so another computer's hours count once it pushes and you pull.
   are re-measured and you see how much of the week and the month is used and
   left. When it ends, they are re-measured again, so the timesheet is current.
 - **Prompts stop when the budget is used up.** Each prompt re-measures the
-  hours first; once this week or this month is used up, the prompt is refused
-  until the week (or the month) opens again. "update tracker" and "check time
+  hours first; once today, this week or this month is used up, the prompt is
+  refused until the next day (or week, or month) opens again. "update tracker" and "check time
   tracker" still work, so the days can be named, the PDFs sent and the
   tracker repaired. To work anyway, start Claude Code
   with `TIME_TRACKER_OVERRIDE=1`.
 - **Nothing is trimmed.** If a session runs past the budget before it is
   stopped, the hours are recorded as measured, a collect warns, and the log
-  notes it once for that week or month.
-- **Manual hours that would go over are refused**, with how much is left.
+  notes it once for that day, week or month.
+- **Manual hours that would go over the week or month are refused**, with how
+  much is left. The day's cap does not apply to them.
 
 **Exceptions.** For a stretch of days you choose, `budgetExceptions` in
 `config.json` sets a different week cap and can lift the month cap - for
@@ -91,8 +97,9 @@ example:
 ]
 ```
 
-A week starting inside it gets `weeklyHours`; a day inside it is held to
-`monthlyHours` for its month (`null`: no month cap). Its `note` is printed
+A week starting inside it gets `weeklyHours`, and its weekdays a fifth of that
+(over `dailyHours` too); a day inside it is held to `monthlyHours` for its
+month (`null`: no month cap). Its `note` is printed
 under the heading of every PDF whose span touches its months, in your words.
 
 Check where you stand at any time with `node {{ENGINE_REL}}/budget.mjs`.
@@ -105,7 +112,7 @@ rendering the PDFs is still "update tracker".
 
 | File | What it is |
 | --- | --- |
-| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, work types (`categories`). |
+| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, `dailyHours`, work types (`categories`). |
 | `reports/<YYYY-MM>.pdf` | **The ones to read and send.** The month, every computer's timesheet merged, with no names, computers, sessions or clock times. |
 | `reports/weekly/<first day>.pdf` | The same for one whole Monday-to-Sunday week - the week of 28 Sep is one PDF across both months. |
 | `computers/<computer>/<YYYY-MM>.md` | One computer's month: a total per day, the tasks it split into, when and in which session each happened, and what each delivered. |

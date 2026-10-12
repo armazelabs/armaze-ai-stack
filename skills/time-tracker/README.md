@@ -8,9 +8,10 @@ day, names the work from the commits made on it, and turns it into a timesheet
 and PDFs you can send to a client - week by week, with the hours done, left and
 in total.
 
-Each project has a monthly hours budget, a quarter of it per week. Every
-Claude Code session checks in when it starts and ends, and once the week's or
-month's hours are used up, new prompts are stopped.
+Each project has a monthly hours budget, a quarter of it per week and a fifth
+of that per weekday (8 of 40). Every Claude Code session checks in when it
+starts and ends, and once the day's, week's or month's hours are used up, new
+prompts are stopped.
 
 ## New setup
 
@@ -137,11 +138,11 @@ Mon 5 Oct ......................................... 7h 15m
 
 ## The hour budget
 
-- **Session start:** your hours are re-measured and you see how much of this
-  week and this month is used and left.
+- **Session start:** your hours are re-measured and you see how much of today,
+  this week and this month is used and left.
 - **Session end:** your hours are re-measured, so the timesheet stays current.
-- **Every prompt:** if this week or this month is used up, the prompt is
-  stopped until the next week (or month). "update tracker" and "check time
+- **Every prompt:** if today, this week or this month is used up, the prompt is
+  stopped until the next day (or week, or month). "update tracker" and "check time
   tracker" still work.
 - **Need to work anyway?** Start Claude Code with `TIME_TRACKER_OVERRIDE=1`.
 - **Hours past the limit are never hidden.** If a session runs over before it's
@@ -149,6 +150,11 @@ Mon 5 Oct ......................................... 7h 15m
 
 Weeks run Monday to Sunday. The month is a hard ceiling too, so in a month with
 five weeks the last one gets whatever is left.
+
+Monday to Friday each get the same fifth of the week; a short day does not
+make the next one longer. Weekends have no day cap, only the week's. Set
+`dailyHours` in `config.json` for a different figure. Manual hours are held to
+the week and month, not the day.
 
 ## Manual hours
 

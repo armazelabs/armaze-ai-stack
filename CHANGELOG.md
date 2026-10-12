@@ -2,6 +2,18 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.18.0 - 2026-10-12
+
+**time-tracker caps each weekday too.** After `aistack update`, say **"update time tracker setup"** in each project that tracks time, then commit.
+
+### Added
+
+- **time-tracker** gives every weekday, Monday to Friday, a fifth of its week's hours: 8 of a 40-hour week. Once today's hours are used up, prompts pause until the next day, the same way they already pause for the week and the month. "update tracker" and `TIME_TRACKER_OVERRIDE=1` still get through.
+- The share is fixed, so hours left unused one day don't move to the next. Saturday and Sunday have no day cap, only what the week and the month have left. The day is shared by every computer and person on the project, like the week.
+- `dailyHours` in `config.json` sets a different daily figure; `null`, the default, keeps the fifth. A budget exception that changes a week's hours changes its days too: 20 hours that week gives 4 hours a day, whatever `dailyHours` says.
+- The session summary and `budget.mjs` now start with today: "Today (Mon 12 Oct): 5h of 8h used, 3h left." The PDFs print each weekday's cap after its total ("6h of 8h"), with an "over by" tag when a day went past it.
+- Manual hours are still checked against the week and the month only, not the day.
+
 ## 0.17.0 - 2026-10-12
 
 **time-tracker tidies its folder.** After `aistack update`, say **"update time tracker setup"** in each project that tracks time, commit, then pull on your other computers.

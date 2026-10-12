@@ -57,6 +57,7 @@ import {
   addDays,
   budgetCaps,
   capsOn,
+  dayCapOn,
   exceptionNotes,
   monthEnd,
   recordedDays,
@@ -348,6 +349,19 @@ function edgeNote(edge) {
   );
 }
 
+/**
+ * A weekday's cap after its total - `of 8h`, or an `over by 1h` tag. Nothing
+ * at weekends, which have no day cap, or without a budget.
+ */
+function dayCapHtml(day, view) {
+  const cap = view.dayCap?.(day.date);
+  if (cap == null) return "";
+  const over = Math.round(day.seconds / 60) * 60 - cap;
+  return over > 0
+    ? `<span class="day-cap"> of ${formatDuration(cap)}</span><span class="tag over">over by ${formatDuration(over)}</span>`
+    : `<span class="day-cap"> of ${formatDuration(cap)}</span>`;
+}
+
 function dayHtml(day, view) {
   const groups = groupByType(day.tasks, view.categories);
   const rows = groups
@@ -376,7 +390,7 @@ function dayHtml(day, view) {
   return `<section class="day">
     <div class="day-head">
       <span class="day-date">${dayLabel(day.date)}</span>
-      <span class="day-total mono">${formatDuration(day.seconds)}</span>
+      <span class="day-total mono">${formatDuration(day.seconds)}${dayCapHtml(day, view)}</span>
     </div>
     ${rows}
   </section>`;
@@ -569,6 +583,7 @@ export function renderHtml(view) {
   }
   .day-date { font-weight: 600; font-size: 10.5pt; letter-spacing: -0.01em; }
   .day-total { font-weight: 600; font-size: 9.5pt; }
+  .day-cap { color: #9aa1ad; font-weight: 400; }
   /* A work type within the day: its name and subtotal, small and quiet. */
   .type-head {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -616,6 +631,7 @@ export function renderHtml(view) {
   }
   .tag.manual { color: #92400e; background: #fcf1e3; }
   .tag.soft { color: #9aa1ad; background: transparent; border: 1px solid #e3e6eb; }
+  .tag.over { color: #92400e; background: #fcf1e3; }
 
   .grand {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -896,6 +912,7 @@ function render(job, context) {
     stats: statsFor({ kind: job.kind, figures: caps ? figures : null, total, dayCount: days.length }),
     weeks,
     monthCap: spanCaps?.month ?? null,
+    dayCap: caps ? (date) => dayCapOn(config, date) : null,
     notices: exceptionNotes(config, job.start, job.end),
   });
 

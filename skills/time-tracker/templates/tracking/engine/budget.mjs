@@ -9,10 +9,16 @@
 // So a 160-hour project allows 40 hours a week, and in a five-week month the
 // last week gets whatever the month has left.
 //
+// A weekday - Monday to Friday - may use a fifth of its week: 8 hours of a
+// 40-hour week. The share is fixed, so a short Monday does not lengthen
+// Tuesday, and a weekend has no day cap, only what the week and month have
+// left. `dailyHours` in config.json replaces the fifth when it is set.
+//
 // `budgetExceptions` in config.json changes that for a stretch of days the
 // person chose, each entry `{ from, to, weeklyHours?, monthlyHours?, note? }`:
-// a week starting inside it gets `weeklyHours`, and a day inside it is held
-// to `monthlyHours` for its month - `null` there means no month cap at all.
+// a week starting inside it gets `weeklyHours` - and its weekdays a fifth of
+// that, over `dailyHours` too - and a day inside it is held to `monthlyHours`
+// for its month - `null` there means no month cap at all.
 // Its `note` is printed on every PDF whose span touches the exception's
 // months, so whoever reads the PDF sees why the budget changed.
 //
@@ -161,6 +167,21 @@ export function capsOn(config, day) {
   return { week, month };
 }
 
+/**
+ * The cap of `day` alone in seconds: a fifth of its week's cap on a weekday,
+ * or `dailyHours` when config.json sets it - though an exception that sets
+ * the week's hours still wins. Null at weekends and when there is no budget.
+ */
+export function dayCapOn(config, day) {
+  const caps = budgetCaps(config);
+  if (!caps) return null;
+  const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return null;
+  const start = weekOf(day).start;
+  if (hoursToSeconds(exceptionOn(config, start)?.weeklyHours) != null) return capsOn(config, start).week / 5;
+  return hoursToSeconds(config.dailyHours) ?? caps.week / 5;
+}
+
 /** `budgetCaps` plus `weekFor(start)`, the cap of the week starting that Monday, for `weekRows`. */
 export function weekCaps(config) {
   const caps = budgetCaps(config);
@@ -224,30 +245,34 @@ export function budgetFrom(totals, config, day) {
     if (date >= week.start && date <= week.end) weekUsed += seconds;
     if (monthOf(date) === month) monthUsed += seconds;
   }
+  const dayCap = dayCapOn(config, day);
+  const dayUsed = totals.get(day) ?? 0;
+  const dayLeft = dayCap == null ? null : dayCap - dayUsed;
   const weekLeft = caps.week - weekUsed;
   const monthLeft = caps.month == null ? Infinity : caps.month - monthUsed;
   const over = [];
+  if (dayCap != null && dayUsed > dayCap) over.push("day");
   if (weekUsed > caps.week) over.push("week");
   if (caps.month != null && monthUsed > caps.month) over.push("month");
-  // When the budget opens again: next Monday for the week, the 1st for the
-  // month - the later of the two when both are used up.
+  // When the budget opens again: tomorrow for the day, next Monday for the
+  // week, the 1st for the month - the latest of those used up.
   const [year, monthIndex] = month.split("-").map(Number);
-  const nextMonth = new Date(Date.UTC(year, monthIndex, 1)).toISOString().slice(0, 10);
-  const nextWeek = addDays(week.start, 7);
-  const reopens =
-    weekLeft <= 0 && monthLeft <= 0
-      ? (nextWeek > nextMonth ? nextWeek : nextMonth)
-      : monthLeft <= 0
-        ? nextMonth
-        : nextWeek;
+  const reopens = [
+    dayLeft != null && dayLeft <= 0 ? addDays(day, 1) : null,
+    weekLeft <= 0 ? addDays(week.start, 7) : null,
+    monthLeft <= 0 ? new Date(Date.UTC(year, monthIndex, 1)).toISOString().slice(0, 10) : null,
+  ].reduce((latest, date) => (date && (!latest || date > latest) ? date : latest), null);
   return {
     day,
+    today: { date: day, used: dayUsed, cap: dayCap, left: dayLeft },
     week: { ...week, used: weekUsed, cap: caps.week, left: weekLeft },
     month: { name: month, used: monthUsed, cap: caps.month, left: monthLeft },
+    // Manual hours are held to this, so the day's cap is left out: it only
+    // pauses prompts.
     left: Math.min(weekLeft, monthLeft),
-    exhausted: weekLeft <= 0 || monthLeft <= 0,
+    exhausted: (dayLeft != null && dayLeft <= 0) || weekLeft <= 0 || monthLeft <= 0,
     over,
-    reopens,
+    reopens: reopens ?? addDays(week.start, 7),
   };
 }
 
@@ -271,10 +296,18 @@ function standing(used, cap) {
     : `${formatDuration(used)} of ${formatDuration(cap)} used - ${formatDuration(-left)} over`;
 }
 
-/** `This week (Mon 5 Oct - Sun 11 Oct): 38h of 40h used, 2h left. October: ...` */
+/** `Today (Mon 5 Oct): 6h of 8h used, 2h left. This week (Mon 5 Oct - Sun 11 Oct): ... October: ...` */
 export function describeBudget(budget) {
   const [, monthIndex] = budget.month.name.split("-").map(Number);
+  const today = budget.today;
+  const day = today
+    ? `Today (${shortDay(today.date)}): ` +
+      (today.cap == null
+        ? `${formatDuration(today.used)} used, no daily cap at weekends. `
+        : `${standing(today.used, today.cap)}. `)
+    : "";
   return (
+    day +
     `This week (${shortDay(budget.week.start)} - ${shortDay(budget.week.end)}): ` +
     `${standing(budget.week.used, budget.week.cap)}. ` +
     `${MONTH_NAMES[monthIndex - 1]}: ${standing(budget.month.used, budget.month.cap)}.`
@@ -283,12 +316,12 @@ export function describeBudget(budget) {
 
 /** Why the budget is closed and when it opens again, for the prompt hook. */
 export function blockedMessage(budget) {
-  const which =
-    budget.week.left <= 0 && budget.month.left <= 0
-      ? "this week's and this month's hours are"
-      : budget.month.left <= 0
-        ? "this month's hours are"
-        : "this week's hours are";
+  const spans = [
+    budget.today?.left != null && budget.today.left <= 0 ? "today's" : null,
+    budget.week.left <= 0 ? "this week's" : null,
+    budget.month.left <= 0 ? "this month's" : null,
+  ].filter(Boolean);
+  const which = `${spans.length > 1 ? `${spans.slice(0, -1).join(", ")} and ${spans.at(-1)}` : spans[0]} hours are`;
   return (
     `Time tracker: ${which} used up for this project. ${describeBudget(budget)}\n` +
     `Prompts here are paused until ${shortDay(budget.reopens)}. "update tracker" still works. ` +
@@ -310,15 +343,15 @@ export function roomProblem(budget, extraSeconds) {
 }
 
 /**
- * Log a week or month going over budget - once per week and once per month,
+ * Log a day, week or month going over budget - once per day, week and month,
  * not on every collect that finds it still over.
  */
 export function noteOverBudget(fileId, config, budget) {
   const logged = readLog(fileId).filter((entry) => entry?.kind === "over-budget");
   for (const period of budget.over) {
-    const key = period === "week" ? budget.week.start : budget.month.name;
+    const key = period === "day" ? budget.today.date : period === "week" ? budget.week.start : budget.month.name;
     if (logged.some((entry) => entry.period === period && entry.from === key)) continue;
-    const span = period === "week" ? budget.week : budget.month;
+    const span = period === "day" ? budget.today : period === "week" ? budget.week : budget.month;
     appendEntry(fileId, {
       at: new Date().toLocaleString("sv", { timeZone: config.timeZone }).replace(" ", "T"),
       kind: "over-budget",
