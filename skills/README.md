@@ -12,6 +12,7 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 | `create-competitor-profile` | Writes a new, fully sourced competitor profile in the research tree. | |
 | `feedback-intake` | Files feedback one file per date, with categories, severity and de-duplication. Imports from FigJam. | Figma MCP (optional) |
 | `figma-to-code` | Implements a Figma frame or a claude.ai/design handoff as code. | Figma MCP |
+| `module-docs` | One living page per product module: what is built, what is next, and a dated history of what changed, why, how it was planned and what was decided. Asks after each task; can commit and push only the docs. | Node, git |
 | `product-teardown` | Researches a product module by module, with a screenshot of every screen and state and every element listed. | Orca |
 | `project-kickoff` | One-time setup of a new project's AI layer. Started by `aistack init`; removes itself afterwards. | |
 | `remove-ai-marks` | Strips AI provenance marks: invisible Unicode, watermarks, C2PA and other metadata. | |

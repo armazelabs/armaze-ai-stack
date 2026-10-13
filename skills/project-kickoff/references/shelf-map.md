@@ -13,6 +13,7 @@ unticked.
 | --- | --- | --- | --- | --- |
 | `skills/figma-to-code` | ticked | ticked | ticked | Builds Figma frames as components and tokens. |
 | `skills/time-tracker` | ticked | ticked | ticked | Measures time from Claude Code sessions. Has its own setup step - list it as a next step. |
+| `skills/module-docs` | offered | ticked | ticked | A living page per product module for the client and developers, updated after each task. Has its own setup step - list it as a next step. |
 | `skills/rooter` | ticked | offered | - | A client-facing entry page at the deployed root. |
 | `skills/whats-new-generator` | ticked | ticked | offered | Changelog and "what's new" system. Scaffolds code later - install only. |
 | `skills/content-research-writer` | ticked | offered | - | Researched content with citations. |

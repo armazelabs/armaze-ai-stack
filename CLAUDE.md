@@ -63,8 +63,8 @@ HOME=/path/to/fakehome PATH=/path/to/stubbin:/usr/bin:/bin zsh -fc 'source oh-my
 # project-kickoff's finish step, in a scratch repo with a git identity (and once with none: it must exit 1)
 zsh .claude/skills/project-kickoff/scripts/finish.zsh "Name" CLAUDE.md docs project-management
 
-# The time-tracker skill's engine is Node (the one component with tests - node:test, no dependencies)
-node --test skills/time-tracker/tests/
+# The time-tracker and module-docs engines are Node (the components with tests - node:test, no dependencies)
+node --test skills/time-tracker/tests/ skills/module-docs/tests/
 ```
 
 `git rev-parse HEAD` must succeed in the fixture stack for `stack_rev` to produce a real value; `git init && git commit` the fixture first.
