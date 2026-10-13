@@ -2,6 +2,24 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.19.0 - 2026-10-13
+
+**New skill: module-docs.** Add it to a project with `aistack add module-docs`, then say **"set up module docs"**. It needs Node and git.
+
+### Added
+
+- **module-docs** keeps one living page per product module, written for the client and the developers alike. Each page says what the module is, what is built now, what is coming next and what is still open. It also keeps a dated history of what changed, why, how it was planned and what was decided along the way, including the options that were dropped.
+- After each finished task that changed the project, Claude asks whether to document it, naming the module. A yes writes the history entry and refreshes the page. "Not now" waits until the next session, and "Don't document" leaves the work out.
+- Work an earlier session left undocumented is raised in the next session's first reply. "update docs" catches up at any time.
+- Two hooks, installed by setup next to any already there:
+  - **SessionStart** lists the catch-up.
+  - **Stop** reminds Claude to ask at the end of a turn that changed documentable files. It stays quiet in plan mode, while Claude is waiting on the person, and after a "Not now".
+- Entries are written from evidence the engine pulls out of the session transcript: the person's requests, the approved plan, every question asked with the option chosen and the ones dropped, and the commits made. Claude reads one small file per item, never a whole transcript.
+- The first run confirms the modules from the project's own product docs and maps them to the code. It writes each module's current state, and rebuilds the history from git, one entry per module per day. Work in an area no module covers is asked about once per area.
+- Pages never show hours, people's names or computers, the tools used, internal requirement IDs or commit SHAs. A lint enforces what it can, using every author name and email in the history.
+- Publishing is chosen at setup. Claude either commits only the docs files and pushes them, or leaves them for the person to commit. When the work itself is uncommitted, it offers to commit both. It never forces, pulls or rebases on its own, and stops when the remote has moved on.
+- When the project keeps requirements in `project-management/requirements/`, both use one module list. Entries name the requirements and decisions they delivered by title, and pages can show the approved requirements still to come. module-docs never changes a requirement.
+
 ## 0.18.0 - 2026-10-12
 
 **time-tracker caps each weekday too.** After `aistack update`, say **"update time tracker setup"** in each project that tracks time, then commit.
