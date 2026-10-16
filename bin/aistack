@@ -15,8 +15,8 @@
 #   ARMAZE_NO_PULL     Set to 1 to make update skip pulling the stack (update sets it when it restarts itself)
 #   ARMAZE_ICONS       Set to 0 for ASCII markers instead of Nerd Font glyphs
 #   ARMAZE_UI          1/0 to force the banner layout on/off (default: on when stdout is a terminal)
-#   ARMAZE_WIDTH       Width of the boxed layout in columns (default 100, never wider than the terminal)
-#   ARMAZE_ALIGN       left to pin the box to the left edge (default: centred in the terminal)
+#   ARMAZE_WIDTH       Cap on the width of the boxed layout in columns (default: the full terminal width)
+#   ARMAZE_ALIGN       left to pin a narrower box to the left edge (default: centred in the terminal)
 #   NO_COLOR           Disable coloured output; CLICOLOR_FORCE=1 keeps it on without a terminal
 
 emulate -R zsh
@@ -71,9 +71,9 @@ pretty_path() {  # <abs path>
 # ---------------------------------------------------------------------------
 # UI: the banner layout used by `list`, the `add` picker and `help`.
 #
-# Everything is drawn inside a rounded box of fixed width (ARMAZE_WIDTH, default
-# 100 columns, or the terminal width if that is narrower) rather than stretched
-# across the window. Lines go through ui_line, which adds the borders while a
+# Everything is drawn inside a rounded box as wide as the terminal (or
+# ARMAZE_WIDTH columns, if set and narrower, centred unless ARMAZE_ALIGN=left).
+# Lines go through ui_line, which adds the borders while a
 # box is open (UI_BOX=1, between ui_top and ui_bottom) and prints plainly outside.
 #
 # Drawn only when stdout is a terminal (override with ARMAZE_UI=1/0), so piped
@@ -105,31 +105,35 @@ else
 fi
 if ui_unicode; then
   G_ON=$'▶' G_OFF=$'○' G_DASH=$'┄' G_ELL=$'…' G_DOT=$'·' G_ENTER=$'⏎'
-  G_CUR=$'❯' G_SEL=$'◉' G_UNSEL=$'○' G_UP=$'↑' G_DOWN=$'↓'
+  G_CUR=$'❯' G_SEL=$'◉' G_UNSEL=$'○' G_UP=$'↑' G_DOWN=$'↓' G_LEFT=$'←' G_RIGHT=$'→'
   B_TL=$'╭' B_TR=$'╮' B_BL=$'╰' B_BR=$'╯' B_H=$'─' B_V=$'│' B_LT=$'├' B_RT=$'┤'
 else
   G_ON='>' G_OFF='o' G_DASH='-' G_ELL='...' G_DOT='-' G_ENTER='enter'
-  G_CUR='>' G_SEL='[x]' G_UNSEL='[ ]' G_UP='^' G_DOWN='v'
+  G_CUR='>' G_SEL='[x]' G_UNSEL='[ ]' G_UP='^' G_DOWN='v' G_LEFT='<' G_RIGHT='>'
   B_TL='+' B_TR='+' B_BL='+' B_BR='+' B_H='-' B_V='|' B_LT='+' B_RT='+'
 fi
 
 # Layout width. UI_WIDTH is the box, UI_COLS the content between its borders
 # ("│ " and " │" take two cells each side). zsh reports COLUMNS=0 with no
-# terminal attached, so fall through to tput, then to 80.
-typeset -gi UI_TERM=${COLUMNS:-0}
-(( UI_TERM > 0 )) || UI_TERM=$(tput cols 2>/dev/null)
-(( UI_TERM > 0 )) || UI_TERM=80
-typeset -gi UI_WIDTH=${ARMAZE_WIDTH:-100}
-(( UI_WIDTH > 0 )) || UI_WIDTH=100
-(( UI_WIDTH > UI_TERM )) && UI_WIDTH=$UI_TERM
-(( UI_WIDTH < 40 )) && UI_WIDTH=40
-typeset -gi UI_COLS=$(( UI_WIDTH - 4 ))
+# terminal attached, so fall through to tput, then to 80. The app calls ui_size
+# again when the terminal is resized.
+typeset -gi UI_TERM UI_WIDTH UI_COLS UI_MARGIN
 typeset -gi UI_BOX=0   # 1 while a box is open (ui_top … ui_bottom): ui_line draws borders
-
-# Horizontal position: the box is centred in the terminal unless ARMAZE_ALIGN=left.
-typeset -gi UI_MARGIN=0
-[[ ${ARMAZE_ALIGN:-center} == left ]] || UI_MARGIN=$(( (UI_TERM - UI_WIDTH) / 2 ))
-(( UI_MARGIN < 0 )) && UI_MARGIN=0
+ui_size() {
+  UI_TERM=${COLUMNS:-0}
+  (( UI_TERM > 0 )) || UI_TERM=$(tput cols 2>/dev/null)
+  (( UI_TERM > 0 )) || UI_TERM=80
+  UI_WIDTH=${ARMAZE_WIDTH:-0}
+  (( UI_WIDTH > 0 )) || UI_WIDTH=$UI_TERM
+  (( UI_WIDTH > UI_TERM )) && UI_WIDTH=$UI_TERM
+  (( UI_WIDTH < 40 )) && UI_WIDTH=40
+  UI_COLS=$(( UI_WIDTH - 4 ))
+  # Horizontal position: the box is centred in the terminal unless ARMAZE_ALIGN=left.
+  UI_MARGIN=0
+  [[ ${ARMAZE_ALIGN:-center} == left ]] || UI_MARGIN=$(( (UI_TERM - UI_WIDTH) / 2 ))
+  (( UI_MARGIN < 0 )) && UI_MARGIN=0
+}
+ui_size
 
 # Calvin S, three rows per glyph, as used by git-persona. Rows within a glyph
 # are equal width and glyphs sit flush against each other.
@@ -229,7 +233,7 @@ ui_banner() {  # <current command>
     ui_center "${C_ACCENT}${C_BOLD}${word}${C_RESET}"
   fi
   local bar='' name
-  for name in list add update help; do
+  for name in "${TABS[@]}"; do
     if [[ $name == $cur ]]; then bar+="${C_TAB} ${name} ${C_RESET}  "
     else bar+="${C_MUTED} ${name} ${C_RESET}  "
     fi
@@ -268,7 +272,9 @@ ui_section() { ui_line "${C_HEAD}${ICON[$1]}  ${2}${C_RESET}" }  # <type> <title
 # Style `dim` mutes the name; `bold` emboldens the row (the picker's cursor line).
 # $6, if given, is a marker placed right after the name, inside the name column —
 # callers that use it widen $4 by two cells so the description column stays put.
-ui_item() {  # <prefix> <name> <desc> <name width> [dim|bold] [after]
+# ui_item_r sets REPLY instead, for the app's split view to add the README pane.
+ui_item() { ui_item_r "$@"; ui_line "$REPLY" }
+ui_item_r() {  # <prefix> <name> <desc> <name width> [dim|bold] [after]
   local prefix=$1 name=$2 desc=$3 style=${5:-} after=${6:-} e=''
   local -i w=$4
   ui_vis_r "$prefix"
@@ -284,7 +290,7 @@ ui_item() {  # <prefix> <name> <desc> <name width> [dim|bold] [after]
   ui_trunc_r "$desc" $room
   local content="  ${prefix} ${nm}${(pl:$gap:: :)e}  ${C_MUTED}${REPLY}${C_RESET}"
   [[ $style == bold ]] && content="${C_BOLD}${content}"
-  ui_line "$content"
+  REPLY=$content
 }
 
 # Key legend, pairs of <key> <label>.
@@ -304,7 +310,7 @@ ui_name_width() {
   print -r -- $w
 }
 
-# Help text. Lines are kept under 96 cells so they fit inside the default box.
+# Help text. Lines are kept under 96 cells so they fit the box in a 100-column terminal.
 usage_text() {
   cat <<USAGE
 ${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to a repo
@@ -332,8 +338,10 @@ ${C_BOLD}add options${C_RESET}
   NAME may be bare (pr-review) or qualified (skills/pr-review, agents/reviewer).
   Without NAME the app opens on the add tab: tab / shift-tab switch tabs, arrows or j/k move,
   space toggles, a toggles all, enter adds, q quits. Plain aistack does the same.
+  The selected component's README shows beside the list: right arrow or a click moves into it,
+  up/down or the mouse wheel scroll it, left arrow or esc comes back.
   ARMAZE_PICKER=menu for a numbered list instead, =fzf for fuzzy search.
-  ARMAZE_ICONS=0 for ASCII markers; ARMAZE_WIDTH=N box width (default 100); ARMAZE_ALIGN=left.
+  ARMAZE_ICONS=0 for ASCII markers; ARMAZE_WIDTH=N caps the box width; ARMAZE_ALIGN=left.
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
@@ -701,7 +709,7 @@ pick_fzf() {  # <type> [dest dir]
 }
 
 # ---------------------------------------------------------------------------
-# The app: one screen, four tabs — list · add · update · help. The screen is
+# The app: one screen, three tabs — add · update · help. The screen is
 # cleared and the whole frame is redrawn from the top on every key, so nothing
 # depends on cursor arithmetic. tab / shift-tab (or ← →) switch tabs; each tab
 # lists its own keys in the footer; q or esc quits.
@@ -711,7 +719,7 @@ pick_fzf() {  # <type> [dest dir]
 # add, SELECTED to "type<TAB>name" entries. Reads target, platform, dest_rel,
 # types and add_ok from the caller (zsh scoping is dynamic).
 # ---------------------------------------------------------------------------
-readonly -a TABS=(list add update help)
+readonly -a TABS=(add update help)
 
 app_available() {
   (( UI )) || return 1
@@ -723,9 +731,9 @@ app_available() {
 tui() {  # <start tab>
   setopt local_options local_traps
   local -i tab=${TABS[(Ie)$1]}
-  (( tab )) || tab=2
+  (( tab )) || tab=1
 
-  # Rows for the list and add tabs: one entry per drawn row; r_type '' = not selectable.
+  # Rows for the add tab: one entry per drawn row; r_type '' = not selectable.
   local -a r_type=() r_name=() r_desc=() r_tag=() names
   local type name desc
   local -i i
@@ -750,6 +758,44 @@ tui() {  # <start tab>
   local -a help=("${(@f)$(usage_text)}")
   local -i htop=1
 
+  # README pane beside the add rows: the selected component's README.md, else its
+  # own doc. lw/pw are the list and pane widths (pw 0 = too narrow, descriptions inline instead);
+  # crow is the screen row of the first content line, for mapping mouse clicks.
+  local -a doc
+  local doc_key='' doc_rel='' doc_head='' sep=''
+  local -i dtop=1 focus_doc=0 lw=0 pw=0 crow=0
+  load_doc() {  # <row> <width>
+    [[ $doc_key == $1:$2 ]] && return
+    [[ ${doc_key%%:*} == $1 ]] || dtop=1   # a new component starts at the top; a resize keeps the place
+    doc_key=$1:$2
+    local -a l
+    local -i end
+    doc_rel=${r_type[$1]}/${r_name[$1]}/README.md
+    [[ -f $ARMAZE_STACK_DIR/$doc_rel ]] || doc_rel=$(component_doc_rel "${r_type[$1]}" "${r_name[$1]}")
+    l=("${(@f)$(<$ARMAZE_STACK_DIR/$doc_rel)}")
+    if [[ ${l[1]} == --- ]]; then   # drop the front matter
+      end=${l[(ib:2:)---]}
+      (( end <= $#l )) && l=("${(@)l[end+1,-1]}")
+    fi
+    l=("${(@)l[${l[(i)?*]},-1]}")   # and the blank lines after it
+    # fold -s wraps at spaces; it counts bytes on GNU, which only wraps a non-ASCII line early
+    doc=("${(@f)$(print -rl -- "${(@)l//$'\t'/    }" | fold -s -w $2)}")
+  }
+  # A row of the add tab: the list part, then its line of the README pane if shown.
+  pane_row() {  # <row in the window, from 1> <list part>
+    local e='' line
+    local -i pad
+    (( pw )) || { ui_line "$2"; return }
+    if (( $1 == 1 )); then line=$doc_head
+    else
+      line=${doc[dtop + $1 - 2]:-}
+      [[ $line == \#* ]] && line="${C_HEAD}${line}${C_RESET}"
+    fi
+    ui_trunc_r "$line" $pw; line=$REPLY
+    ui_vis_r "$2"; pad=$(( lw - REPLY )); (( pad < 0 )) && pad=0
+    ui_line "$2${(pl:$pad:: :)e}${sep}${line}"
+  }
+
   # Shown on every frame, computed once.
   local rev=$(stack_rev) stack_shown=$(pretty_path "$ARMAZE_STACK_DIR") target_shown=$(pretty_path "$target")
   local stack_info="${C_MUTED}${ICON[rev]} ${rev} ${G_DOT} ${ICON[stack]} ${stack_shown}${C_RESET}"
@@ -757,24 +803,27 @@ tui() {  # <start tab>
   [[ -f $target/$MANIFEST_NAME ]] && recorded=$(grep -vc '^#' "$target/$MANIFEST_NAME")
 
   # Content rows that fit: a frame is banner (6) + status (3) + rows + footer (2) + edge (1),
-  # and one line is left so the cursor never scrolls the screen.
-  local -i lines=${LINES:-0}
-  (( lines > 0 )) || lines=$(tput lines 2>/dev/null)
-  (( lines > 0 )) || lines=24
-  local -i win=$(( lines - 13 ))
-  (( win < 3 )) && win=3
+  # and one line is left so the cursor never scrolls the screen. Measured again after a resize.
+  local -i win
+  fit() {
+    local -i lines=${LINES:-0}
+    (( lines > 0 )) || lines=$(tput lines 2>/dev/null)
+    (( lines > 0 )) || lines=24
+    win=$(( lines - 13 ))
+    (( win < 3 )) && win=3
+  }
+  fit
 
   local key_tab="${C_KEY}tab${C_RESET} ${C_MUTED}switch${C_RESET}"   # shift-tab goes the other way; both wrap around
   local key_move="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}"
   local key_quit="${C_KEY}q${C_RESET} ${C_MUTED}quit${C_RESET}"
 
   draw() {
-    local cur=${TABS[tab]} prefix box style after foot
-    local -i k cur_row last shown=0
+    local cur=${TABS[tab]} prefix box style after foot left desc nav_keys
+    local -i k cur_row last shown=0 hmax dmax
     FR=(); UI_CAPTURE=1
     ui_banner "$cur"
     case $cur in
-      list)   ui_status "${C_BOLD}Armaze AI Stack${C_RESET} ${C_MUTED}(${#sel} components)${C_RESET}" "$stack_info" ;;
       add)    if (( add_ok )); then
                 ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} ${target_shown} ${G_DOT} layout ${platform}${C_RESET}" "$stack_info"
               else
@@ -784,12 +833,27 @@ tui() {  # <start tab>
       help)   ui_status "${C_BOLD}Help${C_RESET} ${C_MUTED}aistack ${ARMAZE_VERSION}${C_RESET}" "$stack_info" ;;
     esac
 
+    crow=$(( $#FR + 1 ))
     case $cur in
-      list|add)
+      add)
         if (( ! $#sel )); then
-          ui_line "  ${C_MUTED}nothing here yet — the stack is empty${C_RESET}"; shown=1
+          ui_line "  ${C_MUTED}nothing here yet — the stack is empty${C_RESET}"; shown=1; pw=0 focus_doc=0
         else
           cur_row=${sel[pos]}
+          # The list part is as wide as ui_item draws a row with no description: 7 cells, the mark, the names.
+          ui_vis_r "$G_UNSEL"
+          lw=$(( 7 + REPLY + w ))
+          pw=$(( UI_COLS - lw - 2 ))
+          (( pw < 24 )) && pw=0
+          (( pw )) || focus_doc=0
+          if (( pw )); then
+            load_doc $cur_row $pw
+            dmax=$(( $#doc - win + 2 )); (( dmax < 1 )) && dmax=1
+            (( dtop < 1 )) && dtop=1; (( dtop > dmax )) && dtop=$dmax
+            (( focus_doc )) && doc_head="${C_ACCENT}${C_BOLD}${doc_rel}${C_RESET}" || doc_head="${C_MUTED}${doc_rel}${C_RESET}"
+            (( $#doc > win - 1 )) && doc_head+="${C_MUTED} ${G_DOT} ${dtop}-$(( dtop + win - 2 > $#doc ? $#doc : dtop + win - 2 )) of ${#doc}${C_RESET}"
+            (( focus_doc )) && sep="${C_ACCENT}${B_V}${C_RESET} " || sep="${C_SHADOW}${B_V}${C_RESET} "
+          fi
           # keep the cursor inside the window, leaving room for the more-markers
           (( cur_row < rtop + (rtop > 1) )) && rtop=$(( cur_row - (cur_row > 1) ))
           last=$(( rtop + win - 1 ))
@@ -799,31 +863,30 @@ tui() {  # <start tab>
           (( last > total )) && last=$total
           for (( k = rtop; k <= last; k++ )); do
             if (( k == rtop && rtop > 1 )); then
-              ui_line "  ${C_MUTED}${G_UP} $(( rtop - 1 )) more${C_RESET}"
+              left="  ${C_MUTED}${G_UP} $(( rtop - 1 )) more${C_RESET}"
             elif (( k == last && last < total )); then
-              ui_line "  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}"
+              left="  ${C_MUTED}${G_DOWN} $(( total - last )) more${C_RESET}"
             elif [[ -z ${r_type[k]} ]]; then
               case ${r_tag[k]} in
-                header) ui_section "${r_name[k]}" "${(C)r_name[k]}" ;;
-                none)   ui_line "  ${C_MUTED}${G_OFF} none yet${C_RESET}" ;;
-                *)      ui_blank ;;
+                header) left="${C_HEAD}${ICON[${r_name[k]}]}  ${(C)r_name[k]}${C_RESET}" ;;   # as ui_section draws it
+                none)   left="  ${C_MUTED}${G_OFF} none yet${C_RESET}" ;;
+                *)      left='' ;;
               esac
             else
               (( k == cur_row )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
               (( k == cur_row )) && style=bold || style=''
-              # A green check marks what the project already has: before the name on
-              # list, right after it on add (where the slot before is the ○/◉ mark).
-              if [[ $cur == add ]]; then
-                (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
-                [[ -n ${r_tag[k]} ]] && after="${C_ITEM}${ICON[ok]}${C_RESET}" || after=''
-                ui_item "${prefix} ${box}" "${r_name[k]}" "${r_desc[k]}" $w "$style" "$after"
-              else
-                [[ -n ${r_tag[k]} ]] && box="${C_ITEM}${ICON[ok]}${C_RESET}" || box=' '
-                ui_item "${prefix} ${box}" "${r_name[k]}" "${r_desc[k]}" $w "$style"
-              fi
+              # A green check right after the name marks what the project already has.
+              (( pw )) && desc='' || desc=${r_desc[k]}   # the pane replaces the one-line description
+              (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
+              [[ -n ${r_tag[k]} ]] && after="${C_ITEM}${ICON[ok]}${C_RESET}" || after=''
+              ui_item_r "${prefix} ${box}" "${r_name[k]}" "$desc" $w "$style" "$after"
+              left=$REPLY
             fi
             (( shown += 1 ))
+            pane_row $shown "$left"
           done
+          # the pane runs the full height of the window, below a short list too
+          while (( pw && shown < win )); do (( shown += 1 )); pane_row $shown ''; done
         fi ;;
       update)
         ui_line "  ${C_HEAD}${ICON[stack]}  Stack${C_RESET}"
@@ -842,6 +905,9 @@ tui() {  # <start tab>
         ui_line "  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}runs it now${C_RESET}"
         shown=9 ;;
       help)
+        # clamped here rather than in nav so a taller window after a resize pulls the text back down
+        hmax=$(( $#help - win + 1 )); (( hmax < 1 )) && hmax=1
+        (( htop < 1 )) && htop=1; (( htop > hmax )) && htop=$hmax
         last=$(( htop + win - 1 ))
         (( last > $#help )) && last=$#help
         for (( k = htop; k <= last; k++ )); do
@@ -857,9 +923,15 @@ tui() {  # <start tab>
     esac
     for (( k = shown; k < win; k++ )); do ui_blank; done
 
+    # the arrows move the cursor, or scroll the README pane while it has the focus
+    if (( focus_doc )); then
+      nav_keys="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}scroll${C_RESET}  ${C_KEY}${G_LEFT}${C_RESET} ${C_MUTED}back${C_RESET}"
+    else
+      nav_keys=$key_move
+      (( pw )) && nav_keys+="  ${C_KEY}${G_RIGHT}${C_RESET} ${C_MUTED}readme${C_RESET}"
+    fi
     case $cur in
-      list)   foot="${key_tab}  ${key_move}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add this${C_RESET}  ${key_quit}" ;;
-      add)    foot="${key_tab}  ${key_move}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}"
+      add)    foot="${key_tab}  ${nav_keys}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}"
               (( add_ok )) && foot+="  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}"
               foot+="  ${key_quit}" ;;
       update) foot="${key_tab}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}pull & refresh${C_RESET}  ${key_quit}" ;;
@@ -869,7 +941,9 @@ tui() {  # <start tab>
     ui_line "  ${foot}"
     ui_bottom
     UI_CAPTURE=0
-    print -rn -- $'\e[H'"${(pj:\e[K\n:)FR}"$'\e[K\e[J'
+    # Clear each line before writing it, not after: a full-width line leaves the cursor on the last
+    # column, where \e[K or \e[J would erase the right border. The final \n lands on the spare row.
+    print -rn -- $'\e[H\e[K'"${(pj:\n\e[K:)FR}"$'\n\e[J'
   }
 
   toggle() { local -i k=$1; if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); else marked[$k]=1; (( marked_n += 1 )); fi }
@@ -878,25 +952,64 @@ tui() {  # <start tab>
     else for i in "${sel[@]}"; do marked[$i]=1; done; marked_n=$#sel
     fi
   }
-  # Move the cursor (list, add) or scroll (help) by $1 = +1 / -1.
+  # Move the cursor (add), scroll the README pane when it has the focus, or scroll help, by $1.
+  move() { (( $#sel )) && (( pos = (pos - 1 + $1 + $#sel) % $#sel + 1 )) }
   nav() {
-    local -i d=$1 hmax
+    local -i d=$1
     case ${TABS[tab]} in
-      list|add) (( $#sel )) && (( pos = (pos - 1 + d + $#sel) % $#sel + 1 )) ;;
-      help)     hmax=$(( $#help - win + 1 )); (( hmax < 1 )) && hmax=1
-                (( htop += d )); (( htop < 1 )) && htop=1; (( htop > hmax )) && htop=$hmax ;;
+      add)  if (( focus_doc )); then (( dtop += d )); else move $d; fi ;;   # draw keeps dtop in range
+      help) (( htop += d )) ;;   # and htop
     esac
   }
   # Both wrap: tab on the last tab lands on the first, shift-tab on the first lands on the last.
-  next_tab() { (( tab = tab % $#TABS + 1 )) }
-  prev_tab() { (( tab = tab > 1 ? tab - 1 : $#TABS )) }
+  next_tab() { focus_doc=0; (( tab = tab % $#TABS + 1 )) }
+  prev_tab() { focus_doc=0; (( tab = tab > 1 ? tab - 1 : $#TABS )) }
+  # A mouse report after \e[<: button;column;row, then M for a press or m for a release.
+  # Left click on a row selects it, on the README pane focuses it; the wheel scrolls what is under it.
+  mouse() {
+    local c m=''
+    local -a f
+    while read -sk1 -t 0.05 c && [[ $c != [Mm] ]]; do m+=$c; done
+    [[ $c == M ]] || return 0
+    f=(${(s:;:)m})
+    local -i b=${f[1]:-0} x=${f[2]:-0} y=${f[3]:-0} k in_pane
+    (( b &= ~28 ))   # drop the shift, meta and ctrl bits
+    in_pane=$(( pw && x >= UI_MARGIN + 3 + lw ))
+    case ${TABS[tab]} in
+      add)
+        if (( b == 64 || b == 65 )); then
+          if (( in_pane )); then (( dtop += b == 64 ? -3 : 3 )); else move $(( b == 64 ? -1 : 1 )); fi
+        elif (( b == 0 && y >= crow && y < crow + win )); then
+          if (( in_pane )); then focus_doc=1
+          else
+            focus_doc=0; k=$(( rtop + y - crow ))
+            [[ -n ${r_type[k]} ]] && pos=${sel[(ie)$k]}
+          fi
+        fi ;;
+      help) (( b == 64 )) && (( htop -= 3 )); (( b == 65 )) && (( htop += 3 )) ;;
+    esac
+    return 0
+  }
 
   APP_ACTION=quit; SELECTED=()
-  print -n -- $'\e[?25l\e[H\e[2J'   # hide the cursor, clear the screen
-  trap 'print -n -- $'"'"'\e[?25h'"'"'; print; exit 130' INT TERM
-  local key seq
+  local app_off=$'\e[?1000l\e[?1006l\e[?25h'   # undoes the line below; every way out prints it
+  print -n -- $'\e[?25l\e[?1000h\e[?1006h\e[H\e[2J'   # hide the cursor, report mouse clicks and wheel (SGR), clear
+  trap 'print -n -- $app_off; print; exit 130' INT TERM
+  local key seq size drawn_size=$(stty size 2>/dev/null)
+  local -F SECONDS t0
   draw
-  while read -sk1 key; do
+  while true; do
+    t0=$SECONDS
+    if ! read -sk1 -t 0.25 key; then
+      (( SECONDS - t0 < 0.1 )) && break   # back before the timeout: stdin is gone
+      # zsh keeps SIGWINCH blocked in scripts, so a WINCH trap never fires; ask the terminal instead.
+      size=$(stty size 2>/dev/null)
+      if [[ -n $size && $size != $drawn_size ]]; then
+        drawn_size=$size LINES=${size% *} COLUMNS=${size#* }
+        ui_size; fit; print -n -- $'\e[2J'; draw
+      fi
+      continue
+    fi
     case $key in
       $'\t')  next_tab ;;
       $'\e')
@@ -905,13 +1018,16 @@ tui() {  # <start tab>
           read -sk1 -t 0.05 seq
           case $seq in
             Z) prev_tab ;;   # shift-tab
-            C) next_tab ;;   # →
-            D) prev_tab ;;   # ←
+            C) if [[ ${TABS[tab]} == add ]] && (( pw )); then focus_doc=1; else next_tab; fi ;;   # → into the README
+            D) if (( focus_doc )); then focus_doc=0; else prev_tab; fi ;;                                 # ← back out of it
             A) nav -1 ;;
             B) nav 1 ;;
+            '<') mouse ;;
           esac
+        elif (( focus_doc )); then
+          focus_doc=0        # bare escape leaves the README pane
         else
-          break            # bare escape quits
+          break            # or quits
         fi ;;
       k|p) nav -1 ;;
       j|n) nav 1 ;;
@@ -923,15 +1039,14 @@ tui() {  # <start tab>
                     (( marked_n )) || toggle ${sel[pos]}   # enter on an unmarked list adds the current row
                     APP_ACTION=add; break
                   fi ;;
-          list)   tab=${TABS[(Ie)add]} ;;
           update) APP_ACTION=update; break ;;
         esac ;;
       q|$'\x04') break ;;                                    # q, ctrl-d
-      $'\x03')   print -n -- $'\e[?25h'; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
+      $'\x03')   print -n -- $app_off; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
     esac
     draw
   done
-  print -n -- $'\e[?25h'
+  print -n -- $app_off
   print
   UI_BOX=0 UI_CAPTURE=0
   if [[ $APP_ACTION == add ]]; then
@@ -1051,8 +1166,8 @@ cmd_list() {
     return 0
   fi
 
-  # Interactive: the app, on its list tab.
-  if app_available; then app_open list "${types[@]}"; return; fi
+  # Interactive: the app's add tab, which lists everything and checks what this project has.
+  if app_available; then app_open add "${types[@]}"; return; fi
 
   # Banner layout, printed once (a terminal on stdout but not on stdin).
   local counts='' t
@@ -1061,7 +1176,7 @@ cmd_list() {
     counts+="${counts:+ ${G_DOT} }${#names} ${t}"
   done
   local -i w=$(ui_name_width "${types[@]}")
-  # Same marker as the app's list tab: a green check beside what this project already has.
+  # A green check beside what this project already has, as on the app's add tab.
   local target mark
   target=$(resolve_target "") || exit 1
   ui_banner list
@@ -1115,7 +1230,7 @@ cmd_add() {
 
   target=$(resolve_target "$target") || exit 1
   # Installing into the stack itself is refused — except that the app may still
-  # open here with its add tab disabled, so list/update/help stay reachable.
+  # open here with its add tab disabled, so browsing, update and help stay reachable.
   local -i in_stack=0
   [[ $target == $ARMAZE_STACK_DIR ]] && in_stack=1
 

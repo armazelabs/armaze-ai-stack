@@ -26,7 +26,7 @@ Already have a checkout? `./install.zsh` from inside it does the same without cl
 cd ~/my-project                 # or any folder, even an empty one
 aistack                         # the app, opened on the add tab (see below)
 
-aistack list                    # the app on its list tab; piped, a plain list with descriptions
+aistack list                    # the app on its add tab; piped, a plain list with descriptions
 aistack list agents             # just one type
 aistack list --names            # plain type/name lines (what tab completion uses)
 
@@ -46,18 +46,21 @@ aistack --version               # which release you have (see CHANGELOG.md); als
 
 ### The app
 
-In a terminal, `aistack` clears the screen and opens one app with four tabs — `list`, `add`, `update`, `help` — drawn inside a rounded box of fixed width (100 columns, or the terminal width if narrower) centred in the window. Bare `aistack` starts on **add**; `aistack list`, `aistack update` and `aistack help` start on their own tab. Everything else is keys:
+In a terminal, `aistack` clears the screen and opens one app with three tabs — `add`, `update`, `help` — drawn inside a rounded box as wide as the terminal, redrawn when you resize the window. Bare `aistack` and `aistack list` start on **add**, which lists everything on the shelf; `aistack update` and `aistack help` start on their own tab. Everything else is keys:
 
 | Key | Does |
 |-----|------|
 | `tab` / `shift-tab` | Next / previous tab — wrapping around at either end |
-| `↑` `↓` (or `j` `k`) | Move the cursor on **list** and **add**; scroll on **help** |
+| `↑` `↓` (or `j` `k`) | Move the cursor on **add**; scroll the README pane while it has the focus, and **help** |
+| `→`, or a click on the pane | Move into the README pane beside the list (**add**) |
+| `←` / `esc` | Leave the README pane |
+| Mouse | A click on a row selects it; the wheel scrolls whatever is under the pointer |
 | `space` | Mark or unmark the component under the cursor (**add**) |
 | `a` | Mark everything, or clear all marks (**add**) |
-| `⏎` | **add**: install the marked components (or the one under the cursor if nothing is marked) · **list**: jump to add · **update**: pull the stack and refresh this project |
-| `q` / `esc` | Quit without doing anything |
+| `⏎` | **add**: install the marked components (or the one under the cursor if nothing is marked) · **update**: pull the stack and refresh this project |
+| `q` (or `esc` outside the README pane) | Quit without doing anything |
 
-A green check marks components the project already has — before the name on the **list** tab, right after it on the **add** tab — so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Long descriptions are trimmed with an ellipsis to fit the box.
+A green check right after the name marks components the project already has, so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Beside the list, a pane shows the selected component's `README.md`, or its `SKILL.md` or agent file when it has none; in a terminal too narrow for the pane, a one-line description takes its place, trimmed to fit. While the app is open it reads the mouse, so selecting text with the mouse needs Shift or Option held (which one depends on the terminal).
 
 Without a terminal on both ends — piped output, scripts, `list --names`, `add NAME` — nothing interactive happens: `list` prints plain text, `add NAME` installs, `update` runs straight away.
 
@@ -65,8 +68,8 @@ Without a terminal on both ends — piped output, scripts, `list --names`, `add 
 |----------|--------|
 | `ARMAZE_PICKER=menu` | A numbered list read from stdin instead of the app (also what you get without a terminal, or with `ARMAZE_NO_FZF=1`) |
 | `ARMAZE_PICKER=fzf` | Fuzzy multi-select through [fzf](https://github.com/junegunn/fzf), if installed |
-| `ARMAZE_WIDTH=N` | Box width in columns (default 100; never wider than the terminal) |
-| `ARMAZE_ALIGN=left` | Pin the box to the left edge instead of centring it |
+| `ARMAZE_WIDTH=N` | Cap the box width in columns (default: the full terminal width) |
+| `ARMAZE_ALIGN=left` | Pin a box narrowed by `ARMAZE_WIDTH` to the left edge instead of centring it |
 | `ARMAZE_ICONS=0` | ASCII markers instead of Nerd Font glyphs |
 | `ARMAZE_UI=0` | Plain output even on a terminal (`=1` forces the layout when piped) |
 | `NO_COLOR=1` | No colour; `CLICOLOR_FORCE=1` keeps colour when piped |
