@@ -38,9 +38,13 @@ prompts are stopped.
 5. Commit `.claude/settings.json` and the `project-management/tracking/`
    folder, so teammates get the same setup.
 
+Tracking counts from the day of setup onward. The session checks start with
+your next Claude Code session.
+
 Measured hours count at **1.5×**, and time a subagent works on its own at
-**1.2×**. Both can be changed in `config.json`. Tracking counts from that day
-onward. The session checks start with your next Claude Code session.
+**1.2×**. Both can be changed in `config.json`; a change counts from the start
+of the day you make it, and earlier days keep the multipliers they were
+recorded at. To backdate one, edit its date in `multiplierHistory`.
 
 ## Updating to a new version
 
@@ -164,9 +168,9 @@ it in your own words ("about 3 hours in Figma yesterday on the checkout
 screens"), check what Claude understood, and confirm.
 
 Manual hours are always **Research**, and count like measured hours: what you
-give times the hours multiplier (2h given at 1.5× is recorded as 3h - the
-timesheet keeps both). They're tagged **Manual** on every PDF, including the
-client one. They count toward the budget: an entry that would go over the week
+give times the hours multiplier in force that day (2h given at 1.5× is
+recorded as 3h - the timesheet keeps both). They're tagged **Manual** on every
+PDF, including the client one. They count toward the budget: an entry that would go over the week
 or month is refused, and you're told how much is left.
 
 ## Teams and several computers

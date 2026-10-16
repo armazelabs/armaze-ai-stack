@@ -135,6 +135,53 @@ function firstLine(text) {
  * Every check, in order. Each result is `{ status: "ok" | "warn" | "fail",
  * text, fixable }`; `needs` lists the answers a fix would need first.
  */
+/**
+ * The dated multipliers, as check lines: the list itself, and anything in it
+ * a collect would read differently from how it looks - a date in the future,
+ * entries out of order or sharing a date, a value that is not a number.
+ */
+export function multiplierLines(config, today = localToday(config.timeZone)) {
+  const history = config.multiplierHistory;
+  if (history === undefined) {
+    return [["ok", "Multipliers not dated yet - the next collect dates them from config.json's git history"]];
+  }
+  if (!Array.isArray(history)) {
+    return [["fail", "multiplierHistory in config.json is not a list - fix it by hand."]];
+  }
+  const lines = [];
+  const dates = history.map((entry) => entry?.from);
+  const shown = history
+    .map((entry) => `${entry?.hoursMultiplier} / ${entry?.subagentMultiplier} from ${entry?.from}`)
+    .join(", ");
+  lines.push(["ok", `Multipliers by date (main / subagent): ${shown || "none"}`]);
+  const usable = (value) => typeof value === "number" && value > 0;
+  const bad = history.filter(
+    (entry) =>
+      !/^\d{4}-\d{2}-\d{2}$/.test(entry?.from ?? "") ||
+      !usable(entry?.hoursMultiplier) ||
+      !usable(entry?.subagentMultiplier),
+  );
+  if (bad.length > 0) {
+    lines.push([
+      "warn",
+      `multiplierHistory has ${bad.length} entry(s) without a YYYY-MM-DD from or a positive number - ` +
+        "the defaults stand in for them.",
+    ]);
+  }
+  if (dates.some((date, index) => index > 0 && date <= dates[index - 1])) {
+    lines.push(["warn", "multiplierHistory is out of date order or repeats a date - the later entry for a date wins."]);
+  }
+  const future = dates.filter((date) => typeof date === "string" && date > today);
+  if (future.length > 0) {
+    lines.push(["warn", `multiplierHistory starts an entry in the future (${future.join(", ")}).`]);
+  }
+  return lines;
+}
+
+function localToday(timeZone) {
+  return new Date().toLocaleDateString("sv", { timeZone: timeZone || undefined });
+}
+
 async function runChecks() {
   const results = [];
   const needs = [];
@@ -190,6 +237,7 @@ async function runChecks() {
           `${config.subagentMultiplier} for subagents`,
       );
     }
+    for (const [status, text] of multiplierLines(config)) add(status, text);
 
     const machine = machineName();
     if (!machine) {

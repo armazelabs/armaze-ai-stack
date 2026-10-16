@@ -11,6 +11,7 @@
 //   <repo>/<project-management>/<tracking>/config.json
 //   <repo>/<project-management>/<tracking>/computers/<computer>/<YYYY-MM>.md
 //   <repo>/<project-management>/<tracking>/computers/<computer>/log.jsonl
+//   <repo>/<project-management>/<tracking>/computers/<computer>/rates.json
 //   <repo>/<project-management>/<tracking>/reports/              <- the PDFs
 //   <repo>/<project-management>/<tracking>/cache/
 //   ~/.claude/time-tracker/machine.json                        <- which computer this is
@@ -44,6 +45,9 @@ export const CONFIG_PATH = path.join(TRACKING_DIR, "config.json");
 /** The PDFs - every computer merged into one, the ones to read and send. */
 export const REPORTS_DIR = path.join(TRACKING_DIR, "reports");
 
+export const DEFAULT_HOURS_MULTIPLIER = 1.5;
+export const DEFAULT_SUBAGENT_MULTIPLIER = 1.2;
+
 const DEFAULT_CONFIG = {
   timeZone: "UTC",
   // The first day that counts, `YYYY-MM-DD`. Written at setup, and the only
@@ -57,10 +61,12 @@ const DEFAULT_CONFIG = {
   // would quietly grow weeks that were already reported. Null counts all.
   fullCountFrom: null,
   idleGapMinutes: 20,
-  hoursMultiplier: 1.5,
+  // The values in force today. Each day is recorded at the values in force on
+  // it - `multiplierHistory`, the dated list, says which; see rates.mjs.
+  hoursMultiplier: DEFAULT_HOURS_MULTIPLIER,
   // Agent work no main session covered - a background subagent running while
   // its session sat idle. Scaled on its own, lighter than the main multiplier.
-  subagentMultiplier: 1.2,
+  subagentMultiplier: DEFAULT_SUBAGENT_MULTIPLIER,
   // The project's hours per month, shared by everyone on it. A week may use a
   // quarter of it and the month never more than all of it - see budget.mjs.
   // Null means no budget: nothing is checked or blocked.
@@ -332,6 +338,10 @@ export function loadConfig() {
     // No config file yet, or unreadable - the defaults stand.
   }
   const config = { ...DEFAULT_CONFIG, ...stored };
+  // An explicit null gets past the merge above, and would record no time at all.
+  for (const key of ["hoursMultiplier", "subagentMultiplier"]) {
+    if (config[key] == null) config[key] = DEFAULT_CONFIG[key];
+  }
   if (!config.timeZone) {
     config.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   }

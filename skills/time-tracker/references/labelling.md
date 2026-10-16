@@ -116,8 +116,8 @@ that computer can name it.
    `sessions` legend says which ref is which. Use `-` only where the evidence
    truly gives no time.
 
-   **When is not Time.** Time is what is recorded - the hours multiplier is
-   already in it - so a task worked 09:00-11:00 may read `3h`. Split the
+   **When is not Time.** Time is what is recorded - the day's hours multiplier
+   is already in it - so a task worked 09:00-11:00 may read `3h`. Split the
    placeholder's Time between your rows in proportion to how long each was
    worked, and keep them adding up to it.
 
