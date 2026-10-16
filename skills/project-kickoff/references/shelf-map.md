@@ -27,6 +27,7 @@ unticked.
 | `skills/changelog-generator` | offered | offered | ticked | Store release notes from commits. |
 | `skills/code-to-figma` | offered | offered | offered | Pushes built screens back into Figma. |
 | `skills/remove-ai-marks` | offered | offered | offered | Strips AI marks from text and images. |
+| `skills/sync-repo` | offered | offered | offered | Keeps a cleaned copy of the repo for the client, synced commit by commit. Only for client work delivered as a separate repo. Has its own setup step - list it as a next step. |
 | `skills/research-workspace` | offered | offered | offered | A documentation workspace. Never ticked: it builds a second docs tree next to the kickoff's. |
 
 Several types picked: a component is ticked if any picked type ticks it.

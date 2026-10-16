@@ -19,6 +19,7 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 | `research-workspace` | Sets up and looks after the research tree in `project-management/research/`. | |
 | `rooter` | Builds a client-facing entry page that sends clients to the right version, deck or Figma file. | |
 | `site-to-figma` | Pulls a live site's design system into Figma: variables (with light and dark modes), text and shadow styles, components, icons, and the page itself tied to those tokens. Saves W3C design tokens too. | Orca, Figma MCP |
+| `sync-repo` | Syncs pushed commits into a cleaned copy of the repo for the client, one commit each with the same dates: no AI files, internal docs or Figma references, comments checked to be the only change. Optional Playwright comparison of both apps; pushes only on a yes. | Node, git |
 | `time-tracker` | Timesheets measured from Claude Code sessions and commits, with manual hours, budgets and PDFs. | Node |
 | `update-competitor-profile` | Proposes updates to existing competitor profiles and applies them only after approval. | |
 | `ux-visualization-assistant` | Picks and builds the right UX artifact: flows, journeys, information architecture, personas. | |
