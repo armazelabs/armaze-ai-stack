@@ -2,6 +2,27 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.20.0 - 2026-10-16
+
+**time-tracker keeps each day at the multipliers it was recorded at.** After `aistack update`, say **"update time tracker setup"** in each project that tracks time, let one collect run, then commit `config.json` and the `computers/` folder.
+
+### Fixed
+
+- Changing `hoursMultiplier` or `subagentMultiplier` no longer rescales days that are already recorded. Before, the next collect applied the new value to today and to every past day without named tasks. Past days with named tasks got an extra "Unlabelled" row holding the difference.
+- The first collect after the update repairs days the old behaviour changed, where their transcripts are still on disk. Each one goes back to the multiplier that was in force on it, and any "Unlabelled" row the change added is removed.
+
+### Added
+
+- `multiplierHistory` in `config.json` lists the multipliers in force from each date. Keep editing the two numbers as before: the next collect adds an entry dated today, and today's hours, from the start of the day, use the new values. A second change on the same day replaces that day's entry.
+- To backdate a change, edit the `from` date of its entry. On the next collect, the days it now covers are rescaled:
+  - Named tasks keep their names and their share of the day.
+  - Manual hours are rescaled from the hours given.
+  - A day whose transcripts are gone is scaled by the ratio of the two hours multipliers.
+- Manual hours added for a past day use that day's multiplier, not today's.
+- An install from before this release gets its dated list from the git history of `config.json`, one entry per committed change.
+- `computers/<computer>/rates.json` records the multipliers each day was written at. This is how a backdated change is detected.
+- "check time tracker" lists the dated multipliers. It warns about a future date, entries out of order or on the same date, and values that aren't positive numbers.
+
 ## 0.19.0 - 2026-10-13
 
 **New skill: module-docs.** Add it to a project with `aistack add module-docs`, then say **"set up module docs"**. It needs Node and git.
