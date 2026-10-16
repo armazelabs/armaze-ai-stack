@@ -112,11 +112,12 @@ rendering the PDFs is still "update tracker".
 
 | File | What it is |
 | --- | --- |
-| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers, monthly hours budget, `dailyHours`, work types (`categories`). |
+| `config.json` | Shared: first day counted, timezone, idle gap, hours and subagent multipliers and the dates each took effect (`multiplierHistory`), monthly hours budget, `dailyHours`, work types (`categories`). |
 | `reports/<YYYY-MM>.pdf` | **The ones to read and send.** The month, every computer's timesheet merged, with no names, computers, sessions or clock times. |
 | `reports/weekly/<first day>.pdf` | The same for one whole Monday-to-Sunday week - the week of 28 Sep is one PDF across both months. |
 | `computers/<computer>/<YYYY-MM>.md` | One computer's month: a total per day, the tasks it split into, when and in which session each happened, and what each delivered. |
 | `computers/<computer>/log.jsonl` | One line per update and per manual entry: days named, commits used, hours added by hand, month total. |
+| `computers/<computer>/rates.json` | The multipliers each of that computer's days was recorded at, so a backdated change is noticed. Written by the collector. |
 | `cache/` | Evidence for labelling - prompts, sessions and commits per block. Gitignored. |
 | `engine/` | The measurement code. Generated; re-synced by the skill. |
 
@@ -128,9 +129,11 @@ crosses midnight, and the gaps between blocks are not counted - so the number
 errs low rather than high.
 
 Measured hours are multiplied by **{{HOURS_MULTIPLIER}}** before being
-recorded - that is `hoursMultiplier` in `config.json`. Changing it applies to
-days measured from then on; days already recorded keep the number they were
-written with.
+recorded - that is `hoursMultiplier` in `config.json`. Changing it counts from
+the start of the day you change it: the next collect adds an entry dated today
+to `multiplierHistory`, and every earlier day keeps the multipliers it was
+recorded at. To backdate a change, edit that entry's `from` date - the days it
+now covers are rescaled on the next collect, task names kept.
 
 Subagents count at their own multiplier, `subagentMultiplier` (1.2 by
 default). A background agent working while its main session is idle adds the

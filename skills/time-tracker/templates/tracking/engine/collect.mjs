@@ -20,7 +20,8 @@
 //
 // The whole history is recomputed on every run rather than appended to. Scanning
 // all transcripts costs well under a second, and a stateless recompute means a
-// missed night, or work past midnight, corrects itself on the next run.
+// missed night, or work past midnight, corrects itself on the next run. Each
+// day is scaled at the multipliers in force on it, not today's - see rates.mjs.
 
 import { execFileSync } from "node:child_process";
 import {
@@ -74,6 +75,18 @@ import {
   whenCell,
 } from "./month-file.mjs";
 import { lastCommit, localCommits } from "./log.mjs";
+import {
+  configCommits,
+  effectiveHistory,
+  ratePair,
+  rateFor,
+  readLedger,
+  sameRate,
+  saveHistory,
+  seedHistory,
+  storedHistory,
+  writeLedger,
+} from "./rates.mjs";
 import { budgetFor, describeBudget, noteOverBudget } from "./budget.mjs";
 
 const TIMESTAMP = /"timestamp":"([^"]+)"/g;
@@ -683,6 +696,34 @@ function isNewCommit(sha, since) {
 }
 
 /**
+ * The dated multipliers this run scales by. A config with no dated list gets
+ * one from its git history; one whose top-level values were edited gets an
+ * entry from today. Either is written back on a writing run only - the
+ * prompt hook resolves the same list in memory and leaves the file alone.
+ */
+function multipliersFor(config, todayDay, write, say) {
+  const stored = storedHistory(config);
+  const history =
+    write && !Array.isArray(config.multiplierHistory)
+      ? seedHistory({
+          trackFrom: config.trackFrom,
+          commits: configCommits(config.timeZone),
+          current: ratePair(config),
+          today: todayDay,
+        })
+      : effectiveHistory(config, todayDay);
+  if (!write || !saveHistory(history)) return history;
+  const describe = (entry) => `${entry.hoursMultiplier} / ${entry.subagentMultiplier} from ${entry.from}`;
+  if (stored.length === 0) {
+    say(`Dated the multipliers (main / subagent) in config.json: ${history.map(describe).join(", ")}.`);
+  } else {
+    const added = history.filter((entry) => !stored.some((old) => JSON.stringify(old) === JSON.stringify(entry)));
+    for (const entry of added) say(`Multipliers now ${describe(entry)} - days before it keep theirs.`);
+  }
+  return history;
+}
+
+/**
  * Measure this computer's transcripts and rebuild its month files.
  *
  * `write: false` measures and rebuilds in memory only - nothing on disk
@@ -707,6 +748,9 @@ export function collect({ write = true } = {}) {
     say(`Set one (a YYYY-MM-DD day) in ${path.join(TRACKING_DIR, "config.json")}.`);
     return null;
   }
+
+  const history = multipliersFor(config, todayDay, write, say);
+  const written = readLedger(computer.fileId);
 
   if (write) {
     mkdirSync(CACHE_DIR, { recursive: true });
@@ -837,7 +881,11 @@ export function collect({ write = true } = {}) {
       config.idleGapMinutes,
       config.hoursMultiplier,
       config.subagentMultiplier,
-      { fullCountFrom: config.fullCountFrom },
+      {
+        fullCountFrom: config.fullCountFrom,
+        rateOn: (date) => rateFor(history, date),
+        writtenAt: (date) => written.get(date),
+      },
     );
     rebuiltMonths.set(month, rebuilt);
     for (const day of rebuilt.days) {
@@ -863,6 +911,20 @@ export function collect({ write = true } = {}) {
       `${month}: ${formatDuration(total)} across ${count} tracked ${count === 1 ? "day" : "days"}` +
         `${changed ? "" : " (unchanged)"}`,
     );
+  }
+
+  // The rate every day on this computer's timesheets is now written at, so a
+  // later change to a day's rate is seen as one.
+  if (write) {
+    const ledger = new Map();
+    for (const file of rebuiltMonths.values()) {
+      for (const day of file.days) ledger.set(day.date, rateFor(history, day.date));
+    }
+    const rescaled = [...ledger].filter(([date, rate]) => written.has(date) && !sameRate(written.get(date), rate));
+    if (rescaled.length > 0) {
+      say(`Rescaled to the multipliers dated for them: ${rescaled.map(([date]) => date).join(", ")}.`);
+    }
+    writeLedger(computer.fileId, ledger);
   }
 
   // Unnamed time is counted and goes on the PDFs as research - it is real

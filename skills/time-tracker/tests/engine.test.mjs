@@ -7,6 +7,7 @@
 // temporary folder.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -86,6 +87,16 @@ import {
 } from "../templates/tracking/engine/budget.mjs";
 import { CACHE_DIR, TRACKING_DIR } from "../templates/tracking/engine/config.mjs";
 import { promptExempt } from "../templates/tracking/engine/hooks.mjs";
+import {
+  configCommits,
+  configJson,
+  effectiveHistory,
+  parseLedger,
+  rateFor,
+  renderLedger,
+  seedHistory,
+} from "../templates/tracking/engine/rates.mjs";
+import { multiplierLines } from "../scripts/check.mjs";
 
 const DAY = "2026-09-14";
 const TODAY = "2026-09-30";
@@ -1328,4 +1339,207 @@ test("transcripts and prompts are read from ~/.claude, the repo's .claude-local 
     if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = saved;
   }
+});
+
+// --- dated multipliers -----------------------------------------------------
+
+const rate = (hoursMultiplier, subagentMultiplier = 1.2) => ({ hoursMultiplier, subagentMultiplier });
+const dated = (from, hours, subagent = 1.2) => ({ from, ...rate(hours, subagent) });
+
+test("each day takes the multipliers in force on it", () => {
+  const history = [dated("2026-09-01", 1.5), dated("2026-10-16", 2, 2)];
+  assert.deepEqual(rateFor(history, "2026-08-20"), rate(1.5));
+  assert.deepEqual(rateFor(history, "2026-10-15"), rate(1.5));
+  assert.deepEqual(rateFor(history, "2026-10-16"), rate(2, 2));
+  assert.deepEqual(rateFor(history, "2026-11-01"), rate(2, 2));
+});
+
+test("an edited multiplier is dated from today, and a second edit that day replaces it", () => {
+  const today = "2026-10-16";
+  const base = { trackFrom: "2026-09-01", multiplierHistory: [dated("2026-09-01", 1.5)] };
+  assert.deepEqual(effectiveHistory({ ...base, ...rate(1.5) }, today), [dated("2026-09-01", 1.5)]);
+  assert.deepEqual(effectiveHistory({ ...base, ...rate(2, 2) }, today), [dated("2026-09-01", 1.5), dated(today, 2, 2)]);
+
+  const changed = { ...base, multiplierHistory: [dated("2026-09-01", 1.5), dated(today, 2, 2)] };
+  assert.deepEqual(effectiveHistory({ ...changed, ...rate(2.5, 2) }, today), [
+    dated("2026-09-01", 1.5),
+    dated(today, 2.5, 2),
+  ]);
+  // Put back the same day: no entry for today at all.
+  assert.deepEqual(effectiveHistory({ ...changed, ...rate(1.5) }, today), [dated("2026-09-01", 1.5)]);
+  // No dated list yet: today's values count from trackFrom.
+  assert.deepEqual(effectiveHistory({ trackFrom: "2026-09-01", ...rate(2, 1.2) }, today), [dated("2026-09-01", 2)]);
+});
+
+test("the dated list is rebuilt from config.json's commits", () => {
+  const commits = [
+    { day: "2026-08-20", rate: rate(1.5) },
+    { day: "2026-09-10", rate: rate(1.5) },
+    { day: "2026-10-01", rate: rate(2) },
+    { day: "2026-10-01", rate: rate(2.5) },
+  ];
+  assert.deepEqual(seedHistory({ trackFrom: "2026-09-01", commits, current: rate(3), today: "2026-10-16" }), [
+    dated("2026-09-01", 1.5),
+    dated("2026-10-01", 2.5),
+    dated("2026-10-16", 3),
+  ]);
+  assert.deepEqual(seedHistory({ trackFrom: "2026-09-01", commits: [], current: rate(2), today: "2026-10-16" }), [
+    dated("2026-09-01", 2),
+  ]);
+});
+
+test("configCommits reads each committed multiplier with its commit's day", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "rates-git-"));
+  try {
+    const file = path.join(repo, "pm", "tracking", "config.json");
+    mkdirSync(path.dirname(file), { recursive: true });
+    const commit = (hours, when) => {
+      writeFileSync(file, JSON.stringify({ hoursMultiplier: hours, subagentMultiplier: 1.2 }));
+      const env = { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when };
+      const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, env, stdio: "ignore" });
+      git("add", "-A");
+      git("commit", "-qm", `x${hours}`);
+    };
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    commit(1.5, "2026-09-01T12:00:00Z");
+    commit(2, "2026-10-10T23:30:00Z");
+    assert.deepEqual(configCommits("UTC", file, repo), [
+      { day: "2026-09-01", rate: rate(1.5) },
+      { day: "2026-10-10", rate: rate(2) },
+    ]);
+    // The day is local: 23:30 UTC is already the 11th in Karachi.
+    assert.equal(configCommits("Asia/Karachi", file, repo)[1].day, "2026-10-11");
+    assert.deepEqual(configCommits("UTC", path.join(repo, "missing.json"), repo), []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("today's change leaves yesterday as recorded and scales today at the new rate", () => {
+  const yesterday = "2026-09-29";
+  const existing = {
+    month: "2026-09",
+    days: [
+      { date: yesterday, seconds: 6 * 3600, tasks: [{ name: "Checkout", seconds: 6 * 3600 }] },
+      { date: TODAY, seconds: 3 * 3600, tasks: [{ name: IN_PROGRESS, seconds: 3 * 3600 }] },
+    ],
+  };
+  const history = [dated("2026-09-01", 1.5), dated(TODAY, 2, 2)];
+  const measured = [
+    { date: yesterday, blocks: [block(0, 4 * 60, yesterday)] },
+    { date: TODAY, blocks: [block(0, 2 * 60, TODAY)] },
+  ];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, {
+    rateOn: (date) => rateFor(history, date),
+    writtenAt: () => rate(1.5),
+  });
+  assert.deepEqual(days[0], existing.days[0]);
+  assert.equal(days[1].seconds, 4 * 3600);
+  assert.deepEqual(days[1].tasks, [{ name: IN_PROGRESS, seconds: 4 * 3600 }]);
+});
+
+test("a backdated multiplier rescales a named day's rows with no Unlabelled row", () => {
+  const existing = { month: "2026-09", days: [namedDay(6 * 3600, [["Checkout", 3 * 3600], ["Emails", 3 * 3600]])] };
+  const measured = [{ date: DAY, blocks: [block(0, 4 * 60)] }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, {
+    rateOn: () => rate(2),
+    writtenAt: () => rate(1.5),
+  });
+  assert.equal(days[0].seconds, 8 * 3600);
+  assert.deepEqual(days[0].tasks, [
+    { name: "Checkout", seconds: 4 * 3600 },
+    { name: "Emails", seconds: 4 * 3600 },
+  ]);
+});
+
+test("a re-rated day still being worked keeps its share and grows a placeholder", () => {
+  const existing = {
+    month: "2026-09",
+    days: [{ date: TODAY, seconds: 3 * 3600, tasks: [{ name: "Checkout", seconds: 3 * 3600 }] }],
+  };
+  // Written at 1.5 from 2h; now 3h measured, at 2.
+  const measured = [{ date: TODAY, blocks: [block(0, 3 * 60, TODAY)] }];
+  const { days } = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, {
+    rateOn: () => rate(2),
+    writtenAt: () => rate(1.5),
+  });
+  assert.deepEqual(days[0].tasks, [
+    { name: "Checkout", seconds: 4 * 3600 },
+    { name: IN_PROGRESS, seconds: 2 * 3600 },
+  ]);
+});
+
+test("a re-rated day with no transcripts left scales by the ratio, manual rows from the hours given", () => {
+  const existing = {
+    month: "2026-09",
+    days: [
+      {
+        date: DAY,
+        seconds: 9 * 3600,
+        tasks: [
+          { name: "Checkout", seconds: 2 * 3600 + 15 * 60 },
+          { name: "Emails", seconds: 3 * 3600 + 45 * 60 },
+          { ...manualRow("Figma", 3 * 3600), givenSeconds: 2 * 3600 },
+        ],
+      },
+    ],
+  };
+  const { days } = rebuild(existing, "2026-09", [], TODAY, 20, 1, 1, {
+    rateOn: () => rate(2),
+    writtenAt: () => rate(1.5),
+  });
+  assert.equal(days[0].seconds, 12 * 3600);
+  assert.deepEqual(days[0].tasks, [
+    { name: "Checkout", seconds: 3 * 3600 },
+    { name: "Emails", seconds: 5 * 3600 },
+    { ...manualRow("Figma", 4 * 3600), givenSeconds: 2 * 3600 },
+  ]);
+  // Same rate as written: nothing moves.
+  const kept = rebuild(existing, "2026-09", [], TODAY, 20, 1, 1, { rateOn: () => rate(2), writtenAt: () => rate(2) });
+  assert.deepEqual(kept.days, existing.days);
+});
+
+test("the first run drops an Unlabelled row a multiplier on the wrong day left", () => {
+  // Named at 1.5 from 4h; a later run at 2 parked the gap under Unlabelled.
+  const existing = { month: "2026-09", days: [namedDay(8 * 3600, [["Checkout", 6 * 3600], [UNLABELLED, 2 * 3600]])] };
+  const measured = [{ date: DAY, blocks: [block(0, 4 * 60)] }];
+  const options = { rateOn: () => rate(1.5) };
+  const repaired = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, { ...options, writtenAt: () => undefined });
+  assert.equal(repaired.days[0].seconds, 6 * 3600);
+  assert.deepEqual(repaired.days[0].tasks, [{ name: "Checkout", seconds: 6 * 3600 }]);
+
+  // Once the rate is known, a drop is expired transcripts and the record stands.
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    const kept = rebuild(existing, "2026-09", measured, TODAY, 20, 1, 1, { ...options, writtenAt: () => rate(1.5) });
+    assert.deepEqual(kept.days, existing.days);
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test("config.json and the rate ledger keep their layout through a round trip", () => {
+  const template = readFileSync(new URL("../templates/config.json", import.meta.url), "utf8")
+    .replace("{{TIMEZONE}}", "UTC")
+    .replaceAll("{{TRACK_FROM}}", "2026-09-01")
+    .replaceAll("{{HOURS_MULTIPLIER}}", "1.5")
+    .replace("{{MONTHLY_HOURS}}", "80");
+  assert.equal(configJson(JSON.parse(template)), template);
+
+  const ledger = parseLedger('{ "2026-09-02": [1.5, 1.2], "2026-09-01": [2, 2], "bad": [1, 1], "2026-09-03": [0, 1] }');
+  assert.equal(renderLedger(ledger), '{\n  "2026-09-01": [2, 2],\n  "2026-09-02": [1.5, 1.2]\n}\n');
+  assert.deepEqual(parseLedger(renderLedger(ledger)), ledger);
+});
+
+test("check lists the dated multipliers and flags a future or repeated date", () => {
+  const lines = multiplierLines(
+    { multiplierHistory: [dated("2026-09-01", 1.5), dated("2026-10-16", 2, 2), dated("2026-10-16", 3)] },
+    "2026-10-10",
+  );
+  assert.equal(lines[0][0], "ok");
+  assert.match(lines[0][1], /1\.5 \/ 1\.2 from 2026-09-01, 2 \/ 2 from 2026-10-16/);
+  assert.ok(lines.some(([status, text]) => status === "warn" && /repeats a date/.test(text)));
+  assert.ok(lines.some(([status, text]) => status === "warn" && /future/.test(text)));
+  assert.equal(multiplierLines({}, "2026-10-10")[0][0], "ok");
 });

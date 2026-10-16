@@ -96,8 +96,13 @@ setting nobody can infer.
 
 The multipliers are not asked. Measured hours are recorded at
 `hoursMultiplier` **1.5**, and subagent time no main session covered at
-`subagentMultiplier` **1.2**. To change either, edit `<tracking>/config.json`;
-a change does not retroactively rescale days already named.
+`subagentMultiplier` **1.2**. To change either, edit the number in
+`<tracking>/config.json`. A change counts from the start of the day it is made:
+the next collect adds an entry dated today to `multiplierHistory`, the dated
+list beside them, and every earlier day keeps the multipliers it was recorded
+at. To backdate one on purpose, change that entry's `from`; the days it now
+covers are rescaled on the next collect, named rows keeping their names and
+manual rows re-scaled from the hours given.
 
 **Name the computer** if it has no name yet - when
 `~/.claude/time-tracker/machine.json` does not exist. Ask with AskUserQuestion,
@@ -133,7 +138,8 @@ and Claude Code ships with it. If the script reports something missing, report
 that, but never treat "no package.json" as a reason to stop.
 
 **Re-running setup migrates an older install.** It replaces the old
-SessionStart hook with the current three, adds `subagentMultiplier`, deletes
+SessionStart hook with the current three, adds `subagentMultiplier` (the first
+collect after it dates the multipliers from config.json's git history), deletes
 `state.json`, prunes the engine files that are gone, and backfills
 `trackFrom` from the earliest day the old switch ever tracked - so a timesheet
 that already exists survives intact.
@@ -313,7 +319,8 @@ hours", "that Friday sketch was 2h, not 1.5h").
    If a date or a length ("a few hours", "most of the afternoon") is unclear,
    ask - AskUserQuestion with the likely readings as options.
 3. **Confirm.** Show a table - date · task · hours given · hours recorded
-   (given × `hoursMultiplier`, 1.5 unless the config says otherwise) ·
+   (given × the `hoursMultiplier` dated for that day, 1.5 unless the config
+   says otherwise) ·
    bullets - and ask with AskUserQuestion: **Looks right** / **Change
    something**. Write nothing until they confirm.
 4. **Write each entry**, one call per entry:
@@ -337,7 +344,8 @@ hours", "that Friday sketch was 2h, not 1.5h").
    day is outside the current week.
 
 Manual hours are **Research**, and they are scaled like measured time: the
-hours given times `hoursMultiplier`, so 2h given at 1.5 is recorded as 3h. The
+hours given times the `hoursMultiplier` in force on their day, so 2h given at
+1.5 is recorded as 3h. The
 month file keeps both - `Research · manual, 2h given` in the Type cell, 3h in
 Time. Entries from before this was so read `<Type> · manual` with nothing
 given; they stay as recorded, and a `set --hours` on one re-times it scaled.

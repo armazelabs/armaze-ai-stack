@@ -14,10 +14,11 @@
 // manual, 2h given`, which every rebuild carries across untouched and counts
 // on top of what it measures.
 //
-// `--hours` is the time given. It is recorded scaled by `hoursMultiplier`,
-// the same as measured time - 2h given at 1.5 is recorded as 3h - so a manual
-// hour weighs what a measured one does. The given hours stay on the row, so
-// the record always shows both. Bullets are optional: the person's own words
+// `--hours` is the time given. It is recorded scaled by the `hoursMultiplier`
+// in force on that day, the same as measured time - 2h given at 1.5 is
+// recorded as 3h - so a manual hour weighs what a measured one does. The
+// given hours stay on the row, so the record always shows both, and a day
+// whose multiplier is later backdated is re-scaled from them. Bullets are optional: the person's own words
 // are the record here, and they need not be dressed up as outcomes.
 //
 // `add` always writes this computer's own timesheet, and `set` and `remove`
@@ -53,6 +54,7 @@ import {
   tidyOwnStrays,
 } from "./config.mjs";
 import { budgetFor, roomProblem } from "./budget.mjs";
+import { effectiveHistory, rateFor } from "./rates.mjs";
 import { appendEntry, monthTotal } from "./log.mjs";
 import {
   MANUAL_TYPE,
@@ -189,7 +191,10 @@ function main() {
   const task = flag("task")?.trim();
   const hours = flag("hours");
   const given = hours === undefined ? undefined : parseHours(hours);
-  const seconds = given == null ? given : scaleManual(given, config.hoursMultiplier ?? 1);
+  // At the day's own multiplier: 2h given for a day recorded at 1.5 is 3h,
+  // whatever today's is.
+  const dayRate = rateFor(effectiveHistory(config, today), date ?? today);
+  const seconds = given == null ? given : scaleManual(given, dayRate.hoursMultiplier);
   const rename = flag("rename")?.trim();
   const details = bullets();
   const elsewhereId = flag("computer")?.trim() || null;

@@ -45,6 +45,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { tidyOwnStrays } from "../templates/tracking/engine/config.mjs";
+import { configJson } from "../templates/tracking/engine/rates.mjs";
 
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATES_DIR = path.join(SKILL_DIR, "templates");
@@ -625,12 +626,9 @@ function backfillBudget(configPath, monthlyHours) {
   return { added, missing: next.monthlyHours == null };
 }
 
-/** Keep short number arrays like `workdays` on one line, as the template writes them. */
+/** In the template's layout - see `configJson`. */
 function writeConfig(configPath, config) {
-  const json = JSON.stringify(config, null, 2).replace(/\[\s*(\d+(?:,\s*\d+)*)\s*\]/g, (_, inner) =>
-    `[${inner.split(/,\s*/).join(", ")}]`,
-  );
-  writeFileSync(configPath, `${json}\n`);
+  writeFileSync(configPath, configJson(config));
 }
 
 /**
@@ -1034,7 +1032,9 @@ function main() {
                   .filter(Boolean)
                   .join(" and ")}`
               : "already existed, left untouched") +
-          (multiplier.given ? ` - --multiplier ignored, edit ${trackingRel}/config.json to change it` : "")
+          (multiplier.given
+            ? ` - --multiplier ignored, edit hoursMultiplier in ${trackingRel}/config.json to change it from today`
+            : "")
     }`,
   );
   console.log(

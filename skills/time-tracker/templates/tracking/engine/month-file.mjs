@@ -43,6 +43,7 @@ import {
   totalSeconds,
   weekdayOf,
 } from "./blocks.mjs";
+import { sameRate } from "./rates.mjs";
 
 /** Placeholder for measured time on a finished day that nobody has named yet. */
 export const UNLABELLED = "Unlabelled";
@@ -506,6 +507,18 @@ export function placeholderSpan(tasks, ranges) {
  * transcript can grow, shrink or trim them: every guard and the reconcile run
  * against the measured rows alone, and the manual ones are carried across
  * untouched, their time added on top of the day's measured total.
+ *
+ * Each day is scaled at its own rate. `rateOn(date)`, when given, returns the
+ * `{ hoursMultiplier, subagentMultiplier }` in force on that day and replaces
+ * the two fixed multipliers. `writtenAt(date)` returns the rate the recorded
+ * day was last written at, or undefined when that is not known. A day whose
+ * rate has changed since - a backdated multiplier - is rescaled first
+ * (`rescaleDay`), measured or not and frozen or not, and only then
+ * re-measured, so its named rows keep their share of the day at the new rate
+ * rather than the difference landing in a placeholder. A day written at an
+ * unknown rate is held only against its named rows shrinking: a placeholder
+ * larger than the day now measures is what a multiplier applied to the wrong
+ * day leaves behind.
  */
 export function rebuild(
   existing,
@@ -515,16 +528,29 @@ export function rebuild(
   idleGapMinutes,
   hoursMultiplier = 1,
   subagentMultiplier = 1,
-  { fullCountFrom = null } = {},
+  { fullCountFrom = null, rateOn = null, writtenAt = null } = {},
 ) {
   const days = new Map((existing?.days ?? []).map((day) => [day.date, day]));
+  const rateOf = (date) => (rateOn ? rateOn(date) : { hoursMultiplier, subagentMultiplier });
+  const measuredDays = new Set();
 
   for (const entry of measured) {
-    const raw = measuredSeconds(entry, hoursMultiplier, subagentMultiplier);
+    const rate = rateOf(entry.date);
+    const raw = measuredSeconds(entry, rate.hoursMultiplier, rate.subagentMultiplier);
     // Too short to render as a minute: rounding, not a day of work.
     if (raw < ZERO_ROW_SECONDS) continue;
+    measuredDays.add(entry.date);
 
-    const previous = days.get(entry.date);
+    let previous = days.get(entry.date);
+    const was = previous ? writtenAt?.(entry.date) : undefined;
+    if (was && !sameRate(was, rate)) {
+      // The same evidence at both rates, so a day whose transcripts have
+      // partly expired still moves by the right proportion.
+      const before = measuredSeconds(entry, was.hoursMultiplier, was.subagentMultiplier);
+      const factor = before > 0 ? raw / before : rate.hoursMultiplier / was.hoursMultiplier;
+      previous = rescaleDay(previous, factor, rate.hoursMultiplier, was.hoursMultiplier);
+      days.set(entry.date, previous);
+    }
     if (previous && fullCountFrom && entry.date < fullCountFrom) continue;
     const legend = mergeLegend(previous?.sessions, entry.sessions);
     const withLegend = (day) => (legend.length > 0 ? { ...day, sessions: legend } : day);
@@ -562,9 +588,11 @@ export function rebuild(
     // only ever grows while the evidence survives, so a drop against labelled
     // work means the evidence went missing, not that the day got shorter -
     // keep what is on record and say so.
+    const unknownRate = previous && writtenAt && !was;
+    const held = unknownRate ? sumSeconds(recorded.filter((task) => !isPlaceholder(task.name))) : recordedSeconds;
     if (
       previous &&
-      recordedSeconds - raw > SHRINK_TOLERANCE_SECONDS &&
+      held - raw > SHRINK_TOLERANCE_SECONDS &&
       recorded.some((task) => !isPlaceholder(task.name))
     ) {
       console.warn(
@@ -589,10 +617,59 @@ export function rebuild(
     );
   }
 
+  // Days with no evidence here are kept as recorded - unless their rate has
+  // changed, when there is nothing to re-measure and the main multiplier's
+  // ratio is all there is to go on.
+  for (const [date, day] of days) {
+    if (measuredDays.has(date)) continue;
+    const was = writtenAt?.(date);
+    const rate = rateOf(date);
+    if (!was || sameRate(was, rate)) continue;
+    const factor = rate.hoursMultiplier / was.hoursMultiplier;
+    days.set(date, rescaleDay(day, factor, rate.hoursMultiplier, was.hoursMultiplier));
+  }
+
   return {
     month,
     days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
+}
+
+/**
+ * A recorded day at another rate. Its measured rows, named or not, are scaled
+ * by `factor` and keep their names, types, times and outcomes; the rounding is
+ * settled on the largest row so the rows still add up to the scaled total in
+ * whole minutes. A manual row is re-scaled from the hours given at the new
+ * hours multiplier, or by the ratio of the two when the given hours are not
+ * on the row.
+ */
+export function rescaleDay(day, factor, hoursMultiplier, previousMultiplier) {
+  const minute = (seconds) => Math.round(seconds / 60) * 60;
+  const measuredRows = day.tasks.filter((task) => !task.manual);
+  const target = minute(sumSeconds(measuredRows) * factor);
+  const scaled = measuredRows.map((task) => ({ ...task, seconds: minute(task.seconds * factor) }));
+  const drift = target - sumSeconds(scaled);
+  if (drift !== 0 && scaled.length > 0) {
+    const largest = scaled.reduce((max, task) => (task.seconds > max.seconds ? task : max), scaled[0]);
+    largest.seconds = Math.max(0, largest.seconds + drift);
+  }
+  const queue = scaled.filter((task) => task.seconds > 0);
+  const tasks = day.tasks.flatMap((task) => {
+    if (task.manual) {
+      return [
+        {
+          ...task,
+          seconds:
+            task.givenSeconds != null
+              ? scaleManual(task.givenSeconds, hoursMultiplier)
+              : minute((task.seconds * hoursMultiplier) / previousMultiplier),
+        },
+      ];
+    }
+    const next = scaled[measuredRows.indexOf(task)];
+    return queue.includes(next) ? [next] : [];
+  });
+  return { ...day, seconds: sumSeconds(tasks), tasks };
 }
 
 /**
