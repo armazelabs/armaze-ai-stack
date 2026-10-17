@@ -24,13 +24,14 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.23.0"
+readonly ARMAZE_VERSION="0.23.1"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(plugins skills agents)   # this order is the order lists show them in
 # Components that were renamed, "type/old-name" -> new name. Entries stay for good: update
 # moves a project still on the old name over whenever it runs, and add accepts the old name.
 typeset -grA RENAMES=(
   skills/scaffold-folder-structure research-workspace
+  skills/unicorn studio
 )
 
 ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:-${0:A:h:h}}"
@@ -700,7 +701,7 @@ pick_tag() {  # <type> <name> <dest dir>
 
 # Skills a component can't work without, one per line: "needs:" in a skill's UPSTREAM file (grill-me
 # only runs grilling) or in the front matter of a skill's or agent's own doc (design-unicorn needs
-# unicorn and time-tracker). Adding the component adds them too.
+# studio and time-tracker). Adding the component adds them too.
 component_needs() {  # <type> <name>
   local file="$ARMAZE_STACK_DIR/skills/$2/UPSTREAM" doc
   [[ $1 == skills && -f $file ]] && awk '$1 == "needs:" { for (i = 2; i <= NF; i++) print $i }' "$file"

@@ -2,6 +2,19 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.23.1 - 2026-10-17
+
+**design-unicorn's command is now `/studio`, and `/studio start` opens the whole crew in Orca at once.** Run `aistack update`: it swaps the old `unicorn` skill for `studio` in your projects.
+
+### Added
+
+- `/studio start` opens every design-unicorn member in its own Orca tab at once, on the model your setup chose, with the director's tab in front. Running it again reopens only the tabs you closed. `/studio stop` closes them all.
+
+### Changed
+
+- The crew's command is now `/studio` (it was `/unicorn`), and `/unicorn roll-out` is now `/studio work`. `aistack update` swaps the old `unicorn` skill for `studio` in your projects.
+- The design-unicorn and studio READMEs walk you through it in order: add it, start the director, answer setup, finish setup, then every command, each marked as one you type in the terminal or in Claude.
+
 ## 0.23.0 - 2026-10-17
 
 **The app takes on your terminal's colours, so it looks right on light and dark themes.** Run `aistack update` to get it.
