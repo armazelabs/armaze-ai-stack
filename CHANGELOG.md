@@ -2,6 +2,26 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.21.1 - 2026-10-17
+
+**The app now shows what your project has, keeps it up to date, and tells you when a new release is out.** Run `aistack update` once to get this release; from then on, `aistack` offers each new one itself.
+
+### Added
+
+- What the project already has starts ticked. A green check after the title means your copy matches the stack; a yellow ↑ means the stack has a newer one.
+- Enter applies everything at once, and the app stays open: it adds what you ticked, updates every ticked ↑ component, removes what you unticked, then shows what it did. Removals ask first, because local edits to those copies are lost. Removing a plugin turns it off in `.claude/settings.json`.
+- When it opens, the app checks for a newer release of the stack. If there is one, a box in the middle of the screen offers it; ⏎ pulls the stack and restarts the app.
+- The version you're running shows at the bottom right of the box.
+
+### Changed
+
+- The tabs are gone. `?` opens the help and esc comes back. `aistack update` runs straight away, in a terminal too.
+- The `a` key (mark everything) is gone from the app.
+
+### Fixed
+
+- A copy that couldn't be replaced, such as one in a read-only folder, is reported as a failure instead of ending up nested inside the old copy.
+
 ## 0.21.0 - 2026-10-17
 
 **Plugins come to the shelf, with superpowers and impeccable, plus three new skills: sync-repo, grill-me and grilling.** Run `aistack update`, then `aistack` to see them. A plugin needs Claude Code: after adding one, commit the project's `.claude/settings.json`.
