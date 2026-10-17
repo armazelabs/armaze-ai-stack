@@ -3,8 +3,12 @@
 # `claude --agent <member>` on the model the profile's preset gives it. /studio start and
 # /studio stop run this; the director reuses the tabs through the handles saved here.
 #
-#   zsh tabs.zsh open [--members-only]   open what isn't open yet (--members-only: not the director)
-#   zsh tabs.zsh close                   close every tab it opened and forget the run
+#   zsh tabs.zsh open [--members-only] [ACCOUNT]   open what isn't open yet (--members-only: not the director)
+#   zsh tabs.zsh close                             close every tab it opened and forget the run
+#
+# ACCOUNT is the shell command that starts Claude under another login (a function from
+# ~/.zshrc such as claude-girudo); the tabs run it in place of `claude`. It is kept in
+# log/account until close, so a later open without one reuses it.
 #
 # Handles go to project-management/design-unicorn/log/tabs.json, one "member": "handle" per
 # line (the log folder is gitignored). Running open again reuses the tabs that are still live.
@@ -17,6 +21,8 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$PWD
 crew=$root/project-management/design-unicorn
 tabs=$crew/log/tabs.json
 log=$crew/log/activity.log
+acct_file=$crew/log/account
+usage="usage: zsh tabs.zsh open [--members-only] [ACCOUNT] | close"
 
 # The tab order; the director comes first and gets the focus at the end.
 members=(design-unicorn designer reviewer engineer researcher writer apprentice)
@@ -59,8 +65,15 @@ write_tabs() {  # <member=handle>...
 }
 
 cmd_open() {
-  local only_members=0
-  [[ ${1:-} == --members-only ]] && only_members=1
+  local only_members=0 acct='' a
+  for a in "$@"; do
+    case $a in
+      --members-only) only_members=1 ;;
+      # typed into the tab's shell, so a plain command name only
+      [A-Za-z0-9_.][A-Za-z0-9_.-]#) [[ -z $acct ]] || die "$usage"; acct=$a ;;
+      *) die "$usage" ;;
+    esac
+  done
   command -v orca >/dev/null || die "Orca isn't running here (no orca command). Open the project in Orca, then try again."
   [[ -f $crew/profile.md ]] || die "This project has no design-unicorn setup yet. Run /studio setup first."
 
@@ -74,6 +87,16 @@ cmd_open() {
     && login="env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CONFIG_DIR=${(q)root}/.claude-local "
 
   mkdir -p -- "$crew/log"
+  if [[ -n $acct ]]; then
+    print -r -- "$acct" > "$acct_file"
+  elif [[ -f $acct_file ]]; then
+    acct=$(<"$acct_file")
+    [[ $acct == [A-Za-z0-9_.][A-Za-z0-9_.-]# ]] || acct=''
+  fi
+  # an account function sets its own config dir, and env can't run a shell function
+  local claude="${login}claude" note=''
+  [[ -n $acct ]] && { claude=$acct; note=", $acct" }
+
   local live
   live=$(orca terminal list --json 2>/dev/null) || live=''
 
@@ -92,12 +115,12 @@ cmd_open() {
     fi
     model=$(model_of "$m" "$preset")
     out=$(orca terminal create --worktree "path:$root" --title "$title" \
-      --command "${login}claude --agent $m --name $m --model $model" --json 2>&1) \
+      --command "$claude --agent $m --name $m --model $model" --json 2>&1) \
       || { print -r -- "  $title: couldn't open ($out)"; continue }
     h=$(print -r -- "$out" | grep -o '"handle": *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
     [[ -n $h ]] || { print -r -- "  $title: opened, but Orca gave no handle"; continue }
     kept+=("$m=$h")
-    print -r -- "  $title: opened ($model)"
+    print -r -- "  $title: opened ($model$note)"
     print -r -- "$(stamp) · ${(U)m} · tab opened" >> "$log"
   done
   write_tabs "${kept[@]}"
@@ -124,12 +147,12 @@ cmd_close() {
     fi
     print -r -- "$(stamp) · ${(U)m} · tab closed" >> "$log"
   done
-  rm -f -- "$tabs" "$crew/log/run-id"
+  rm -f -- "$tabs" "$crew/log/run-id" "$acct_file"
   print -r -- "The crew's tabs are closed. Work in progress stays in the task files; /studio start opens them again."
 }
 
 case ${1:-} in
   open)  shift; cmd_open "$@" ;;
   close) cmd_close ;;
-  *)     die "usage: zsh tabs.zsh open [--members-only] | close" ;;
+  *)     die "$usage" ;;
 esac

@@ -94,9 +94,11 @@ Undoes a task's code. Not committed yet: it shows the files and discards the cha
 
 Changes your setup answers. It asks which part to change (stack, design tool, stops and git, models and skills) and keeps everything else.
 
-### `/studio start`
+### `/studio start [account]`
 
 Orca only. Opens every helper in its own Orca tab, so you can watch them all work. Running it again reopens only tabs you closed.
+
+If you switch between Claude accounts with shell commands of your own (say `claude-girudo` in your `~/.zshrc`), add yours: `/studio start claude-girudo`. Every tab then starts with that command instead of `claude`, so the crew uses that account. It is remembered until `/studio stop`.
 
 ### `/studio stop`
 

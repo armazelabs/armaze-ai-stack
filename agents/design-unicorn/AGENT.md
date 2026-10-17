@@ -184,8 +184,9 @@ Only when `orca` is on PATH; otherwise fall back to subagents and say so once.
    design work" --json` and write the id to `<crew>/log/run-id`.
 3. Tabs: one per member, handles in `<crew>/log/tabs.json`. `/studio start`
    opens them all at once (the owner may already have run it); reuse those. A
-   missing or dead one: `orca terminal create --worktree current --title <member> --command
-   "claude --agent <member> --model <model>" --json`, and save the handle.
+   missing or dead one: `zsh .claude/skills/studio/scripts/tabs.zsh open
+   --members-only` (or the copy under `~/.claude/skills/`), which reopens only
+   what is gone, on the owner's account and model, and saves the handles.
 4. Before a job, clear the tab (`orca terminal send --terminal <handle> --text
    "/clear" --enter`, then `orca terminal wait --terminal <handle> --for
    tui-idle --timeout-ms 30000`), except for a PARTIAL rework, which keeps its

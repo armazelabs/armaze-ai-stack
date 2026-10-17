@@ -93,7 +93,7 @@ All of these are **Claude** commands, typed in the director's window after setup
 | `/studio resume` | Carry on after a stop or a restart |
 | `/studio rollback <task id>` | Undo a task's code |
 | `/studio setup` | Change your setup answers |
-| `/studio start` | Orca only: open every helper in its own tab, to watch them work |
+| `/studio start [account]` | Orca only: open every helper in its own tab, to watch them work (add your account command, such as `claude-girudo`, to use that Claude account) |
 | `/studio stop` | Orca only: close those tabs |
 
 Coming back another day: start the director again (**Terminal**: `claude --agent design-unicorn`), then type `/studio resume` (**Claude**).

@@ -1,7 +1,7 @@
 ---
 name: studio
 description: Commands for the design-unicorn crew (the design-to-code agents started with `claude --agent design-unicorn`). Use for "/studio setup" (first run, or to change the answers), "start" (open every member's Orca tab) and "stop", "work" on a task or the backlog, a "quick fix" with no designer, the "board", "stand down", "resume" and "rollback".
-argument-hint: "[setup | start | stop | work <id or brief> | quick <change> | board | stand-down | resume [id] | rollback <id>]"
+argument-hint: "[setup | start [account] | stop | work <id or brief> | quick <change> | board | stand-down | resume [id] | rollback <id>]"
 ---
 
 # /studio
@@ -28,7 +28,7 @@ a name), still ask it this way: offer the likely answers ("Paste it in Other",
 | Argument | Do |
 |---|---|
 | `setup` | **Setup**, below |
-| `start` | **Start** |
+| `start [account]` | **Start** |
 | `stop` | **Stop** |
 | `work <id, brief or empty>` | **Work** |
 | `quick <change>` | **Quick** |
@@ -203,6 +203,11 @@ just talk to the director." and stop.
      director's tab, so it opens the other six);
    - otherwise: `zsh <skill>/scripts/tabs.zsh open` (all seven, the director's
      tab gets the focus).
+
+   A word after `start` (`/studio start claude-girudo`) is the owner's shell
+   command for another Claude account: add it, as it is, at the end of that
+   command line. Every tab then runs it instead of `claude`. Without one, the
+   tabs use the account the last Start was given (until Stop), else `claude`.
 3. Reply with its lines as they are, then one line: "Talk to the director in
    its tab." (or, as the director, "Ready: tell me what to build.").
 
@@ -211,7 +216,8 @@ the tabs through `<crew>/log/tabs.json`.
 
 ## Stop
 
-Closes every tab Start opened: `zsh <skill>/scripts/tabs.zsh close`. Work in
+Closes every tab Start opened and forgets the account it was given:
+`zsh <skill>/scripts/tabs.zsh close`. Work in
 progress stays in the task files; Start opens the tabs again and **Resume**
 picks the work up. To halt work without closing anything, use **Stand down**.
 Reply with the script's lines as they are.
