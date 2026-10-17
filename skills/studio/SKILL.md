@@ -1,10 +1,10 @@
 ---
-name: unicorn
-description: Commands for the design-unicorn crew (the design-to-code agents started with `claude --agent design-unicorn`). Use for "/unicorn setup" (first run, or to change the answers), "roll out" a task or the backlog, a "quick fix" with no designer, the "board", "stand down", "resume" and "rollback".
-argument-hint: "[setup | roll-out <id or brief> | quick <change> | board | stand-down | resume [id] | rollback <id>]"
+name: studio
+description: Commands for the design-unicorn crew (the design-to-code agents started with `claude --agent design-unicorn`). Use for "/studio setup" (first run, or to change the answers), "start" (open every member's Orca tab) and "stop", "work" on a task or the backlog, a "quick fix" with no designer, the "board", "stand down", "resume" and "rollback".
+argument-hint: "[setup | start | stop | work <id or brief> | quick <change> | board | stand-down | resume [id] | rollback <id>]"
 ---
 
-# /unicorn
+# /studio
 
 The control panel for the design-unicorn crew. The crew's files live in
 `project-management/design-unicorn/` (call it `<crew>` below). The director's
@@ -28,7 +28,9 @@ a name), still ask it this way: offer the likely answers ("Paste it in Other",
 | Argument | Do |
 |---|---|
 | `setup` | **Setup**, below |
-| `roll-out <id, brief or empty>` | **Roll out** |
+| `start` | **Start** |
+| `stop` | **Stop** |
+| `work <id, brief or empty>` | **Work** |
 | `quick <change>` | **Quick** |
 | `board` | **Board** |
 | `stand-down` | **Stand down** |
@@ -38,11 +40,11 @@ a name), still ask it this way: offer the likely answers ("Paste it in Other",
 
 Every subcommand except `setup` first checks that `<crew>/profile.md` exists.
 If it does not, say: "This project has no design-unicorn setup yet. Run
-`/unicorn setup` (or start the director with `claude --agent design-unicorn`)."
+`/studio setup` (or start the director with `claude --agent design-unicorn`)."
 and stop.
 
-`<skill>` below means the folder this file is in (`.claude/skills/unicorn/` in
-the project, or `~/.claude/skills/unicorn/`).
+`<skill>` below means the folder this file is in (`.claude/skills/studio/` in
+the project, or `~/.claude/skills/studio/`).
 
 ## Setup
 
@@ -185,14 +187,43 @@ installed or listed), then the next steps:
   were added)
 - "Then tell the director what to build."
 
-## Roll out
+## Start
+
+Opens every member's tab in Orca at once, each running its own agent on the
+model the profile's preset gives it, so you can watch the whole crew work.
+Needs Orca; without it, say: "Opening tabs needs Orca. Without it the
+director runs the members inside its own session, so there's nothing to open:
+just talk to the director." and stop.
+
+1. If the profile says `dispatch: subagents`, change that one line to
+   `dispatch: orca`, so the director hands jobs to the tabs.
+2. Run the launcher from the project root:
+   - you are the director (running as `design-unicorn`):
+     `zsh <skill>/scripts/tabs.zsh open --members-only` (you already are the
+     director's tab, so it opens the other six);
+   - otherwise: `zsh <skill>/scripts/tabs.zsh open` (all seven, the director's
+     tab gets the focus).
+3. Reply with its lines as they are, then one line: "Talk to the director in
+   its tab." (or, as the director, "Ready: tell me what to build.").
+
+Running it again reopens only the tabs that were closed. The director finds
+the tabs through `<crew>/log/tabs.json`.
+
+## Stop
+
+Closes every tab Start opened: `zsh <skill>/scripts/tabs.zsh close`. Work in
+progress stays in the task files; Start opens the tabs again and **Resume**
+picks the work up. To halt work without closing anything, use **Stand down**.
+Reply with the script's lines as they are.
+
+## Work
 
 Starts the crew on a task or the backlog. Input: `$ARGUMENTS` after
-`roll-out`.
+`work`.
 
 1. If you are not running as the director, read
    `.claude/agents/design-unicorn/AGENT.md` and act as it says.
-2. `<crew>/HALT` exists: say `🦄 · STAND DOWN in effect. Run /unicorn resume.`
+2. `<crew>/HALT` exists: say `🦄 · STAND DOWN in effect. Run /studio resume.`
    and stop.
 3. Check the hours as the director's **Time** section says.
 4. Input is an existing id under `<crew>/tasks/`: carry on from its Status.
@@ -239,7 +270,7 @@ Reply in this shape only:
 
 ```
 🦄 · BOARD · <time>
-Status: ROLLING | STAND DOWN
+Status: WORKING | STAND DOWN
 | id | title | station | member on it | since | tokens | last note |   (In progress and Waiting on owner rows)
 Tabs: <member: busy on <id> | idle>          (orca only)
 Hours: <budget line, or "time tracking not set up">
@@ -267,7 +298,7 @@ anything. Reply only:
 Halted at <time>. Members stop at their next step and note where they are.
 In flight:
 | id | station | who | last note |
-Nothing moves until /unicorn resume.
+Nothing moves until /studio resume.
 ```
 
 ## Resume

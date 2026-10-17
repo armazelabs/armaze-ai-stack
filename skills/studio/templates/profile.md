@@ -39,4 +39,4 @@ skills scope: <global | project>
 dispatch: <orca | subagents>
 
 <!-- approval gates: design = the owner approves each design before it is built; release = the owner approves before each commit.
-     Written by /unicorn setup. Re-run it to change an answer; the crew reads this file and never edits it. -->
+     Written by /studio setup. Re-run it to change an answer; the crew reads this file and never edits it. -->

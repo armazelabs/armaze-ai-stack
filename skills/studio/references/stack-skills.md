@@ -1,6 +1,6 @@
 # Stack skills
 
-The skills `/unicorn setup` installs for the crew. Take the core set, then
+The skills `/studio setup` installs for the crew. Take the core set, then
 every row whose condition matches the profile. Members use a skill when it is
 there and skip it when it is not.
 
@@ -32,7 +32,7 @@ there and skip it when it is not.
 - `impeccable`, `frontend-design` and `figma` are Claude Code plugins on the
   shelf, not skill folders. `aistack` installs them the same way; with
   `--global` they go in at user scope.
-- `time-tracker` and `unicorn` come with the design-unicorn bundle already.
+- `time-tracker` and `studio` come with the design-unicorn bundle already.
   Don't list them here.
 - Before installing, drop every name `aistack list --names` doesn't show
   (it prints `skills/<name>` and `plugins/<name>`).

@@ -17,7 +17,7 @@ unticked.
 | `skills/rooter` | ticked | offered | - | A client-facing entry page at the deployed root. |
 | `skills/whats-new-generator` | ticked | ticked | offered | Changelog and "what's new" system. Scaffolds code later - install only. |
 | `skills/content-research-writer` | ticked | offered | - | Researched content with citations. |
-| `agents/design-unicorn` | offered | offered | ticked | A design-to-code crew (director, designer, reviewer, engineer, researcher, writer, apprentice). Brings `unicorn` and `time-tracker`; its first run checks the stack and installs the design skills it uses. Start it with `claude --agent design-unicorn` - list that as a next step. |
+| `agents/design-unicorn` | offered | offered | ticked | A design-to-code crew (director, designer, reviewer, engineer, researcher, writer, apprentice). Brings `studio` and `time-tracker`; its first run checks the stack and installs the design skills it uses. Start it with `claude --agent design-unicorn` - list that as a next step. |
 | `agents/website-weaver` | ticked | offered | - | Splits a website brief into tasks across models. Needs Orca. |
 | `skills/ux-visualization-assistant` | offered | ticked | ticked | User flows, journeys, IA, personas. |
 | `skills/feedback-intake` | offered | ticked | ticked | Saves feedback under `project-management/feedback/`. |

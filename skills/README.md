@@ -26,10 +26,10 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 | `research-workspace` | Sets up and looks after the research tree in `project-management/research/`. | |
 | `rooter` | Builds a client-facing entry page that sends clients to the right version, deck or Figma file. | |
 | `site-to-figma` | Pulls a live site's design system into Figma: variables (with light and dark modes), text and shadow styles, components, icons, and the page itself tied to those tokens. Saves W3C design tokens too. | Orca, Figma MCP |
+| `studio` | The `/studio` command for the design-unicorn crew: setup (checks your stack, installs the skills it uses), start and stop (every member in its own Orca tab), work, quick fix, board, stand-down, resume, rollback. Comes with `agents/design-unicorn`. | |
 | `sync-repo` | Syncs pushed commits into a cleaned copy of the repo for the client, one commit each with the same dates: no AI files, internal docs or Figma references, comments checked to be the only change. Optional Playwright comparison of both apps; pushes only on a yes. | Node, git |
 | `time-tracker` | Timesheets measured from Claude Code sessions and commits, with manual hours, budgets and PDFs. | Node |
 | `update-competitor-profile` | Proposes updates to existing competitor profiles and applies them only after approval. | |
-| `unicorn` | The `/unicorn` command for the design-unicorn crew: setup (checks your stack, installs the skills it uses), roll-out, quick fix, board, stand-down, resume, rollback. Comes with `agents/design-unicorn`. | |
 | `ux-visualization-assistant` | Picks and builds the right UX artifact: flows, journeys, information architecture, personas. | |
 | `whats-new-generator` | Sets up and maintains a changelog system and "what's new" posts in a project. | |
 
@@ -60,7 +60,7 @@ skills/<name>/
 └── scripts/        # optional helpers (zsh preferred; keep them portable)
 ```
 
-`SKILL.md` starts with YAML front matter. `name` must match the directory name; `description` is one line — it is what `aistack list` shows and what an assistant reads to decide when to use the skill. A skill (or agent) that can't work without other skills lists them in a `needs:` line, space-separated (`needs: unicorn time-tracker`); `aistack add` and the app then add them too, unless the project or your global skills have them.
+`SKILL.md` starts with YAML front matter. `name` must match the directory name; `description` is one line — it is what `aistack list` shows and what an assistant reads to decide when to use the skill. A skill (or agent) that can't work without other skills lists them in a `needs:` line, space-separated (`needs: studio time-tracker`); `aistack add` and the app then add them too, unless the project or your global skills have them.
 
 ```markdown
 ---

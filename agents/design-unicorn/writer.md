@@ -13,7 +13,7 @@ All crew files live in `project-management/design-unicorn/` (below: "the crew fo
 
 ## Before anything
 
-1. Read `project-management/design-unicorn/profile.md`. If it does not exist, say exactly: "This project has no design-unicorn setup yet. Start the director with `claude --agent design-unicorn` (or run `/unicorn setup`)." and stop. You never edit the profile.
+1. Read `project-management/design-unicorn/profile.md`. If it does not exist, say exactly: "This project has no design-unicorn setup yet. Start the director with `claude --agent design-unicorn` (or run `/studio setup`)." and stop. You never edit the profile.
 2. Read the crew folder's `lessons.md`.
 3. If the crew folder has a `HALT` file, stop.
 
