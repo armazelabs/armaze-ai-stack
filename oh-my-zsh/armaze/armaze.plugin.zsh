@@ -79,11 +79,13 @@ _aistack() {
         '--plugins[only offer plugins]' \
         '(-f --force)'{-f,--force}'[overwrite without asking]' \
         '(-l --link)'{-l,--link}'[symlink instead of copy]' \
+        '(-g --global -t --to -p --platform)'{-g,--global}'[add for all your projects]' \
         '*:component:('"${comps[*]}"')'
       ;;
     update|upgrade)
       _arguments \
-        '(-t --to)'{-t,--to}'[target repo]:dir:_directories'
+        '(-t --to -g --global)'{-t,--to}'[target repo]:dir:_directories' \
+        '(-t --to -g --global)'{-g,--global}'[refresh your global components]'
       ;;
     upstream)
       local -a ups=(${ARMAZE_STACK_DIR}/skills/*/UPSTREAM(N:h:t))

@@ -1,0 +1,4 @@
+# Where this skill comes from: the files here are a copy of that folder at the commit below.
+# `aistack upstream` checks it for changes and replaces the copy only when you accept them.
+url: https://github.com/Leonxlnx/taste-skill/tree/main/skills/taste-skill
+commit: f624f37a8c650b9cc550253104925efe4c8de246

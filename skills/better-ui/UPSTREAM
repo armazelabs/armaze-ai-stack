@@ -1,0 +1,4 @@
+# Where this skill comes from: the files here are a copy of that folder at the commit below.
+# `aistack upstream` checks it for changes and replaces the copy only when you accept them.
+url: https://github.com/jakubkrehel/skills/tree/main/skills/better-ui
+commit: 4c66b1fa86e9ab70187b43d7da9b6fdb29f2ef63

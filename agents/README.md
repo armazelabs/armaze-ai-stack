@@ -6,6 +6,7 @@ One Markdown file per agent — or, when an agent needs supporting files, one di
 
 | Agent | What it does | Needs |
 |---|---|---|
+| `design-unicorn` | A design-to-code crew of seven: a director who runs the job, a designer, a reviewer, an engineer, a researcher, a writer and an apprentice. Checks your stack on first run and installs the design skills it uses. Brings `unicorn` and `time-tracker`. | |
 | `website-weaver` | Breaks a website or product brief into subtasks and sends each to the Claude model and effort level best suited for it. | Orca |
 
 `aistack list agents` shows the same list with full descriptions. When you add, rename or remove an agent, update this table in the same change.
@@ -37,6 +38,8 @@ Conventions:
 - Names are lowercase kebab-case.
 - Files and directories starting with `.` or `_`, and this `README.md`, are ignored by `aistack`.
 - `tools` and `model` follow the Claude Code sub-agent format; other platforms ignore keys they don't know, so it's safe to keep them.
+- An agent that can't work without some skills lists them in a `needs:` front-matter line (`needs: unicorn time-tracker`); adding the agent adds them too.
+- A directory agent may hold several agents: Claude Code finds every agent file in the folder by its `name:`. Keep other Markdown files there free of front matter so they aren't read as agents.
 - Keep the agent self-contained — it is copied as a unit into other repos, so a directory agent must not reference anything outside its own folder.
 - A directory agent has a `README.md` for people, in the [README standard](../skills/README.md#readme-standard), with "This Agent" in place of "This Skill". A single-file agent has no folder to hold one; `aistack` shows the file itself.
 - Every document a component writes - logs, feedback, decisions, time tracking, product docs, workspace guides and rules, design docs - goes under `project-management/` at the target repo's root, spelled exactly that way. Never create `project-management-log/`, `Project Management/`, `project_management/`, a root `docs/` or any other top-level folder of your own for it. Only what a tool looks for at the root stays there: `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`, `.gitignore`, `package.json`, and the release notes in `CHANGELOG.md`. When a project already has an older root copy of a doc, keep using it rather than starting a second one.

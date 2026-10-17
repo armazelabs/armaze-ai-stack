@@ -17,6 +17,7 @@ unticked.
 | `skills/rooter` | ticked | offered | - | A client-facing entry page at the deployed root. |
 | `skills/whats-new-generator` | ticked | ticked | offered | Changelog and "what's new" system. Scaffolds code later - install only. |
 | `skills/content-research-writer` | ticked | offered | - | Researched content with citations. |
+| `agents/design-unicorn` | offered | offered | ticked | A design-to-code crew (director, designer, reviewer, engineer, researcher, writer, apprentice). Brings `unicorn` and `time-tracker`; its first run checks the stack and installs the design skills it uses. Start it with `claude --agent design-unicorn` - list that as a next step. |
 | `agents/website-weaver` | ticked | offered | - | Splits a website brief into tasks across models. Needs Orca. |
 | `skills/ux-visualization-assistant` | offered | ticked | ticked | User flows, journeys, IA, personas. |
 | `skills/feedback-intake` | offered | ticked | ticked | Saves feedback under `project-management/feedback/`. |
@@ -30,6 +31,13 @@ unticked.
 | `skills/grilling` | offered | offered | offered | Stress-tests a plan or design with rounds of questions. |
 | `skills/grill-me` | offered | offered | offered | The /grill-me command; it runs `skills/grilling`, which `aistack add grill-me` adds too. |
 | `plugins/superpowers` | offered | offered | offered | Claude Code plugin: brainstorming, plans, TDD, systematic debugging, code review. |
+| `plugins/figma` | offered | offered | offered | Claude Code plugin: the Figma MCP server and its skills. |
+| `plugins/frontend-design` | offered | offered | offered | Claude Code plugin: distinctive frontend design. |
+| `skills/better-ui` | offered | offered | offered | Exact values for polishing surfaces, icons and motion. |
+| `skills/emil-design-eng` | offered | offered | offered | UI polish and animation decisions. |
+| `skills/design-taste-frontend` | offered | offered | - | Art direction for landing and marketing pages. |
+| `skills/expo-animation` | - | - | offered | Animations in Expo apps (Expo projects only). |
+| `skills/expo-native-ui` | - | - | offered | Native-feeling UI in Expo apps (Expo projects only). |
 | `plugins/impeccable` | offered | offered | offered | Claude Code plugin: design fluency for frontend work, with hooks that check UI changes. |
 | `skills/sync-repo` | offered | offered | offered | Keeps a cleaned copy of the repo for the client, synced commit by commit. Only for client work delivered as a separate repo. Has its own setup step - list it as a next step. |
 | `skills/research-workspace` | offered | offered | offered | A documentation workspace. Never ticked: it builds a second docs tree next to the kickoff's. |

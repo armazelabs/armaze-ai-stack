@@ -5,7 +5,8 @@
 #   aistack list [skills|agents|plugins] [--names]
 #   aistack add  [--to DIR] [--platform claude|generic] [--skills-dir DIR] [--agents-dir DIR]
 #               [--skills] [--agents] [--plugins] [--force] [--link] [NAME ...]
-#   aistack update [--to DIR]
+#   aistack add --global NAME ...
+#   aistack update [--to DIR | --global]
 #   aistack init [--to DIR] [--no-carry] [--no-plugins] [--launch|--no-launch]
 #   aistack upstream [NAME ...]          (for the stack's maintainer: skills/<name>/UPSTREAM)
 #   aistack root | help | version        (also: -h/--help, -v/--version)
@@ -333,6 +334,8 @@ ${C_BOLD}add options${C_RESET}
       --plugins           Only offer plugins
   -f, --force             Overwrite existing files without asking
   -l, --link              Symlink instead of copy (handy while developing a skill)
+  -g, --global            Add NAMEs for all your projects: into your Claude folder (~/.claude),
+                          plugins for your user; aistack update --global refreshes them
 
   NAME may be bare (pr-review) or qualified (skills/pr-review, agents/reviewer).
   Without NAME the app opens (plain aistack does the same). What the project has is ticked:
@@ -347,6 +350,7 @@ ${C_BOLD}add options${C_RESET}
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
+  -g, --global            Refresh what add --global put in your Claude folder
   Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies.
 
 ${C_BOLD}init options${C_RESET}
@@ -686,13 +690,21 @@ pick_tag() {  # <type> <name> <dest dir>
   [[ -n $3 && -e "$3/$(dest_leaf "$1" "$2")" ]] && print -r -- "${ICON[ok]} installed ${G_DOT} "
 }
 
-# Skills a skill can't work without, one per line, from "needs:" in its UPSTREAM file (grill-me only
-# runs grilling). Adding the skill adds them too.
+# Skills a component can't work without, one per line: "needs:" in a skill's UPSTREAM file (grill-me
+# only runs grilling) or in the front matter of a skill's or agent's own doc (design-unicorn needs
+# unicorn and time-tracker). Adding the component adds them too.
 component_needs() {  # <type> <name>
-  local file="$ARMAZE_STACK_DIR/skills/$2/UPSTREAM"
-  [[ $1 == skills && -f $file ]] || return 0
-  awk '$1 == "needs:" { for (i = 2; i <= NF; i++) print $i }' "$file"
+  local file="$ARMAZE_STACK_DIR/skills/$2/UPSTREAM" doc
+  [[ $1 == skills && -f $file ]] && awk '$1 == "needs:" { for (i = 2; i <= NF; i++) print $i }' "$file"
+  [[ $1 == plugins ]] && return 0
+  doc=$(component_doc_rel "$1" "$2") && [[ -f $ARMAZE_STACK_DIR/$doc ]] || return 0
+  awk 'NR == 1 && /^---/ { fm = 1; next } fm && /^---/ { exit } fm && $1 == "needs:" { for (i = 2; i <= NF; i++) print $i }' \
+    "$ARMAZE_STACK_DIR/$doc"
 }
+
+# Your own Claude config folder, where --global installs go: what Claude reads for you in every project
+# (~/.claude, or the folder CLAUDE_CONFIG_DIR points at, such as a project's .claude-local login).
+global_dir() { print -r -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" }
 
 # A value from a plugin card's front matter: plugin (<name>@<marketplace>) or marketplace (owner/repo).
 plugin_meta() {  # <name> <key>
@@ -709,6 +721,16 @@ plugin_install() {  # <name> <project dir>
     || { warn "plugins/$name.md needs plugin: and marketplace: in its front matter"; return 1 }
   command -v claude >/dev/null || { warn "plugin $name is installed by Claude Code, and there's no claude command here"; return 1 }
   local -a run=(claude)
+  # add --global (the caller's install_scope) installs it for you, in every project
+  if [[ ${install_scope:-project} == user ]]; then
+    info "adding plugin $name for all your projects ${C_DIM}($id, needs the network)${C_RESET}"
+    if ! out=$(cd "$HOME" && claude plugin marketplace add "$mp" 2>&1 && claude plugin install "$id" --scope user 2>&1); then
+      print -r -- "$out" | tail -3 >&2
+      warn "couldn't add plugin $name"; return 1
+    fi
+    ok "plugin ${C_BOLD}$name${C_RESET} → $(pretty_path "$(global_dir)/settings.json") ${C_DIM}(Claude Code installs it)${C_RESET}"
+    return 0
+  fi
   [[ -d $dir/.claude-local ]] && run=(claude_in "$dir/.claude-local")
   info "adding plugin $name ${C_DIM}($id, needs the network)${C_RESET}"
   if ! out=$(cd "$dir" && "${run[@]}" plugin marketplace add "$mp" --scope project 2>&1 \
@@ -1507,7 +1529,7 @@ cmd_list() {
 
 cmd_add() {
   require_stack
-  local target="" platform=claude force=0 mode=copy skills_dir="" agents_dir=""
+  local target="" platform=claude force=0 mode=copy skills_dir="" agents_dir="" install_scope=project
   local -a types=() names=()
   while (( $# )); do
     case $1 in
@@ -1520,6 +1542,7 @@ cmd_add() {
       --plugins)      types+=(plugins); shift ;;
       -f|--force)     force=1; shift ;;
       -l|--link)      mode=link; shift ;;
+      -g|--global)    install_scope=user; shift ;;
       -h|--help)      usage; return 0 ;;
       --)             shift; names+=("$@"); break ;;
       -*)             die "unknown option '$1' (run: aistack help)" ;;
@@ -1529,6 +1552,16 @@ cmd_add() {
   (( $#types )) || types=("${TYPES[@]}")
   types=("${(@u)types}")
   [[ $platform == (claude|generic) ]] || die "unknown platform '$platform' (expected: claude, generic)"
+
+  # --global: into your own Claude config folder, laid out the way Claude reads it there
+  if [[ $install_scope == user ]]; then
+    [[ -z $target && -z $skills_dir && -z $agents_dir && $platform == claude ]] \
+      || die "--global can't be combined with --to, --platform, --skills-dir or --agents-dir"
+    (( $#names )) || die "--global needs the names to install (run: aistack list)"
+    target=$(global_dir)
+    mkdir -p -- "$target" || die "cannot create $(pretty_path "$target")"
+    skills_dir=skills agents_dir=agents
+  fi
 
   target=$(resolve_target "$target") || exit 1
   # Installing into the stack itself is refused — except that the app may still
@@ -1540,6 +1573,7 @@ cmd_add() {
   dest_rel[skills]=${skills_dir:-$(dest_dir "$platform" skills)}
   dest_rel[agents]=${agents_dir:-$(dest_dir "$platform" agents)}
   dest_rel[plugins]=$(dest_dir "$platform" plugins)
+  [[ $install_scope == user ]] && dest_rel[plugins]=.
 
   local -a queue=()
   local type name entry
@@ -1548,7 +1582,11 @@ cmd_add() {
   if (( $#names )); then
     (( in_stack )) && die "the target is the stack itself — cd into your own repo or pass --to DIR"
     info "stack   $(pretty_path "$ARMAZE_STACK_DIR") ${C_DIM}($(stack_rev))${C_RESET}"
-    info "target  $(pretty_path "$target") ${C_DIM}(layout: $platform)${C_RESET}"
+    if [[ $install_scope == user ]]; then
+      info "target  $(pretty_path "$target") ${C_DIM}(global: all your projects)${C_RESET}"
+    else
+      info "target  $(pretty_path "$target") ${C_DIM}(layout: $platform)${C_RESET}"
+    fi
     print
     for name in "${names[@]}"; do
       entry=$(resolve_name "$name" "${types[@]}") || exit 1
@@ -1600,6 +1638,7 @@ install_queue() {
       need="skills"$'\t'"$need"
       (( ${queue[(Ie)$need]} )) && continue
       [[ -e $target/${dest_rel[skills]}/$(dest_leaf skills "${need#*$'\t'}") ]] && continue
+      [[ -e $(global_dir)/skills/${need#*$'\t'} ]] && { info "${need#*$'\t'} is already in your global skills"; continue }
       info "${entry#*$'\t'} needs ${need#*$'\t'}, so it's added too"
       queue+=("$need")
     done
@@ -1628,6 +1667,7 @@ cmd_update() {
   while (( $# )); do
     case $1 in
       -t|--to)   [[ -n ${2:-} ]] || die "$1 needs a value"; target=$2; shift 2 ;;
+      -g|--global) target=$(global_dir); shift ;;
       -h|--help) usage; return 0 ;;
       *)         die "unknown option '$1' (run: aistack help)" ;;
     esac

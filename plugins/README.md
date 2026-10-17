@@ -1,11 +1,13 @@
 # Plugins
 
-Claude Code plugins the stack offers. A plugin bundles skills with the hooks, agents and commands they rely on, so it is installed as a whole by Claude Code rather than copied: `aistack add <name>` declares the plugin's marketplace and enables it at project scope, which writes both into the project's `.claude/settings.json`. Commit that file and everyone who opens the project gets the plugin; Claude Code keeps it up to date, and `aistack update` leaves it alone. Plugins work in Claude Code only.
+Claude Code plugins the stack offers. A plugin bundles skills with the hooks, agents and commands they rely on, so it is installed as a whole by Claude Code rather than copied: `aistack add <name>` declares the plugin's marketplace and enables it at project scope, which writes both into the project's `.claude/settings.json`. Commit that file and everyone who opens the project gets the plugin (`aistack add --global <name>` installs it for you in every project instead); Claude Code keeps it up to date, and `aistack update` leaves it alone. Plugins work in Claude Code only.
 
 ## On the shelf
 
 | Plugin | What it does | Source |
 |---|---|---|
+| `figma` | The Figma MCP server plus skills to read designs, write screens and components into Figma, and turn designs into code. | [figma/mcp-server-guide](https://github.com/figma/mcp-server-guide) |
+| `frontend-design` | Anthropic's skill for distinctive frontend design that avoids the generic AI look. | [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) |
 | `impeccable` | Design fluency for frontend work: 24 commands for shaping, auditing and polishing UI, four agents, and hooks that check UI changes. | [pbakaus/impeccable](https://github.com/pbakaus/impeccable) |
 | `superpowers` | Skills for working habits: brainstorming, plans, test-driven development, systematic debugging, code review, parallel agents. | [obra/superpowers](https://github.com/obra/superpowers) |
 

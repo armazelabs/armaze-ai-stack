@@ -1,0 +1,4 @@
+# Where this skill comes from: the files here are a copy of that folder at the commit below.
+# `aistack upstream` checks it for changes and replaces the copy only when you accept them.
+url: https://github.com/expo/skills/tree/main/plugins/expo/skills/expo-animation
+commit: 927dd7cc2088ec2f0c73589fe2e94c3c973afc45

@@ -6,10 +6,15 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 
 | Skill | What it does | Needs |
 |---|---|---|
+| `better-ui` | Exact values for radius, optical alignment, shadows, icon states and motion when polishing UI. From jakubkrehel/skills on GitHub. | |
 | `changelog-generator` | Writes a user-facing changelog from git commits. Composio's, from GitHub. | git |
 | `code-to-figma` | Pushes a screen or component from the code into Figma. Writes only when asked. | Figma MCP |
 | `content-research-writer` | Researched writing with citations, hooks, outlines and feedback on each section. Composio's, from GitHub. | |
 | `create-competitor-profile` | Writes a new, fully sourced competitor profile in the research tree. | |
+| `design-taste-frontend` | Art direction for landing pages and public web pages, against the generic AI look. From Leonxlnx/taste-skill on GitHub. | |
+| `emil-design-eng` | Emil Kowalski's approach to UI polish, component design and animation decisions. From emilkowalski/skills on GitHub. | |
+| `expo-animation` | Animations in Expo and React Native apps. From expo/skills on GitHub. | Expo |
+| `expo-native-ui` | Native-feeling UI in Expo apps: controls, icons, effects, media, storage. From expo/skills on GitHub. | Expo |
 | `feedback-intake` | Files feedback one file per date, with categories, severity and de-duplication. Imports from FigJam. | Figma MCP (optional) |
 | `figma-to-code` | Implements a Figma frame or a claude.ai/design handoff as code. | Figma MCP |
 | `grill-me` | Starts a relentless interview to sharpen a plan or design. It runs `grilling`, so adding it adds that too. From mattpocock/skills on GitHub. | |
@@ -24,6 +29,7 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 | `sync-repo` | Syncs pushed commits into a cleaned copy of the repo for the client, one commit each with the same dates: no AI files, internal docs or Figma references, comments checked to be the only change. Optional Playwright comparison of both apps; pushes only on a yes. | Node, git |
 | `time-tracker` | Timesheets measured from Claude Code sessions and commits, with manual hours, budgets and PDFs. | Node |
 | `update-competitor-profile` | Proposes updates to existing competitor profiles and applies them only after approval. | |
+| `unicorn` | The `/unicorn` command for the design-unicorn crew: setup (checks your stack, installs the skills it uses), roll-out, quick fix, board, stand-down, resume, rollback. Comes with `agents/design-unicorn`. | |
 | `ux-visualization-assistant` | Picks and builds the right UX artifact: flows, journeys, information architecture, personas. | |
 | `whats-new-generator` | Sets up and maintains a changelog system and "what's new" posts in a project. | |
 
@@ -40,7 +46,7 @@ commit: <the upstream commit this copy matches>
 
 The copy only changes when the stack's maintainer takes a new version. In your checkout of the stack, `aistack upstream` (or `aistack upstream NAME`) fetches each one, shows what changed upstream (the commits, a compare link, and the files that would change), and replaces the copy only when you answer `y`. Review it with `git diff`, add a CHANGELOG line, commit and push; members get it with `aistack update`. Without a terminal it only reports.
 
-- A skill that only works with another one adds a `needs: <skill>` line (grill-me has `needs: grilling`). Adding it, in the app or with `aistack add`, then adds that skill too, unless the project has it.
+- A skill that only works with another one adds a `needs: <skill>` line (grill-me has `needs: grilling`). Adding it, in the app or with `aistack add`, then adds that skill too, unless the project or your global skills have it.
 - To add one, copy the folder in, then write its `UPSTREAM` file. `aistack upstream NAME` should then say "same as upstream".
 - Don't edit these copies here. Change them upstream, or turn one into a skill of our own by deleting its `UPSTREAM` file.
 
@@ -54,7 +60,7 @@ skills/<name>/
 └── scripts/        # optional helpers (zsh preferred; keep them portable)
 ```
 
-`SKILL.md` starts with YAML front matter. `name` must match the directory name; `description` is one line — it is what `aistack list` shows and what an assistant reads to decide when to use the skill.
+`SKILL.md` starts with YAML front matter. `name` must match the directory name; `description` is one line — it is what `aistack list` shows and what an assistant reads to decide when to use the skill. A skill (or agent) that can't work without other skills lists them in a `needs:` line, space-separated (`needs: unicorn time-tracker`); `aistack add` and the app then add them too, unless the project or your global skills have them.
 
 ```markdown
 ---
