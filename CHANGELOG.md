@@ -2,6 +2,14 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.23.0 - 2026-10-17
+
+**The app takes on your terminal's colours, so it looks right on light and dark themes.** Run `aistack update` to get it.
+
+### Changed
+
+- The app uses your terminal theme's own colours, so it reads well on light and dark themes and recolours by itself when your terminal switches between them. `ARMAZE_THEME=classic` brings back the fixed colours from before.
+
 ## 0.22.0 - 2026-10-17
 
 **design-unicorn arrives: a crew of seven agents that design, check and build your screens.** Run `aistack update`, then `aistack add design-unicorn` in a project and start it with `claude --agent design-unicorn`. Its first run checks your stack with you and installs the design skills it uses.
