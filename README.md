@@ -92,7 +92,7 @@ aistack init
 The kickoff asks what you're building (website, SaaS, mobile app, or a mix), its name, a one-line pitch and the stack, with more detail optional. Then it writes the AI layer, but no app code:
 
 - `CLAUDE.md`, with `AGENTS.md` linked to it so other tools read the same rules.
-- Product docs in `docs/`, and plans and a decisions log in `project-management/`.
+- Product docs in `project-management/docs/`, and plans and a decisions log in `project-management/`.
 - Project `.claude/` settings that block reading secrets, plus `/plan` and `/decision` commands.
 - A `.mcp.json` with the servers for your stack.
 - The Armaze skills that fit, from a pre-ticked list you can trim.
@@ -160,7 +160,7 @@ Each of `skills/`, `agents/`, `workflows/` and `tools/` has a README with the au
 ## Adding to the stack
 
 1. Branch from `main`.
-2. Add your component following the conventions in the relevant directory README — kebab-case name, front matter with `name` and a one-line `description`, self-contained files — and give it a row in that README's "On the shelf" table.
+2. Add your component following the conventions in the relevant directory README — kebab-case name, front matter with `name` and a one-line `description`, self-contained files, and a `README.md` in the [README standard](skills/README.md#readme-standard) — and give it a row in that README's "On the shelf" table.
 3. Check it shows up: `aistack list`. Try it in a real project: `cd ~/some-repo && aistack add --link <name>`.
 4. Add a line to `CHANGELOG.md` under `## Unreleased` (create the heading if it isn't there) saying what members get.
 5. Open a pull request. A short note on when to use the component and what you tested is plenty.

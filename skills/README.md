@@ -46,6 +46,7 @@ The copy only changes when the stack's maintainer takes a new version. In your c
 ```
 skills/<name>/
 ├── SKILL.md        # required — front matter + the instructions themselves
+├── README.md       # required — the page for people, in the README standard below
 ├── references/     # optional supporting docs the instructions point to
 └── scripts/        # optional helpers (zsh preferred; keep them portable)
 ```
@@ -70,3 +71,54 @@ Conventions:
 - Keep the instructions platform-neutral. If a step only makes sense in one tool, say so in the text rather than depending on that tool's private format.
 - Don't reference files outside the skill directory; the directory is copied as a unit into other repos.
 - Every document a component writes - logs, feedback, decisions, time tracking, product docs, workspace guides and rules, design docs - goes under `project-management/` at the target repo's root, spelled exactly that way. Never create `project-management-log/`, `Project Management/`, `project_management/`, a root `docs/` or any other top-level folder of your own for it. Only what a tool looks for at the root stays there: `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`, `.gitignore`, `package.json`, and the release notes in `CHANGELOG.md`. When a project already has an older root copy of a doc, keep using it rather than starting a second one.
+
+## README standard
+
+Every skill and agent of our own has a `README.md`: the page people read. The `aistack` app shows it beside the list, and its `#` heading is the component's title there. `SKILL.md` stays the instructions an assistant follows, and is never rewritten to fit this page. The shape comes from changelog-generator's doc, but it's written out here so it doesn't change when that upstream copy does.
+
+```markdown
+# <Title in Title Case>
+
+<A TL;DR: one or two sentences, what it does and what you end up with.>
+
+## When to Use This Skill
+
+- <a situation, one per bullet>
+
+## What This Skill Does
+
+1. **<Bold lead>**: <a few words>
+
+## How to Use
+
+### Basic Usage
+
+<the phrase, slash command or `aistack` line a person types>
+
+### <A variant>
+
+<another phrase, an option, or a setup step: one ### per variant>
+
+## Example
+
+<a realistic request and the result: a short exchange or output block>
+
+## Tips
+
+- <practical advice>
+
+## Related Use Cases
+
+- <other shelf components or tasks it pairs with>
+```
+
+- All eight parts, in this order. Leave out Example or Related Use Cases only when there is truly nothing to put there.
+- Keep it short, like changelog-generator's. The intro is a TL;DR of one or two sentences (about 35 words at most), with no detail the sections below give. What This Skill Does has 3 to 6 steps, each a bold lead and a few words on one line. Bullets elsewhere are one line each.
+- Agents say "This Agent" in place of "This Skill".
+- Reference material that fits none of them (setup, files, configuration) goes in extra `##` sections after Related Use Cases, never between the standard ones.
+- The title is in Title Case: Module Docs, Project Kickoff, What's New Generator.
+- Write it from the component's own `SKILL.md` and references only: no feature, option or command the component doesn't have. Keep to about 50–100 lines, plus any extra sections, in English, with no YAML front matter (`aistack list` keeps reading the description from `SKILL.md`).
+- Change the README in the same change as anything in `SKILL.md` that it describes.
+- A skill with an `UPSTREAM` file keeps its authors' docs as they are: it gets no README of ours and is never normalized.
+
+When asked to normalize the READMEs, rewrite every in-house skill's and agent's `README.md` to this standard and change nothing else.
