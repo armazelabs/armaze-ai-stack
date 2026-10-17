@@ -61,7 +61,7 @@ In a terminal, `aistack` clears the screen and opens one app with three tabs —
 | `⏎` | **add**: install the marked components (or the one under the cursor if nothing is marked) · **update**: pull the stack and refresh this project |
 | `q` (or `esc` outside the README pane) | Quit without doing anything |
 
-A green check right after the name marks components the project already has, so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Beside the list, a pane shows the selected component's `README.md`, or its `SKILL.md` or agent file when it has none; in a terminal too narrow for the pane, a one-line description takes its place, trimmed to fit. While the app is open it reads the mouse, so selecting text with the mouse needs Shift or Option held (which one depends on the terminal).
+Each row shows the component's title, the first heading of its README (or `SKILL.md`), and the pane's header shows its name, which is what `aistack add NAME` takes. A green check right after the title marks components the project already has, so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Beside the list, a pane shows the selected component's `README.md`, or its `SKILL.md` or agent file when it has none; in a terminal too narrow for the pane, a one-line description takes its place, trimmed to fit. While the app is open it reads the mouse, so selecting text with the mouse needs Shift or Option held (which one depends on the terminal).
 
 Without a terminal on both ends — piped output, scripts, `list --names`, `add NAME` — nothing interactive happens: `list` prints plain text, `add NAME` installs, `update` runs straight away.
 
