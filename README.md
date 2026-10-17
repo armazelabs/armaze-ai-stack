@@ -24,46 +24,47 @@ Already have a checkout? `./install.zsh` from inside it does the same without cl
 
 ```zsh
 cd ~/my-project                 # or any folder, even an empty one
-aistack                         # the app, opened on the add tab (see below)
+aistack                         # the app: everything on the shelf, what this repo has ticked (see below)
 
-aistack list                    # the app on its add tab; piped, a plain list with descriptions
+aistack list                    # the app; piped, a plain list with descriptions
 aistack list agents             # just one type (skills, agents or plugins)
 aistack list --names            # plain type/name lines (what tab completion uses)
 
-aistack add                     # the app on its add tab
+aistack add                     # the app
 aistack add pr-review reviewer  # non-interactive: bare names ...
 aistack add skills/pr-review agents/reviewer  # ... or qualified when a name exists as both
 aistack add --skills            # only offer skills (or --agents)
 aistack add --force             # overwrite anything already there without asking
 aistack add --link              # symlink instead of copy — for developing a skill against a real repo
 
-aistack update                  # the app on its update tab; ⏎ pulls the stack and re-copies what this repo added
+aistack update                  # pull the stack and re-copy what this repo added (the app also offers new releases)
 aistack init                    # start a new project here, with its own Claude login (see below)
 aistack upstream                # maintainers: check the skills that come from other repos for updates
-aistack help                    # the app on its help tab
+aistack help                    # the app, showing its help
 
 aistack --version               # which release you have (see CHANGELOG.md); also -v or version
 ```
 
 ### The app
 
-In a terminal, `aistack` clears the screen and opens one app with three tabs — `add`, `update`, `help` — drawn inside a rounded box as wide as the terminal, redrawn when you resize the window. Bare `aistack` and `aistack list` start on **add**, which lists everything on the shelf; `aistack update` and `aistack help` start on their own tab. Everything else is keys:
+In a terminal, `aistack` clears the screen and opens one app, drawn inside a rounded box as wide as the terminal and redrawn when you resize the window. It lists everything on the shelf, and the components the project already has are **ticked**. After the title, a green check means the project's copy matches the stack, and a yellow `↑` means the stack has a newer copy. The release you're running shows at the bottom right of the box. `aistack help` opens the same app on its help. Everything else is keys:
 
 | Key | Does |
 |-----|------|
-| `tab` / `shift-tab` | Next / previous tab — wrapping around at either end |
-| `↑` `↓` (or `j` `k`) | Move the cursor on **add**; scroll the README pane while it has the focus, and **help** |
-| `→`, or a click on the pane | Move into the README pane beside the list (**add**) |
-| `←` / `esc` | Leave the README pane |
+| `↑` `↓` (or `j` `k`) | Move the cursor; scroll the README pane while it has the focus, and the help |
+| `→`, or a click on the pane | Move into the README pane beside the list |
+| `←` / `esc` | Leave the README pane, or the help |
 | Mouse | A click on a row selects it; the wheel scrolls whatever is under the pointer |
-| `space` | Mark or unmark the component under the cursor (**add**) |
-| `a` | Mark everything, or clear all marks (**add**) |
-| `⏎` | **add**: install the marked components (or the one under the cursor if nothing is marked) · **update**: pull the stack and refresh this project |
+| `space` | Tick a component to add it, untick an installed one to remove it |
+| `⏎` | Apply everything at once: add what you ticked, update every ticked `↑` row, remove what you unticked (removals ask first). With nothing to do, it adds the component under the cursor |
+| `?` | Show the help, and back |
 | `q` (or `esc` outside the README pane) | Quit without doing anything |
 
-Each row shows the component's title, the first heading of its README (or `SKILL.md`), and the pane's header shows its name, which is what `aistack add NAME` takes. A green check right after the title marks components the project already has, so you can see what a re-run would overwrite. When you confirm, the app closes and the results print below it. Beside the list, a pane shows the selected component's `README.md`, or its `SKILL.md` or agent file when it has none; in a terminal too narrow for the pane, a one-line description takes its place, trimmed to fit. While the app is open it reads the mouse, so selecting text with the mouse needs Shift or Option held (which one depends on the terminal).
+Each row shows the component's title, the first heading of its README (or `SKILL.md`), and the pane's header shows its name, which is what `aistack add NAME` takes. Enter applies inside the app: a box shows the progress, then what was added, updated and removed, and anything that failed (that row stays as it was, still pending). `⏎` closes the box and you're back on the list, with the checks and arrows brought up to date. Unticking an installed component deletes its copy from the project (a plugin is turned off in `.claude/settings.json`) and drops it from `.armaze-stack`; the app lists what will go and asks before it does, because local edits to those copies are lost. Taking away a skill another one needs takes that one too (grill-me goes with grilling). Beside the list, a pane shows the selected component's `README.md`, or its `SKILL.md` or agent file when it has none; in a terminal too narrow for the pane, a one-line description takes its place, trimmed to fit. While the app is open it reads the mouse, so selecting text with the mouse needs Shift or Option held (which one depends on the terminal).
 
-Without a terminal on both ends — piped output, scripts, `list --names`, `add NAME` — nothing interactive happens: `list` prints plain text, `add NAME` installs, `update` runs straight away.
+When it opens, the app checks in the background whether the stack has a newer release than the one you're running. If it has, a box in the middle of the screen says so, with the release's headline from the changelog. `⏎` pulls the stack and restarts the app, now showing `↑` on whatever the release changed; `esc` leaves it for later (`aistack update` does it any time). Offline, or with a stack that isn't a git clone, nothing is shown.
+
+Without a terminal on both ends — piped output, scripts, `list --names`, `add NAME` — nothing interactive happens: `list` prints plain text and `add NAME` installs. `update` always runs straight away.
 
 | Variable | Effect |
 |----------|--------|
@@ -116,7 +117,7 @@ With the armaze plugin loaded, `claude` checks whether you're inside a project t
 
 ### Keeping up to date
 
-The stack is a git checkout on your machine, and every project holds its own copies of the components it added. `aistack update` handles both in one go — in a terminal it opens the app's **update** tab and `⏎` runs it; piped or scripted it just runs:
+The stack is a git checkout on your machine, and every project holds its own copies of the components it added. `aistack update` handles both in one go. The app does the same in two steps: it offers each new release when it opens, and after the restart it marks the components whose copies are behind with `↑`; the next `⏎` updates them, as long as they stay ticked. `aistack update`:
 
 1. It fast-forwards the checkout and lists which skills and agents were added (`+`), changed (`~`) or removed (`-`). If it can't pull — no git checkout, local edits, a diverged branch — it says so and carries on with what you have.
 2. Inside a project, it then re-copies whatever `.armaze-stack` records from the now-current stack. Components that already match are left alone; symlinked ones (`--link`) are live already.

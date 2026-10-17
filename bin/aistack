@@ -35,8 +35,8 @@ typeset -grA RENAMES=(
 ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:-${0:A:h:h}}"
 ARMAZE_STACK_DIR="${ARMAZE_STACK_DIR:A}"
 
-typeset -ga SELECTED
-typeset -g  APP_ACTION=quit   # what the app decided: add | update | quit
+typeset -ga SELECTED          # names picked by the stdin pickers
+typeset -ga APP_ARGS          # the command line, so the app can relaunch itself after updating the stack
 typeset -ga FR                # frame under construction while UI_CAPTURE=1
 typeset -gi UI_CAPTURE=0      # 1: ui_line/ui_edge append to FR instead of printing
 typeset -gi STACK_SELF_CHANGED=0  # 1: stack_pull brought a different bin/aistack than the one running
@@ -49,10 +49,10 @@ if [[ ( -t 1 || -n ${CLICOLOR_FORCE:-} ) && -z "${NO_COLOR:-}" ]]; then
   C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_YELLOW=$'\e[33m' C_BLUE=$'\e[34m'
   # 256-colour accents for the banner layout, muted so they sit next to any prompt theme.
   C_ACCENT=$'\e[38;5;110m' C_SHADOW=$'\e[38;5;238m' C_HEAD=$'\e[1;38;5;110m'
-  C_ITEM=$'\e[38;5;114m' C_MUTED=$'\e[38;5;243m' C_KEY=$'\e[1;38;5;75m' C_TAB=$'\e[38;5;255;48;5;68m'
+  C_ITEM=$'\e[38;5;114m' C_MUTED=$'\e[38;5;243m' C_KEY=$'\e[1;38;5;75m'
 else
   C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE=""
-  C_ACCENT="" C_SHADOW="" C_HEAD="" C_ITEM="" C_MUTED="" C_KEY="" C_TAB=""
+  C_ACCENT="" C_SHADOW="" C_HEAD="" C_ITEM="" C_MUTED="" C_KEY=""
 fi
 
 info() { print -r -- "${C_BLUE}==>${C_RESET} $*" }
@@ -189,13 +189,14 @@ ui_blank() { ui_line '' }
 
 # Box edges. ui_top and ui_bottom also flip UI_BOX so everything between them
 # gets borders; ui_rule is a divider inside the box, a dotted rule outside it.
-ui_edge() {  # <left corner> <right corner>
-  local e=''
+ui_edge() {  # <left corner> <right corner> [label, set into the edge two cells from the right corner]
+  local e='' label=''
   local -i n=$(( UI_WIDTH - 2 ))
-  ui_emit "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${1}${(pl:$n::$B_H:)e}${2}${C_RESET}"
+  [[ -n ${3:-} ]] && (( n > ${#3} + 6 )) && { label="${C_MUTED}${3}${C_SHADOW}${B_H}${B_H}"; (( n -= ${#3} + 2 )) }
+  ui_emit "${(pl:$UI_MARGIN:: :)e}${C_SHADOW}${1}${(pl:$n::$B_H:)e}${label}${2}${C_RESET}"
 }
 ui_top()    { UI_BOX=1; ui_edge "$B_TL" "$B_TR" }
-ui_bottom() { ui_edge "$B_BL" "$B_BR"; UI_BOX=0 }
+ui_bottom() { ui_edge "$B_BL" "$B_BR" " v$ARMAZE_VERSION "; UI_BOX=0 }
 ui_rule() {
   local e=''
   if (( UI_BOX )); then ui_edge "$B_LT" "$B_RT"
@@ -212,9 +213,9 @@ ui_center() {
   ui_line "${(pl:$pad:: :)e}$1"
 }
 
-# Wordmark plus the command bar, current command highlighted.
-ui_banner() {  # <current command>
-  local cur=$1 word='ARMAZE AI STACK'
+# The wordmark, with a blank line above and below it.
+ui_banner() {
+  local word='ARMAZE AI STACK'
   local -a rows=('' '' '') g
   local c; local -i j r art=0
   (( UI_CAPTURE )) || print   # breathing room above the box; the app starts on a cleared screen instead
@@ -234,13 +235,7 @@ ui_banner() {  # <current command>
   else
     ui_center "${C_ACCENT}${C_BOLD}${word}${C_RESET}"
   fi
-  local bar='' name
-  for name in "${TABS[@]}"; do
-    if [[ $name == $cur ]]; then bar+="${C_TAB} ${name} ${C_RESET}  "
-    else bar+="${C_MUTED} ${name} ${C_RESET}  "
-    fi
-  done
-  ui_center "${bar%  }"
+  ui_blank
 }
 
 # A rule, one line with $1 on the left and $2 on the right, a rule. When both
@@ -318,7 +313,7 @@ usage_text() {
 ${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to a repo
 
 ${C_BOLD}Usage${C_RESET}
-  aistack                                  Open the app on the add tab
+  aistack                                  Open the app: the stack, with what you have ticked
   aistack list [TYPE] [--names]            List what the stack offers (skills, agents, plugins)
   aistack add [options] [NAME ...]         Add components to a repo (the app if no NAME)
   aistack update [--to DIR]                Pull the latest stack, then refresh this project
@@ -340,17 +335,19 @@ ${C_BOLD}add options${C_RESET}
   -l, --link              Symlink instead of copy (handy while developing a skill)
 
   NAME may be bare (pr-review) or qualified (skills/pr-review, agents/reviewer).
-  Without NAME the app opens on the add tab: tab / shift-tab switch tabs, arrows or j/k move,
-  space toggles, a toggles all, enter adds, q quits. Plain aistack does the same.
+  Without NAME the app opens (plain aistack does the same). What the project has is ticked:
+  a green check means it matches the stack, a yellow ${G_UP} means the stack has a newer copy.
+  Arrows or j/k move, space ticks or unticks. Enter adds what you ticked, updates ticked ${G_UP} rows
+  and removes what you unticked (removals ask first), then shows what it did. ? is this help.
   The selected component's README shows beside the list: right arrow or a click moves into it,
   up/down or the mouse wheel scroll it, left arrow or esc comes back.
+  When it opens, the app checks for a new stack release and offers to update and restart.
   ARMAZE_PICKER=menu for a numbered list instead, =fzf for fuzzy search.
   ARMAZE_ICONS=0 for ASCII markers; ARMAZE_WIDTH=N caps the box width; ARMAZE_ALIGN=left.
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
   Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies.
-  In a terminal it opens the app's update tab; enter runs it. Piped or scripted, it just runs.
 
 ${C_BOLD}init options${C_RESET}
   -t, --to DIR            Folder to set up (default: the current directory)
@@ -373,8 +370,7 @@ USAGE
 usage() {
   if (( ! UI )); then usage_text; return; fi
   if app_available; then app_open help; return; fi
-  ui_banner help
-  ui_blank
+  ui_banner
   local line
   usage_text | while IFS= read -r line; do ui_line "$line"; done
   ui_bottom
@@ -781,18 +777,17 @@ pick_fzf() {  # <type> [dest dir]
 }
 
 # ---------------------------------------------------------------------------
-# The app: one screen, three tabs — add · update · help. The screen is
-# cleared and the whole frame is redrawn from the top on every key, so nothing
-# depends on cursor arithmetic. tab / shift-tab (or ← →) switch tabs; each tab
-# lists its own keys in the footer; q or esc quits.
+# The app: one screen listing everything the stack offers, ticked where the
+# project has it, with the help a key away (?). The screen is cleared and the
+# whole frame is redrawn from the top on every key, so nothing depends on cursor
+# arithmetic; only a modal (a release on offer, removals to confirm) is written
+# at fixed screen positions on top of the frame.
 #
 # Runs only when stdin and stdout are both terminals and the picker isn't forced
-# to menu/fzf (app_available). Sets APP_ACTION to add | update | quit and, for
-# add, SELECTED to "type<TAB>name" entries. Reads target, platform, dest_rel,
-# types and add_ok from the caller (zsh scoping is dynamic).
+# to menu/fzf (app_available). Enter adds, updates and removes in place and the
+# app stays open; it returns when the user quits. Reads target, platform, dest_rel,
+# mode, types and add_ok from the caller (zsh scoping is dynamic).
 # ---------------------------------------------------------------------------
-readonly -a TABS=(add update help)
-
 app_available() {
   (( UI )) || return 1
   [[ -t 0 && -t 1 ]] || return 1
@@ -800,15 +795,38 @@ app_available() {
   [[ ${ARMAZE_PICKER:-auto} == (auto|tui) ]]
 }
 
-tui() {  # <start tab>
-  setopt local_options local_traps
-  local -i tab=${TABS[(Ie)$1]}
-  (( tab )) || tab=1
+typeset -gri MODAL_WIDTH=64   # the widest a modal gets; in a narrower box it takes the box's width
 
-  # Rows for the add tab: one entry per drawn row; r_type '' = not selectable.
-  # r_title is what the row shows (component_title); r_name stays the name everything else uses.
-  local -a r_type=() r_name=() r_desc=() r_tag=() r_title=() names
-  local type name desc
+# A box over the middle of the frame just printed, written at fixed screen positions so the list
+# stays visible around it. ui_line and ui_edge draw it at the modal's width: the layout globals
+# are shadowed here, and zsh scoping is dynamic.
+modal_draw() {  # <line>...
+  local -i h=$#FR mw=$(( UI_COLS < MODAL_WIDTH ? UI_COLS : MODAL_WIDTH )) x y i
+  local l out=''
+  x=$(( UI_MARGIN + (UI_WIDTH - mw) / 2 + 1 ))
+  local -a FR=()
+  local -i UI_WIDTH=$mw UI_COLS=$(( mw - 4 )) UI_MARGIN=0 UI_BOX=0 UI_CAPTURE=1
+  ui_top; ui_blank
+  for l in "$@"; do ui_line "  $l"; done
+  ui_blank; ui_edge "$B_BL" "$B_BR"
+  y=$(( (h - $#FR) / 2 + 1 ))
+  (( y < 1 )) && y=1
+  for (( i = 1; i <= $#FR; i++ )); do out+=$'\e['$(( y + i - 1 ))';'$x'H'${FR[i]}; done
+  print -rn -- "$out"
+}
+
+tui() {  # <start view: list | help>
+  setopt local_options local_traps
+  autoload -Uz is-at-least
+  local view=list
+  [[ $1 == help ]] && view=help
+
+  # Rows: one entry per drawn row; r_type '' = not selectable. r_title is what the row shows
+  # (component_title); r_name stays the name everything else uses. For a component, r_have is 1
+  # when the project has it, r_old 1 when its copy differs from the stack's (the rule update
+  # uses; a symlink is always live), r_needs the skills it can't work without.
+  local -a r_type=() r_name=() r_desc=() r_tag=() r_title=() r_have=() r_old=() r_needs=() names
+  local type name desc dest
   local -i i
   for type in "${types[@]}"; do
     (( $#r_type )) && { r_type+=(''); r_name+=(''); r_desc+=(''); r_tag+=(blank) }
@@ -819,22 +837,30 @@ tui() {  # <start tab>
       desc=$(component_description "$(component_doc "$type" "$name")")
       r_type+=("$type"); r_name+=("$name"); r_desc+=("${desc:-}")
       r_tag+=("$(pick_tag "$type" "$name" "$target/${dest_rel[$type]}")")
-      r_title[$#r_name]=$(component_title "$type" "$name")
+      i=$#r_name
+      r_title[i]=$(component_title "$type" "$name")
+      r_needs[i]=$(component_needs "$type" "$name")
+      [[ -n ${r_tag[i]} ]] || continue
+      r_have[i]=1
+      dest=$target/${dest_rel[$type]}/$(dest_leaf "$type" "$name")
+      [[ $type != plugins && ! -L $dest ]] \
+        && ! diff -rq -- "$(component_src "$type" "$name")" "$dest" >/dev/null 2>&1 && r_old[i]=1
     done
   done
   local -a sel=()
   for (( i = 1; i <= $#r_type; i++ )); do [[ -n ${r_type[i]} ]] && sel+=($i); done
-  local -i pos=1 total=$#r_type marked_n=0 rtop=1
-  local -A marked
-  local -i w=12   # the widest title, at least 12, plus room for the check after it
+  local -i pos=1 total=$#r_type rtop=1 n_add n_upd n_rm
+  local -a want   # row -> 1 when ticked; starts as what the project has
+  for i in "${sel[@]}"; do want[i]=${r_have[i]:-0}; done
+  local -i w=12   # the widest title, at least 12, plus room for the mark after it
   for desc in "${r_title[@]}"; do (( ${(m)#desc} > w )) && w=${(m)#desc}; done
   (( w += 2 ))
 
-  # Help tab: the usage text, scrolled with the arrows.
+  # Help view: the usage text, scrolled with the arrows.
   local -a help=("${(@f)$(usage_text)}")
   local -i htop=1
 
-  # README pane beside the add rows: the selected component's README.md, else its
+  # README pane beside the rows: the selected component's README.md, else its
   # own doc. lw/pw are the list and pane widths (pw 0 = too narrow, descriptions inline instead);
   # crow is the screen row of the first content line, for mapping mouse clicks.
   local -a doc
@@ -855,11 +881,11 @@ tui() {  # <start tab>
     fi
     l=("${(@)l[${l[(i)?*]},-1]}")   # and the blank lines after it
     # zsh counts an emoji selector (U+FE0F, as after an arrow) as no width, the terminal as a cell more: the line would wrap
-    ui_unicode && l=("${(@)l//$'\uFE0F'/}")
+    ui_unicode && l=("${(@)l//$'️'/}")
     # fold -s wraps at spaces; it counts bytes on GNU, which only wraps a non-ASCII line early
     doc=("${(@f)$(print -rl -- "${(@)l//$'\t'/    }" | fold -s -w $2)}")
   }
-  # A row of the add tab: the list part, then its line of the README pane if shown.
+  # A row of the list: the list part, then its line of the README pane if shown.
   pane_row() {  # <row in the window, from 1> <list part>
     local e='' line
     local -i pad
@@ -877,8 +903,6 @@ tui() {  # <start tab>
   # Shown on every frame, computed once.
   local rev=$(stack_rev) stack_shown=$(pretty_path "$ARMAZE_STACK_DIR") target_shown=$(pretty_path "$target")
   local stack_info="${C_MUTED}${ICON[rev]} ${rev} ${G_DOT} ${ICON[stack]} ${stack_shown}${C_RESET}"
-  local -i recorded=0
-  [[ -f $target/$MANIFEST_NAME ]] && recorded=$(grep -vc '^#' "$target/$MANIFEST_NAME")
 
   # Content rows that fit: a frame is banner (6) + status (3) + rows + footer (2) + edge (1),
   # and one line is left so the cursor never scrolls the screen. Measured again after a resize.
@@ -892,28 +916,63 @@ tui() {  # <start tab>
   }
   fit
 
-  local key_tab="${C_KEY}tab${C_RESET} ${C_MUTED}switch${C_RESET}"   # shift-tab goes the other way; both wrap around
   local key_move="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}move${C_RESET}"
+  local key_help="${C_KEY}?${C_RESET} ${C_MUTED}help${C_RESET}"
   local key_quit="${C_KEY}q${C_RESET} ${C_MUTED}quit${C_RESET}"
 
+  # What enter does to a row, in REPLY: add (ticked, not there), update (ticked, behind the
+  # stack), remove (unticked, there) or nothing.
+  row_act() {
+    local -i k=$1
+    REPLY=''
+    if (( ${want[k]:-0} )); then
+      if (( ! ${r_have[k]:-0} )); then REPLY=add
+      elif (( ${r_old[k]:-0} )); then REPLY=update
+      fi
+    elif (( ${r_have[k]:-0} )); then
+      REPLY=remove
+    fi
+  }
+  # What enter would do, counted over the rows.
+  count_acts() {
+    local -i k
+    n_add=0 n_upd=0 n_rm=0
+    for k in "${sel[@]}"; do
+      row_act $k
+      case $REPLY in
+        add)    (( n_add += 1 )) ;;
+        update) (( n_upd += 1 )) ;;
+        remove) (( n_rm += 1 )) ;;
+      esac
+    done
+  }
+
+  # The modal on screen, if any: update (a newer release), updating, failed, remove (confirm),
+  # working (applying), done (what was applied) or nothing (enter with nothing to apply).
+  local modal=''
+  local -a modal_text=()
+  modal_wrap() {  # <plain text> <max lines> [colour]: appended to modal_text, wrapped to the modal's width
+    local -a l=("${(@f)$(print -r -- "$1" | fold -s -w $(( (UI_COLS < MODAL_WIDTH ? UI_COLS : MODAL_WIDTH) - 6 )))}")
+    modal_text+=("${3:-}${(@)^l[1,$2]}${3:+$C_RESET}")
+  }
+
   draw() {
-    local cur=${TABS[tab]} prefix box style after foot left desc nav_keys
+    local prefix box style after foot left desc nav_keys p
     local -i k cur_row last shown=0 hmax dmax
     FR=(); UI_CAPTURE=1
-    ui_banner "$cur"
-    case $cur in
-      add)    if (( add_ok )); then
-                ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} ${target_shown} ${G_DOT} layout ${platform}${C_RESET}" "$stack_info"
-              else
-                ui_status "${C_BOLD}Add${C_RESET} ${C_MUTED}${ICON[dir]} you are inside the stack — cd into a project to add${C_RESET}" "$stack_info"
-              fi ;;
-      update) ui_status "${C_BOLD}Update${C_RESET} ${C_MUTED}${ICON[dir]} ${target_shown}${C_RESET}" "$stack_info" ;;
-      help)   ui_status "${C_BOLD}Help${C_RESET} ${C_MUTED}aistack ${ARMAZE_VERSION}${C_RESET}" "$stack_info" ;;
+    ui_banner
+    case $view in
+      list) if (( add_ok )); then
+              ui_status "${C_BOLD}Project${C_RESET} ${C_MUTED}${ICON[dir]} ${target_shown} ${G_DOT} layout ${platform}${C_RESET}" "$stack_info"
+            else
+              ui_status "${C_BOLD}Project${C_RESET} ${C_MUTED}${ICON[dir]} you are inside the stack — cd into a project to add${C_RESET}" "$stack_info"
+            fi ;;
+      help) ui_status "${C_BOLD}Help${C_RESET}" "$stack_info" ;;
     esac
 
     crow=$(( $#FR + 1 ))
-    case $cur in
-      add)
+    case $view in
+      list)
         if (( ! $#sel )); then
           ui_line "  ${C_MUTED}nothing here yet — the stack is empty${C_RESET}"; shown=1; pw=0 focus_doc=0
         else
@@ -953,10 +1012,18 @@ tui() {  # <start tab>
             else
               (( k == cur_row )) && prefix="${C_ACCENT}${G_CUR}${C_RESET}" || prefix=' '
               (( k == cur_row )) && style=bold || style=''
-              # A green check right after the name marks what the project already has.
               (( pw )) && desc='' || desc=${r_desc[k]}   # the pane replaces the one-line description
-              (( ${marked[$k]:-0} )) && box="${C_ITEM}${G_SEL}${C_RESET}" || box="${C_MUTED}${G_UNSEL}${C_RESET}"
-              [[ -n ${r_tag[k]} ]] && after="${C_ITEM}${ICON[ok]}${C_RESET}" || after=''
+              # The box is the tick: red when the project has it and it's unticked, so it goes.
+              # After the title, a check marks a copy that matches the stack and a yellow ↑ one
+              # the stack has a newer copy of (re-copied by enter while it stays ticked).
+              if (( ${want[k]:-0} )); then box="${C_ITEM}${G_SEL}${C_RESET}"
+              elif (( ${r_have[k]:-0} )); then box="${C_RED}${G_UNSEL}${C_RESET}"
+              else box="${C_MUTED}${G_UNSEL}${C_RESET}"
+              fi
+              if (( ${r_old[k]:-0} )); then after="${C_YELLOW}${G_UP}${C_RESET}"
+              elif (( ${r_have[k]:-0} )); then after="${C_ITEM}${ICON[ok]}${C_RESET}"
+              else after=''
+              fi
               ui_item_r "${prefix} ${box}" "${r_title[k]}" "$desc" $w "$style" "$after"
               left=$REPLY
             fi
@@ -966,22 +1033,6 @@ tui() {  # <start tab>
           # the pane runs the full height of the window, below a short list too
           while (( pw && shown < win )); do (( shown += 1 )); pane_row $shown ''; done
         fi ;;
-      update)
-        ui_line "  ${C_HEAD}${ICON[stack]}  Stack${C_RESET}"
-        ui_line "     ${stack_shown} ${C_MUTED}${G_DOT} ${rev}${C_RESET}"
-        ui_line "     ${C_MUTED}git pull --ff-only, then a summary of what was added, changed or removed${C_RESET}"
-        ui_blank
-        ui_line "  ${C_HEAD}${ICON[dir]}  Project${C_RESET}"
-        if (( recorded )); then
-          ui_line "     ${target_shown} ${C_MUTED}${G_DOT} ${recorded} recorded in ${MANIFEST_NAME}${C_RESET}"
-          ui_line "     ${C_MUTED}each one is re-copied from the updated stack; symlinked ones are live already${C_RESET}"
-        else
-          ui_line "     ${target_shown} ${C_MUTED}${G_DOT} no ${MANIFEST_NAME} here${C_RESET}"
-          ui_line "     ${C_MUTED}nothing to re-copy — only the stack is pulled${C_RESET}"
-        fi
-        ui_blank
-        ui_line "  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}runs it now${C_RESET}"
-        shown=9 ;;
       help)
         # clamped here rather than in nav so a taller window after a resize pulls the text back down
         hmax=$(( $#help - win + 1 )); (( hmax < 1 )) && hmax=1
@@ -1001,19 +1052,32 @@ tui() {  # <start tab>
     esac
     for (( k = shown; k < win; k++ )); do ui_blank; done
 
-    # the arrows move the cursor, or scroll the README pane while it has the focus
-    if (( focus_doc )); then
-      nav_keys="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}scroll${C_RESET}  ${C_KEY}${G_LEFT}${C_RESET} ${C_MUTED}back${C_RESET}"
-    else
-      nav_keys=$key_move
-      (( pw )) && nav_keys+="  ${C_KEY}${G_RIGHT}${C_RESET} ${C_MUTED}readme${C_RESET}"
-    fi
-    case $cur in
-      add)    foot="${key_tab}  ${nav_keys}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}  ${C_KEY}a${C_RESET} ${C_MUTED}all${C_RESET}"
-              (( add_ok )) && foot+="  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}add ${marked_n} selected${C_RESET}"
-              foot+="  ${key_quit}" ;;
-      update) foot="${key_tab}  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}pull & refresh${C_RESET}  ${key_quit}" ;;
-      help)   foot="${key_tab}  ${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}scroll${C_RESET}  ${key_quit}" ;;
+    case $view in
+      list)
+        # the arrows move the cursor, or scroll the README pane while it has the focus
+        if (( focus_doc )); then
+          nav_keys="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}scroll${C_RESET}  ${C_KEY}${G_LEFT}${C_RESET} ${C_MUTED}back${C_RESET}"
+        else
+          nav_keys=$key_move
+          (( pw )) && nav_keys+="  ${C_KEY}${G_RIGHT}${C_RESET} ${C_MUTED}readme${C_RESET}"
+        fi
+        foot="${nav_keys}  ${C_KEY}space${C_RESET} ${C_MUTED}toggle${C_RESET}"
+        if (( add_ok && $#sel )); then
+          # what enter does: the pending changes, else the row under the cursor
+          count_acts
+          p=''
+          (( n_add )) && p+="${p:+ ${G_DOT} }add ${n_add}"
+          (( n_upd )) && p+="${p:+ ${G_DOT} }update ${n_upd}"
+          (( n_rm ))  && p+="${p:+ ${G_DOT} }remove ${n_rm}"
+          if [[ -z $p ]]; then
+            k=${sel[pos]}
+            if (( ! ${r_have[k]:-0} )); then p=add; elif (( ${r_old[k]:-0} )); then p=update; fi
+          fi
+          [[ -n $p ]] && foot+="  ${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}${p}${C_RESET}"
+        fi
+        foot+="  ${key_help}  ${key_quit}" ;;
+      help)
+        foot="${C_KEY}${G_UP}${G_DOWN}${C_RESET} ${C_MUTED}scroll${C_RESET}  ${C_KEY}esc${C_RESET} ${C_MUTED}back${C_RESET}  ${key_quit}" ;;
     esac
     ui_rule
     ui_line "  ${foot}"
@@ -1022,39 +1086,38 @@ tui() {  # <start tab>
     # Clear each line before writing it, not after: a full-width line leaves the cursor on the last
     # column, where \e[K or \e[J would erase the right border. The final \n lands on the spare row.
     print -rn -- $'\e[H\e[K'"${(pj:\n\e[K:)FR}"$'\n\e[J'
+    [[ -n $modal ]] && modal_draw "${modal_text[@]}"
   }
 
+  # Space on a row: tick or untick it. A ticked skill ticks the skills it needs; an unticked one
+  # unticks what needs it, so grill-me never stays behind without grilling.
   toggle() {
     local -i k=$1 j
     local need
-    if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); return; fi
-    marked[$k]=1; (( marked_n += 1 ))
-    # Marking a skill marks the skills it needs, unless the project has them already.
-    for need in ${(f)"$(component_needs "${r_type[k]}" "${r_name[k]}")"}; do
-      for j in "${sel[@]}"; do
-        if [[ ${r_type[j]} == skills && ${r_name[j]} == $need && -z ${r_tag[j]} ]] && (( ! ${marked[$j]:-0} )); then
-          marked[$j]=1; (( marked_n += 1 ))
-        fi
+    local -a nd
+    (( want[k] = ! ${want[k]:-0} ))
+    if (( want[k] )); then
+      for need in ${(f)r_needs[k]}; do
+        for j in "${sel[@]}"; do
+          [[ ${r_type[j]} == skills && ${r_name[j]} == $need ]] && want[j]=1
+        done
       done
-    done
-  }
-  toggle_all() {
-    if (( marked_n == $#sel )); then for i in "${sel[@]}"; do marked[$i]=0; done; marked_n=0
-    else for i in "${sel[@]}"; do marked[$i]=1; done; marked_n=$#sel
+    elif [[ ${r_type[k]} == skills ]]; then
+      for j in "${sel[@]}"; do
+        nd=(${(f)r_needs[j]})
+        (( ${nd[(Ie)${r_name[k]}]} )) && want[j]=0
+      done
     fi
   }
-  # Move the cursor (add), scroll the README pane when it has the focus, or scroll help, by $1.
+  # Move the cursor, or scroll the README pane when it has the focus, or scroll help, by $1.
   move() { (( $#sel )) && (( pos = (pos - 1 + $1 + $#sel) % $#sel + 1 )) }
   nav() {
     local -i d=$1
-    case ${TABS[tab]} in
-      add)  if (( focus_doc )); then (( dtop += d )); else move $d; fi ;;   # draw keeps dtop in range
+    case $view in
+      list) if (( focus_doc )); then (( dtop += d )); else move $d; fi ;;   # draw keeps dtop in range
       help) (( htop += d )) ;;   # and htop
     esac
   }
-  # Both wrap: tab on the last tab lands on the first, shift-tab on the first lands on the last.
-  next_tab() { focus_doc=0; (( tab = tab % $#TABS + 1 )) }
-  prev_tab() { focus_doc=0; (( tab = tab > 1 ? tab - 1 : $#TABS )) }
   # A mouse report after \e[<: button;column;row, then M for a press or m for a release.
   # Left click on a row selects it, on the README pane focuses it; the wheel scrolls what is under it.
   mouse() {
@@ -1066,8 +1129,8 @@ tui() {  # <start tab>
     local -i b=${f[1]:-0} x=${f[2]:-0} y=${f[3]:-0} k in_pane
     (( b &= ~28 ))   # drop the shift, meta and ctrl bits
     in_pane=$(( pw && x >= UI_MARGIN + 3 + lw ))
-    case ${TABS[tab]} in
-      add)
+    case $view in
+      list)
         if (( b == 64 || b == 65 )); then
           if (( in_pane )); then (( dtop += b == 64 ? -3 : 3 )); else move $(( b == 64 ? -1 : 1 )); fi
         elif (( b == 0 && y >= crow && y < crow + win )); then
@@ -1082,7 +1145,105 @@ tui() {  # <start tab>
     return 0
   }
 
-  APP_ACTION=quit; SELECTED=()
+  # The update check: fetch the stack in the background and read the release on its upstream
+  # through a pipe, polled while the app waits for keys. No answer (offline, no upstream, not a
+  # checkout) means nothing is offered.
+  local -i chk=0
+  local newv=''
+  exec {chk}< <( {
+      GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes' git -C "$ARMAZE_STACK_DIR" fetch -q \
+        && git -C "$ARMAZE_STACK_DIR" show '@{u}:bin/aistack' | sed -n 's/^readonly ARMAZE_VERSION="\(.*\)"$/\1/p'
+    } </dev/null 2>/dev/null )
+  # Returns 0 when it opened the update modal: the release upstream is newer than this script.
+  check_poll() {
+    local head
+    read -t 0 -u $chk newv || return 1
+    exec {chk}<&-; chk=0
+    [[ -n $newv ]] && ! is-at-least "$newv" "$ARMAZE_VERSION" || return 1
+    # that release's headline: the bold sentence under its heading in the changelog
+    head=$(git -C "$ARMAZE_STACK_DIR" show '@{u}:CHANGELOG.md' 2>/dev/null | awk -v h="## $newv" '
+      index($0, h) == 1 { f = 1; next }
+      f && /^## / { exit }
+      f && /^\*\*/ { sub(/^\*\*/, ""); sub(/\*\*.*/, ""); print; exit }')
+    modal=update
+    modal_text=("${C_BOLD}Update available${C_RESET}" '' "aistack ${ARMAZE_VERSION} ${G_RIGHT} ${C_ITEM}${C_BOLD}${newv}${C_RESET}")
+    [[ -n $head ]] && { modal_text+=(''); modal_wrap "$head" 6 "$C_MUTED" }
+    modal_text+=('' "${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}update & restart${C_RESET}    ${C_KEY}esc${C_RESET} ${C_MUTED}later${C_RESET}")
+  }
+  # Pull the stack, then start this command again from the new script; on failure, say why.
+  update_run() {
+    local out
+    modal=updating
+    modal_text=("${C_BOLD}Updating${G_ELL}${C_RESET}" '' "${C_MUTED}git pull in ${stack_shown}${C_RESET}")
+    draw
+    if out=$(GIT_TERMINAL_PROMPT=0 stack_pull 2>&1 </dev/null); then
+      print -n -- $app_off
+      exec "$ARMAZE_STACK_DIR/bin/aistack" "${APP_ARGS[@]}"
+    fi
+    out=${${(f)out}[-1]}; out=${out//$'\e'\[[0-9;]#m/}
+    modal=failed
+    modal_text=("${C_BOLD}Couldn't update${C_RESET}" '')
+    modal_wrap "${out#! }" 3 "$C_MUTED"
+    modal_text+=("${C_MUTED}run aistack update to see why${C_RESET}" '' "${C_KEY}esc${C_RESET} ${C_MUTED}close${C_RESET}")
+  }
+  # Do every pending change in place: install what is ticked and missing, re-copy what is ticked
+  # and behind the stack, remove what is unticked. Output is captured so the frame stays whole;
+  # a modal shows the progress, then what was done. A row that fails keeps its tick, still pending.
+  apply_changes() {
+    local -i k n=0 added=0 updated=0 removed=0
+    local a rel out p=''
+    local -a todo=() failed=()
+    for k in "${sel[@]}"; do row_act $k; [[ -n $REPLY ]] && todo+=($k); done
+    for k in "${todo[@]}"; do
+      row_act $k; a=$REPLY
+      (( n += 1 ))
+      modal=working
+      modal_text=("${C_BOLD}Applying${G_ELL}${C_RESET} ${C_MUTED}${n} of ${#todo}${C_RESET}" '' "${C_MUTED}${a} ${r_title[k]}${C_RESET}")
+      draw
+      rel=${dest_rel[${r_type[k]}]}/$(dest_leaf "${r_type[k]}" "${r_name[k]}")
+      if [[ $a == remove ]]; then
+        if out=$(uninstall_one "${r_type[k]}" "${r_name[k]}" "$target/$rel" 2>&1); then
+          manifest_remove "$target" "$rel"
+          r_have[k]=0 r_old[k]=0
+          (( removed += 1 )); continue
+        fi
+      elif out=$(install_one "${r_type[k]}" "${r_name[k]}" "$target/$rel" 1 "$mode" 2>&1); then
+        manifest_upsert "$target" "${r_type[k]}" "${r_name[k]}" "$rel"
+        r_have[k]=1 r_old[k]=0
+        if [[ $a == add ]]; then (( added += 1 )); else (( updated += 1 )); fi
+        continue
+      fi
+      out=${${(f)out}[-1]}; out=${out//$'\e'\[[0-9;]#m/}
+      failed+=("${r_title[k]}: ${out#! }")
+    done
+    (( added ))   && p+="${p:+ ${G_DOT} }${added} added"
+    (( updated )) && p+="${p:+ ${G_DOT} }${updated} updated"
+    (( removed )) && p+="${p:+ ${G_DOT} }${removed} removed"
+    modal=done
+    if (( $#failed )); then modal_text=("${C_BOLD}${C_YELLOW}Done, with problems${C_RESET}" '')
+    else modal_text=("${C_BOLD}Done${C_RESET}" '')
+    fi
+    [[ -n $p ]] && modal_text+=("${C_ITEM}${p}${C_RESET}" "${C_MUTED}recorded in ${MANIFEST_NAME}${C_RESET}")
+    if (( $#failed )); then
+      [[ -n $p ]] && modal_text+=('')
+      modal_text+=("Couldn't do ${#failed}:")
+      for out in "${(@)failed[1,4]}"; do modal_wrap "$out" 2 "$C_MUTED"; done
+      (( $#failed > 4 )) && modal_text+=("${C_MUTED}${G_ELL} and $(( $#failed - 4 )) more${C_RESET}")
+    fi
+    modal_text+=('' "${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}ok${C_RESET}")
+  }
+  # Removals delete files, so they are confirmed first.
+  confirm_remove() {
+    local -a gone=()
+    for i in "${sel[@]}"; do row_act $i; [[ $REPLY == remove ]] && gone+=("${r_title[i]}"); done
+    modal=remove
+    modal_text=("${C_BOLD}Remove ${#gone} from this project?${C_RESET}" '')
+    modal_wrap "${(j:, :)gone}" 4
+    modal_text+=('')
+    modal_wrap "Their files are deleted and plugins turned off. Local edits to them are lost." 3 "$C_MUTED"
+    modal_text+=('' "${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}remove${C_RESET}    ${C_KEY}esc${C_RESET} ${C_MUTED}back${C_RESET}")
+  }
+
   local app_off=$'\e[?1000l\e[?1006l\e[?25h'   # undoes the line below; every way out prints it
   print -n -- $'\e[?25l\e[?1000h\e[?1006h\e[H\e[2J'   # hide the cursor, report mouse clicks and wheel (SGR), clear
   trap 'print -n -- $app_off; print; exit 130' INT TERM
@@ -1093,6 +1254,7 @@ tui() {  # <start tab>
     t0=$SECONDS
     if ! read -sk1 -t 0.25 key; then
       (( SECONDS - t0 < 0.1 )) && break   # back before the timeout: stdin is gone
+      if (( chk )) && [[ -z $modal ]] && check_poll; then draw; continue; fi
       # zsh keeps SIGWINCH blocked in scripts, so a WINCH trap never fires; ask the terminal instead.
       size=$(stty size 2>/dev/null)
       if [[ -n $size && $size != $drawn_size ]]; then
@@ -1101,37 +1263,68 @@ tui() {  # <start tab>
       fi
       continue
     fi
+    # A modal takes only enter and esc (or q); arrow keys and mouse reports are read and dropped.
+    if [[ -n $modal ]]; then
+      case $key in
+        $'\n'|$'\r')
+          case $modal in
+            update) update_run ;;   # restarts on success
+            remove) apply_changes ;;
+            updating|working) ;;
+            *)      modal='' ;;
+          esac ;;
+        $'\e')
+          if read -sk1 -t 0.05 seq; then
+            [[ $seq == '[' ]] && while read -sk1 -t 0.05 seq && [[ $seq != [A-Za-z~] ]]; do :; done
+          else
+            modal=''
+          fi ;;
+        q)       modal='' ;;
+        $'\x03') print -n -- $app_off; print; exit 130 ;;
+      esac
+      draw; continue
+    fi
     case $key in
-      $'\t')  next_tab ;;
       $'\e')
         seq=''; read -sk1 -t 0.05 seq
         if [[ $seq == '[' ]]; then
           read -sk1 -t 0.05 seq
           case $seq in
-            Z) prev_tab ;;   # shift-tab
-            C) if [[ ${TABS[tab]} == add ]] && (( pw )); then focus_doc=1; else next_tab; fi ;;   # → into the README
-            D) if (( focus_doc )); then focus_doc=0; else prev_tab; fi ;;                                 # ← back out of it
+            C) [[ $view == list ]] && (( pw )) && focus_doc=1 ;;   # → into the README
+            D) if (( focus_doc )); then focus_doc=0; elif [[ $view == help ]]; then view=list; fi ;;   # ← back out
             A) nav -1 ;;
             B) nav 1 ;;
             '<') mouse ;;
           esac
         elif (( focus_doc )); then
           focus_doc=0        # bare escape leaves the README pane
+        elif [[ $view == help ]]; then
+          view=list          # or the help
         else
-          break            # or quits
+          break              # or quits
         fi ;;
+      '?') focus_doc=0; if [[ $view == help ]]; then view=list; else view=help; fi ;;
       k|p) nav -1 ;;
       j|n) nav 1 ;;
-      ' ') [[ ${TABS[tab]} == add ]] && (( $#sel )) && toggle ${sel[pos]} ;;
-      a)   [[ ${TABS[tab]} == add ]] && toggle_all ;;
+      ' ') [[ $view == list ]] && (( $#sel )) && toggle ${sel[pos]} ;;
       $'\n'|$'\r')
-        case ${TABS[tab]} in
-          add)    if (( $#sel && add_ok )); then
-                    (( marked_n )) || toggle ${sel[pos]}   # enter on an unmarked list adds the current row
-                    APP_ACTION=add; break
-                  fi ;;
-          update) APP_ACTION=update; break ;;
-        esac ;;
+        if [[ $view == list ]] && (( $#sel && add_ok )); then
+          count_acts
+          if (( n_add + n_upd + n_rm == 0 )); then   # nothing pending: enter adds the row under the cursor
+            i=${sel[pos]}
+            if (( ! ${r_have[i]:-0} )); then
+              toggle $i; count_acts
+            else
+              modal=nothing
+              modal_text=("${C_BOLD}Nothing to change${C_RESET}" '')
+              modal_wrap "Tick a component to add it, untick one to remove it. Ticked ones marked ${G_UP} are updated." 3 "$C_MUTED"
+              modal_text+=('' "${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}ok${C_RESET}")
+            fi
+          fi
+          if (( n_rm )); then confirm_remove
+          elif (( n_add + n_upd )); then apply_changes
+          fi
+        fi ;;
       q|$'\x04') break ;;                                    # q, ctrl-d
       $'\x03')   print -n -- $app_off; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
     esac
@@ -1140,27 +1333,19 @@ tui() {  # <start tab>
   print -n -- $app_off
   print
   UI_BOX=0 UI_CAPTURE=0
-  if [[ $APP_ACTION == add ]]; then
-    for i in "${sel[@]}"; do
-      (( ${marked[$i]:-0} )) && SELECTED+=("${r_type[i]}"$'\t'"${r_name[i]}")
-    done
-  fi
+  (( chk )) && exec {chk}<&-
 }
 
-# Open the app on a tab, then carry out what the user chose below the box.
-# Reads target, platform, dest_rel, force, mode and types from the caller;
-# app_open supplies defaults for the entry points without add options.
-app_run() {  # <tab>
+# Open the app, which carries out what the user chooses itself. Reads target, platform,
+# dest_rel, mode and types from the caller; app_open supplies defaults for the entry points
+# without add options.
+app_run() {  # <view>
   local -i add_ok=1
   [[ $target == $ARMAZE_STACK_DIR ]] && add_ok=0
   tui "$1"
-  case $APP_ACTION in
-    add)    install_queue "${SELECTED[@]}" ;;
-    update) do_update ;;
-  esac
 }
 
-app_open() {  # <tab> [types...]
+app_open() {  # <view> [types...]
   local target platform=claude force=0 mode=copy
   local -a types=("${@:2}")
   (( $#types )) || types=("${TYPES[@]}")
@@ -1203,7 +1388,8 @@ install_one() {  # <type> <name> <dest> <force 0|1> <copy|link>
         return 2
       fi
     fi
-    rm -rf -- "$dest"
+    # if the old copy can't go, cp -R would nest the new one inside it
+    rm -rf -- "$dest" || { warn "cannot replace $shown"; return 1 }
   fi
 
   mkdir -p -- "${dest:h}" || { warn "cannot create ${dest:h}"; return 1 }
@@ -1213,6 +1399,27 @@ install_one() {  # <type> <name> <dest> <force 0|1> <copy|link>
   esac || { warn "failed to install $name"; return 1 }
 
   ok "$(type_singular $type) ${C_BOLD}$name${C_RESET} → $shown${${(M)mode:#link}:+ ${C_DIM}(symlink)${C_RESET}}"
+}
+
+# Take one component out of a project. A plugin is turned off at project scope by Claude Code,
+# as plugin_install turned it on (its marketplace stays: other plugins may use it); anything
+# else is deleted, and a symlink loses only the link. Returns 0 removed, 1 failed.
+uninstall_one() {  # <type> <name> <dest>
+  local type=$1 name=$2 dest=$3 id out dir
+  if [[ $type == plugins ]]; then
+    dest=${dest%\#*} dir=${dest%%/.claude/*}
+    id=$(plugin_meta "$name" plugin) || { warn "plugins/$name.md needs plugin: in its front matter"; return 1 }
+    command -v claude >/dev/null || { warn "plugin $name is turned off by Claude Code, and there's no claude command here"; return 1 }
+    local -a run=(claude)
+    [[ -d $dir/.claude-local ]] && run=(claude_in "$dir/.claude-local")
+    if ! out=$(cd "$dir" && "${run[@]}" plugin uninstall "$id" --scope project 2>&1); then
+      print -r -- "$out" | tail -3 >&2
+      warn "couldn't remove plugin $name"; return 1
+    fi
+  else
+    rm -rf -- "$dest" || { warn "couldn't remove $(pretty_path "$dest")"; return 1 }
+  fi
+  ok "removed $(type_singular $type) ${C_BOLD}$name${C_RESET} from $(pretty_path "$dest")"
 }
 
 # ---------------------------------------------------------------------------
@@ -1260,8 +1467,8 @@ cmd_list() {
     return 0
   fi
 
-  # Interactive: the app's add tab, which lists everything and checks what this project has.
-  if app_available; then app_open add "${types[@]}"; return; fi
+  # Interactive: the app, which lists everything and ticks what this project has.
+  if app_available; then app_open list "${types[@]}"; return; fi
 
   # Banner layout, printed once (a terminal on stdout but not on stdin).
   local counts='' t
@@ -1270,10 +1477,10 @@ cmd_list() {
     counts+="${counts:+ ${G_DOT} }${#names} ${t}"
   done
   local -i w=$(ui_name_width "${types[@]}")
-  # A green check beside what this project already has, as on the app's add tab.
+  # A green check beside what this project already has, as in the app.
   local target mark
   target=$(resolve_target "") || exit 1
-  ui_banner list
+  ui_banner
   ui_status "${C_BOLD}Armaze AI Stack${C_RESET} ${C_MUTED}(${counts})${C_RESET}" \
             "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
   for type in "${types[@]}"; do
@@ -1325,7 +1532,7 @@ cmd_add() {
 
   target=$(resolve_target "$target") || exit 1
   # Installing into the stack itself is refused — except that the app may still
-  # open here with its add tab disabled, so browsing, update and help stay reachable.
+  # open here with adding disabled, so browsing and help stay reachable.
   local -i in_stack=0
   [[ $target == $ARMAZE_STACK_DIR ]] && in_stack=1
 
@@ -1351,8 +1558,8 @@ cmd_add() {
     return
   fi
 
-  # No names and a terminal on both ends: the app, on its add tab.
-  if app_available; then app_run add; return; fi
+  # No names and a terminal on both ends: the app.
+  if app_available; then app_run list; return; fi
 
   # Otherwise a picker that reads from stdin — the numbered menu, or fzf if asked
   # for. With the banner layout on, the boxed header is drawn and closed first so
@@ -1360,7 +1567,7 @@ cmd_add() {
   (( in_stack )) && die "the target is the stack itself — cd into your own repo or pass --to DIR"
   local picker; pick_mode; picker=$REPLY
   if (( UI )); then
-    ui_banner add
+    ui_banner
     ui_status "${C_BOLD}Add to${C_RESET} ${C_MUTED}${ICON[dir]} $(pretty_path "$target") ${G_DOT} layout ${platform}${C_RESET}" \
               "${C_MUTED}${ICON[rev]} $(stack_rev) ${G_DOT} ${ICON[stack]} $(pretty_path "$ARMAZE_STACK_DIR")${C_RESET}"
     ui_bottom
@@ -1417,8 +1624,7 @@ install_queue() {
 
 cmd_update() {
   require_stack
-  local target="" platform=claude force=0 mode=copy
-  local -a types=("${TYPES[@]}")
+  local target=""
   while (( $# )); do
     case $1 in
       -t|--to)   [[ -n ${2:-} ]] || die "$1 needs a value"; target=$2; shift 2 ;;
@@ -1428,16 +1634,6 @@ cmd_update() {
   done
 
   target=$(resolve_target "$target") || exit 1
-
-  # In a terminal: the app, on its update tab (enter runs it). Otherwise run now.
-  if app_available; then
-    local -A dest_rel
-    dest_rel[skills]=$(dest_dir claude skills)
-    dest_rel[agents]=$(dest_dir claude agents)
-    dest_rel[plugins]=$(dest_dir claude plugins)
-    app_run update
-    return
-  fi
   do_update
 }
 
@@ -1879,7 +2075,8 @@ cmd_init() {
 }
 
 main() {
-  # No command: the app on its add tab when there is a terminal, otherwise help.
+  APP_ARGS=("$@")
+  # No command: the app when there is a terminal, otherwise help.
   local cmd=${1:-}
   if [[ -z $cmd ]]; then
     if app_available; then cmd=add; else cmd=help; fi
