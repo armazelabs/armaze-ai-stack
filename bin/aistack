@@ -690,6 +690,14 @@ pick_tag() {  # <type> <name> <dest dir>
   [[ -n $3 && -e "$3/$(dest_leaf "$1" "$2")" ]] && print -r -- "${ICON[ok]} installed ${G_DOT} "
 }
 
+# Skills a skill can't work without, one per line, from "needs:" in its UPSTREAM file (grill-me only
+# runs grilling). Adding the skill adds them too.
+component_needs() {  # <type> <name>
+  local file="$ARMAZE_STACK_DIR/skills/$2/UPSTREAM"
+  [[ $1 == skills && -f $file ]] || return 0
+  awk '$1 == "needs:" { for (i = 2; i <= NF; i++) print $i }' "$file"
+}
+
 # A value from a plugin card's front matter: plugin (<name>@<marketplace>) or marketplace (owner/repo).
 plugin_meta() {  # <name> <key>
   awk -v k="$2:" 'NR == 1 && /^---/ { fm = 1; next } fm && /^---/ { exit } fm && $1 == k { print $2; f = 1; exit } END { exit !f }' \
@@ -846,6 +854,8 @@ tui() {  # <start tab>
       (( end <= $#l )) && l=("${(@)l[end+1,-1]}")
     fi
     l=("${(@)l[${l[(i)?*]},-1]}")   # and the blank lines after it
+    # zsh counts an emoji selector (U+FE0F, as after an arrow) as no width, the terminal as a cell more: the line would wrap
+    ui_unicode && l=("${(@)l//$'\uFE0F'/}")
     # fold -s wraps at spaces; it counts bytes on GNU, which only wraps a non-ASCII line early
     doc=("${(@f)$(print -rl -- "${(@)l//$'\t'/    }" | fold -s -w $2)}")
   }
@@ -1014,7 +1024,20 @@ tui() {  # <start tab>
     print -rn -- $'\e[H\e[K'"${(pj:\n\e[K:)FR}"$'\n\e[J'
   }
 
-  toggle() { local -i k=$1; if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); else marked[$k]=1; (( marked_n += 1 )); fi }
+  toggle() {
+    local -i k=$1 j
+    local need
+    if (( ${marked[$k]:-0} )); then marked[$k]=0; (( marked_n -= 1 )); return; fi
+    marked[$k]=1; (( marked_n += 1 ))
+    # Marking a skill marks the skills it needs, unless the project has them already.
+    for need in ${(f)"$(component_needs "${r_type[k]}" "${r_name[k]}")"}; do
+      for j in "${sel[@]}"; do
+        if [[ ${r_type[j]} == skills && ${r_name[j]} == $need && -z ${r_tag[j]} ]] && (( ! ${marked[$j]:-0} )); then
+          marked[$j]=1; (( marked_n += 1 ))
+        fi
+      done
+    done
+  }
   toggle_all() {
     if (( marked_n == $#sel )); then for i in "${sel[@]}"; do marked[$i]=0; done; marked_n=0
     else for i in "${sel[@]}"; do marked[$i]=1; done; marked_n=$#sel
@@ -1362,8 +1385,18 @@ install_queue() {
     print -r -- "Nothing selected."
     return 0
   fi
-  local entry type name rel
+  local entry type name rel need
   local -i added=0 skipped=0
+  # A skill brings the skills it needs, unless the project has them already.
+  for entry in "${queue[@]}"; do
+    for need in ${(f)"$(component_needs "${entry%%$'\t'*}" "${entry#*$'\t'}")"}; do
+      need="skills"$'\t'"$need"
+      (( ${queue[(Ie)$need]} )) && continue
+      [[ -e $target/${dest_rel[skills]}/$(dest_leaf skills "${need#*$'\t'}") ]] && continue
+      info "${entry#*$'\t'} needs ${need#*$'\t'}, so it's added too"
+      queue+=("$need")
+    done
+  done
   for entry in "${queue[@]}"; do
     type=${entry%%$'\t'*}; name=${entry#*$'\t'}
     rel="${dest_rel[$type]}/$(dest_leaf "$type" "$name")"

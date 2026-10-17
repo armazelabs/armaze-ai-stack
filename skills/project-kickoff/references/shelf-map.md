@@ -27,6 +27,8 @@ unticked.
 | `skills/changelog-generator` | offered | offered | ticked | Store release notes from commits. |
 | `skills/code-to-figma` | offered | offered | offered | Pushes built screens back into Figma. |
 | `skills/remove-ai-marks` | offered | offered | offered | Strips AI marks from text and images. |
+| `skills/grilling` | offered | offered | offered | Stress-tests a plan or design with rounds of questions. |
+| `skills/grill-me` | offered | offered | offered | The /grill-me command; it runs `skills/grilling`, which `aistack add grill-me` adds too. |
 | `plugins/superpowers` | offered | offered | offered | Claude Code plugin: brainstorming, plans, TDD, systematic debugging, code review. |
 | `plugins/impeccable` | offered | offered | offered | Claude Code plugin: design fluency for frontend work, with hooks that check UI changes. |
 | `skills/sync-repo` | offered | offered | offered | Keeps a cleaned copy of the repo for the client, synced commit by commit. Only for client work delivered as a separate repo. Has its own setup step - list it as a next step. |

@@ -1,0 +1,6 @@
+# Where this skill comes from: the files here are a copy of that folder at the commit below.
+# `aistack upstream` checks it for changes and replaces the copy only when you accept them.
+url: https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me
+commit: 49dd158d1076134a641b33efb035946536778336
+# grill-me only runs grilling, so adding it adds grilling too.
+needs: grilling

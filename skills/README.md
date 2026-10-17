@@ -12,6 +12,8 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 | `create-competitor-profile` | Writes a new, fully sourced competitor profile in the research tree. | |
 | `feedback-intake` | Files feedback one file per date, with categories, severity and de-duplication. Imports from FigJam. | Figma MCP (optional) |
 | `figma-to-code` | Implements a Figma frame or a claude.ai/design handoff as code. | Figma MCP |
+| `grill-me` | Starts a relentless interview to sharpen a plan or design. It runs `grilling`, so adding it adds that too. From mattpocock/skills on GitHub. | |
+| `grilling` | Questions you round by round about a plan, decision or idea, with a recommended answer for each, until you agree on every branch. From mattpocock/skills on GitHub. | |
 | `module-docs` | One living page per product module: what is built, what is next, and a dated history of what changed, why, how it was planned and what was decided. Asks after each task; can commit and push only the docs. | Node, git |
 | `product-teardown` | Researches a product module by module, with a screenshot of every screen and state and every element listed. | Orca |
 | `project-kickoff` | One-time setup of a new project's AI layer. Started by `aistack init`; removes itself afterwards. | |
@@ -38,6 +40,7 @@ commit: <the upstream commit this copy matches>
 
 The copy only changes when the stack's maintainer takes a new version. In your checkout of the stack, `aistack upstream` (or `aistack upstream NAME`) fetches each one, shows what changed upstream (the commits, a compare link, and the files that would change), and replaces the copy only when you answer `y`. Review it with `git diff`, add a CHANGELOG line, commit and push; members get it with `aistack update`. Without a terminal it only reports.
 
+- A skill that only works with another one adds a `needs: <skill>` line (grill-me has `needs: grilling`). Adding it, in the app or with `aistack add`, then adds that skill too, unless the project has it.
 - To add one, copy the folder in, then write its `UPSTREAM` file. `aistack upstream NAME` should then say "same as upstream".
 - Don't edit these copies here. Change them upstream, or turn one into a skill of our own by deleting its `UPSTREAM` file.
 
