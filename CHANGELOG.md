@@ -2,6 +2,16 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.23.2 - 2026-10-17
+
+**Updating now removes what the stack renamed or took off the shelf, everywhere.** Run `aistack update`, or take the app's update: a leftover `unicorn` becomes `studio`.
+
+### Fixed
+
+- Updating cleans up everywhere: `aistack update`, `aistack update --global`, and the app as it opens (which is also where "update & restart" lands). A component the stack renamed moves to its new name, such as `unicorn` to `studio`. One taken off the shelf is removed, and a plugin taken off is turned off. The app shows what it changed when it opens.
+- If you had edited a copy that an update removes, it is kept in `.armaze-backup/<date>/` in your project (never committed) instead of being deleted.
+- Updating also adds any skill a component now needs.
+
 ## 0.23.1 - 2026-10-17
 
 **design-unicorn's command is now `/studio`, and `/studio start` opens the whole crew in Orca at once.** Run `aistack update`: it swaps the old `unicorn` skill for `studio` in your projects.

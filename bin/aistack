@@ -24,7 +24,7 @@
 emulate -R zsh
 setopt pipe_fail extended_glob typeset_silent
 
-readonly ARMAZE_VERSION="0.23.1"
+readonly ARMAZE_VERSION="0.23.2"
 readonly MANIFEST_NAME=".armaze-stack"
 readonly -a TYPES=(plugins skills agents)   # this order is the order lists show them in
 # Components that were renamed, "type/old-name" -> new name. Entries stay for good: update
