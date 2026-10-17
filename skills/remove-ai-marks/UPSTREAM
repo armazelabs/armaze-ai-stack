@@ -1,0 +1,4 @@
+# Where this skill comes from: the files here are a copy of that folder at the commit below.
+# `aistack upstream` checks it for changes and replaces the copy only when you accept them.
+url: https://github.com/guillaumemeyer/watermarks-remover/tree/main/skills/remove-ai-marks
+commit: 28eca2d91fd485213045b86896db671937432a48

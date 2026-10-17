@@ -51,6 +51,7 @@ _aistack() {
     'add:Add skills/agents to the current repo'
     'update:Pull the latest stack, then refresh this repo'
     'init:Start a project here, with its own Claude login'
+    'upstream:Check skills from other repos for changes'
     'root:Print the stack checkout path'
     'help:Show help'
     'version:Show version'
@@ -82,6 +83,10 @@ _aistack() {
     update|upgrade)
       _arguments \
         '(-t --to)'{-t,--to}'[target repo]:dir:_directories'
+      ;;
+    upstream)
+      local -a ups=(${ARMAZE_STACK_DIR}/skills/*/UPSTREAM(N:h:t))
+      _arguments '*:skill:('"${ups[*]}"')'
       ;;
     init)
       _arguments \

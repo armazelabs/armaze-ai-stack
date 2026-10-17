@@ -6,16 +6,16 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 
 | Skill | What it does | Needs |
 |---|---|---|
-| `changelog-generator` | Writes a user-facing changelog from git commits. | git |
+| `changelog-generator` | Writes a user-facing changelog from git commits. Composio's, from GitHub. | git |
 | `code-to-figma` | Pushes a screen or component from the code into Figma. Writes only when asked. | Figma MCP |
-| `content-research-writer` | Researched writing with citations, hooks, outlines and feedback on each section. | |
+| `content-research-writer` | Researched writing with citations, hooks, outlines and feedback on each section. Composio's, from GitHub. | |
 | `create-competitor-profile` | Writes a new, fully sourced competitor profile in the research tree. | |
 | `feedback-intake` | Files feedback one file per date, with categories, severity and de-duplication. Imports from FigJam. | Figma MCP (optional) |
 | `figma-to-code` | Implements a Figma frame or a claude.ai/design handoff as code. | Figma MCP |
 | `module-docs` | One living page per product module: what is built, what is next, and a dated history of what changed, why, how it was planned and what was decided. Asks after each task; can commit and push only the docs. | Node, git |
 | `product-teardown` | Researches a product module by module, with a screenshot of every screen and state and every element listed. | Orca |
 | `project-kickoff` | One-time setup of a new project's AI layer. Started by `aistack init`; removes itself afterwards. | |
-| `remove-ai-marks` | Strips AI provenance marks: invisible Unicode, watermarks, C2PA and other metadata. | |
+| `remove-ai-marks` | Strips AI provenance marks: invisible Unicode, watermarks, C2PA and other metadata. From watermarks-remover on GitHub. | |
 | `research-workspace` | Sets up and looks after the research tree in `project-management/research/`. | |
 | `rooter` | Builds a client-facing entry page that sends clients to the right version, deck or Figma file. | |
 | `site-to-figma` | Pulls a live site's design system into Figma: variables (with light and dark modes), text and shadow styles, components, icons, and the page itself tied to those tokens. Saves W3C design tokens too. | Orca, Figma MCP |
@@ -26,6 +26,20 @@ One directory per skill. A skill is a focused, instruction-driven capability an 
 | `whats-new-generator` | Sets up and maintains a changelog system and "what's new" posts in a project. | |
 
 `aistack list` shows the same list with each skill's full description. When you add, rename or remove a skill, update this table in the same change.
+
+## Skills from other repos
+
+Some skills are used as their authors publish them on GitHub. The stack keeps a copy, so members install it like any other skill, and an `UPSTREAM` file beside it records where it comes from:
+
+```
+url: https://github.com/OWNER/REPO/tree/BRANCH/PATH
+commit: <the upstream commit this copy matches>
+```
+
+The copy only changes when the stack's maintainer takes a new version. In your checkout of the stack, `aistack upstream` (or `aistack upstream NAME`) fetches each one, shows what changed upstream (the commits, a compare link, and the files that would change), and replaces the copy only when you answer `y`. Review it with `git diff`, add a CHANGELOG line, commit and push; members get it with `aistack update`. Without a terminal it only reports.
+
+- To add one, copy the folder in, then write its `UPSTREAM` file. `aistack upstream NAME` should then say "same as upstream".
+- Don't edit these copies here. Change them upstream, or turn one into a skill of our own by deleting its `UPSTREAM` file.
 
 ## Writing a skill
 

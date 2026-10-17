@@ -7,6 +7,7 @@
 #               [--skills] [--agents] [--force] [--link] [NAME ...]
 #   aistack update [--to DIR]
 #   aistack init [--to DIR] [--no-carry] [--no-plugins] [--launch|--no-launch]
+#   aistack upstream [NAME ...]          (for the stack's maintainer: skills/<name>/UPSTREAM)
 #   aistack root | help | version        (also: -h/--help, -v/--version)
 #
 # Environment:
@@ -321,6 +322,7 @@ ${C_BOLD}Usage${C_RESET}
   aistack add [options] [NAME ...]         Add components to a repo (the app if no NAME)
   aistack update [--to DIR]                Pull the latest stack, then refresh this project
   aistack init [options]                   Start a project here, with its own Claude login
+  aistack upstream [NAME ...]              Check skills from other repos for updates
   aistack root                             Print the stack checkout path
   aistack help | -h | --help               Show this help
   aistack version | -v | --version         Print the CLI version
@@ -1559,6 +1561,104 @@ init_plugins() {  # <config dir>
   done
 }
 
+# ---------------------------------------------------------------------------
+# Skills from other repos. A skill used as its authors publish it keeps a copy in the stack
+# plus skills/<name>/UPSTREAM: "url: <GitHub folder URL>" and "commit: <the copy's commit>".
+# `aistack upstream` (for whoever maintains the stack) fetches each one and shows what changed
+# since the copy; it replaces the copy only when they accept, and they commit it. Members
+# never fetch from GitHub: they get an accepted version through `aistack update`.
+# ---------------------------------------------------------------------------
+
+# A value from a skill's UPSTREAM file ("key: value"); 1 when it has none.
+upstream_get() {  # <skill> <key>
+  local file="$ARMAZE_STACK_DIR/skills/$1/UPSTREAM"
+  [[ -f $file ]] || return 1
+  awk -v k="$2:" '$1 == k { print $2; f = 1; exit } END { exit !f }' "$file"
+}
+
+# Split https://github.com/OWNER/REPO/tree|blob/REF/PATH into reply=(owner repo ref path).
+# shortcut: a branch name with a / in it reads as part of the path; use a commit SHA as REF there.
+upstream_parse() {  # <url>
+  [[ $1 =~ '^https://github\.com/([^/]+)/([^/]+)/(tree|blob)/([^/]+)/(.+)$' ]] || return 1
+  reply=("${match[1]}" "${match[2]%.git}" "${match[4]}" "${${match[5]%/}%/SKILL.md}")
+}
+
+# Fetch that folder, and the repo's LICENSE, one commit deep (git only, sparse, no blobs
+# beyond those) and leave it at <dir>/skill. REPLY is the commit it came from.
+upstream_fetch() {  # <url> <dir>
+  local url=$1 dir=$2
+  local -a reply own lic
+  upstream_parse "$url" || { warn "not a GitHub folder URL: $url"; return 1 }
+  local owner=${reply[1]} repo=${reply[2]} ref=${reply[3]} sub=${reply[4]}
+  if ! { git init -q -- "$dir/git" \
+      && git -C "$dir/git" config core.sparseCheckout true \
+      && print -rl -- "/$sub/" '/LICENSE*' > "$dir/git/.git/info/sparse-checkout" \
+      && git -C "$dir/git" remote add origin "https://github.com/$owner/$repo.git" \
+      && GIT_TERMINAL_PROMPT=0 git -C "$dir/git" fetch -q --depth 1 --filter=blob:none origin "$ref" \
+      && git -C "$dir/git" checkout -q FETCH_HEAD } 2>/dev/null; then
+    warn "couldn't fetch $url"; return 1
+  fi
+  [[ -f $dir/git/$sub/SKILL.md ]] || { warn "no SKILL.md at $url"; return 1 }
+  # the repo's licence travels with the skill when its folder has none of its own
+  own=("$dir/git/$sub"/LICENSE*(N)); lic=("$dir/git"/LICENSE*(N.))
+  (( $#own || ! $#lic )) || cp -- "${lic[@]}" "$dir/git/$sub/"
+  REPLY=$(git -C "$dir/git" rev-parse HEAD)
+  mv -- "$dir/git/$sub" "$dir/skill"
+}
+
+cmd_upstream() {
+  # inside a checkout of the stack (the one you commit from) work on that one, not the installed clone
+  local top
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=''
+  [[ -n $top && -f $top/bin/aistack && -d $top/skills ]] && ARMAZE_STACK_DIR=$top
+  require_stack
+  info "stack   $(pretty_path "$ARMAZE_STACK_DIR")"
+  print
+  local -a names=("$@") reply
+  (( $#names )) || names=("$ARMAZE_STACK_DIR"/skills/[^._]*/UPSTREAM(N.:h:t))
+  if (( ! $#names )); then
+    info "no skills from other repos here ${C_DIM}(a skill folder with an UPSTREAM file)${C_RESET}"
+    return 0
+  fi
+  local name url old new tmp here
+  local -i same=0 changed=0 accepted=0 failed=0
+  for name in "${names[@]}"; do
+    here="$ARMAZE_STACK_DIR/skills/$name"
+    url=$(upstream_get "$name" url) || { warn "skills/$name has no UPSTREAM file with a url: line"; (( failed += 1 )); continue }
+    old=$(upstream_get "$name" commit) || old=''
+    info "$name ${C_DIM}$url${C_RESET}"
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/aistack-upstream.XXXXXX") || die "cannot make a temp folder"
+    if ! upstream_fetch "$url" "$tmp"; then rm -rf -- "$tmp"; (( failed += 1 )); continue; fi
+    new=$REPLY
+    if diff -rq -x UPSTREAM -- "$here" "$tmp/skill" >/dev/null 2>&1; then
+      ok "same as upstream ${C_DIM}${new[1,7]}${C_RESET}"
+      rm -rf -- "$tmp"; (( same += 1 )); print; continue
+    fi
+    (( changed += 1 ))
+    upstream_parse "$url"
+    print -r -- "  ${C_YELLOW}~${C_RESET} upstream has changed ${C_DIM}${old:+${old[1,7]} → }${new[1,7]}${C_RESET}"
+    [[ -n $old && $old != $new ]] && print -r -- "    ${C_DIM}https://github.com/${reply[1]}/${reply[2]}/compare/${old[1,7]}...${new[1,7]}${C_RESET}"
+    # what would change, file by file, as stack → upstream
+    cp -R -- "$here" "$tmp/stack" && rm -f -- "$tmp/stack/UPSTREAM"
+    ( cd "$tmp" && git diff --no-index --stat=100 -- stack skill ) | sed 's/^/  /'
+    if [[ -t 0 && -t 1 ]] && read -q "?  Replace skills/$name with upstream ${new[1,7]}? [y/N] "; then
+      print
+      awk -v c="$new" '$1 == "commit:" { print "commit: " c; done = 1; next } { print } END { if (!done) print "commit: " c }' \
+        "$here/UPSTREAM" > "$tmp/skill/UPSTREAM"
+      rm -rf -- "$here" && mv -- "$tmp/skill" "$here"
+      ok "skills/$name is now upstream ${new[1,7]}"
+      (( accepted += 1 ))
+    else
+      [[ -t 0 && -t 1 ]] && print
+      print -r -- "  ${C_DIM}kept the stack's copy${C_RESET}"
+    fi
+    rm -rf -- "$tmp"; print
+  done
+  ok "$same unchanged upstream, $changed changed ($accepted taken), $failed failed"
+  (( accepted )) && info "review with git diff, then commit and push: members get it with aistack update"
+  (( failed == 0 ))
+}
+
 cmd_init() {
   require_stack
   local to="" launch=auto
@@ -1680,6 +1780,7 @@ main() {
     add|install)           cmd_add "$@" ;;
     update|upgrade)        cmd_update "$@" ;;
     init)                  cmd_init "$@" ;;
+    upstream)              cmd_upstream "$@" ;;
     root|path)             print -r -- "$ARMAZE_STACK_DIR" ;;
     help|-h|--help)        usage ;;
     version|-v|--version)  print -r -- "aistack $ARMAZE_VERSION" ;;

@@ -39,6 +39,7 @@ aistack add --link              # symlink instead of copy — for developing a s
 
 aistack update                  # the app on its update tab; ⏎ pulls the stack and re-copies what this repo added
 aistack init                    # start a new project here, with its own Claude login (see below)
+aistack upstream                # maintainers: check the skills that come from other repos for updates
 aistack help                    # the app on its help tab
 
 aistack --version               # which release you have (see CHANGELOG.md); also -v or version
@@ -121,6 +122,8 @@ The stack is a git checkout on your machine, and every project holds its own cop
 2. Inside a project, it then re-copies whatever `.armaze-stack` records from the now-current stack. Components that already match are left alone; symlinked ones (`--link`) are live already.
 
 Run it outside a project and it just does the first step. Re-running the setup one-liner pulls the stack too.
+
+A few skills are copies of skills published on GitHub. Members never fetch those from GitHub: they change only when the stack's maintainer takes a new version with `aistack upstream` and pushes it ([skills from other repos](skills/README.md#skills-from-other-repos)).
 
 ### Where components land
 

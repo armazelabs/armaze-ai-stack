@@ -1,0 +1,4 @@
+# Where this skill comes from: the files here are a copy of that folder at the commit below.
+# `aistack upstream` checks it for changes and replaces the copy only when you accept them.
+url: https://github.com/ComposioHQ/awesome-claude-skills/tree/master/changelog-generator
+commit: be2a406907dbc61b73e6827ded415c96139d13a2

@@ -66,6 +66,10 @@ HOME=/path/to/fakehome PATH=/path/to/stubbin:/usr/bin:/bin zsh -fc 'source oh-my
 # project-kickoff's finish step, in a scratch repo with a git identity (and once with none: it must exit 1)
 zsh .claude/skills/project-kickoff/scripts/finish.zsh "Name" CLAUDE.md docs project-management
 
+# aistack upstream changes skill folders when you answer y: run it against a scratch clone of the stack, not the checkout
+# you are editing. Without a terminal it only reports; through a pty, `printf y` (or n) answers the prompt.
+ARMAZE_STACK_DIR=/path/to/scratch-clone NO_COLOR=1 ./bin/aistack upstream </dev/null
+
 # The time-tracker and module-docs engines are Node (the components with tests - node:test, no dependencies)
 node --test skills/time-tracker/tests/ skills/module-docs/tests/
 ```
@@ -85,6 +89,8 @@ Three pieces that all have to agree on where the repo lives:
 Component *types* are the `TYPES` array (`skills agents`). Everything type-specific is a `case` on the type name in a small set of helper functions — `type_singular`, `dest_dir`, `dest_leaf`, `component_src`, `component_doc_rel` (and `component_doc` built on it), `component_exists`, `list_names`. Adding a new installable type (e.g. workflows) means adding a branch to each of those, extending `TYPES`, and updating the `_aistack` completion in the plugin. `workflows/` and `tools/` exist in the repo but are deliberately not wired in yet.
 
 Discovery rules (`list_names` / `component_exists`): a skill is a directory under `skills/` that contains `SKILL.md`; an agent is either a `*.md` file under `agents/` or a directory under `agents/` holding an `AGENT.md` (or a `SKILL.md`, for packages that arrive written that way) — `component_doc_rel`, `component_src` and `dest_leaf` branch on whether `agents/<name>` is a directory, so a directory agent installs as a folder and a file agent as `<name>.md`. Anything whose name starts with `.` or `_` is ignored (use `_drafts/` for WIP), as is `README.md`. The one-line description shown by `list`/the picker is the `description:` key from YAML front matter (`component_description` handles quoted values and `>`/`|` block scalars), falling back to the first plain body line.
+
+**Skills from other repos.** A skill may carry an `UPSTREAM` file (`url: <GitHub folder URL>`, `commit: <sha the copy matches>`). Nothing at install or update time reads it: members get the committed copy like any other skill (the file goes into projects with it). Only `cmd_upstream` (`aistack upstream [NAME…]`, for the maintainer) uses it. Run inside a checkout of the stack it works on that checkout, not on `$ARMAZE_STACK_DIR` (the plugin points that at the installed clone). `upstream_fetch` gets the folder with git alone (`init`, a hand-written `info/sparse-checkout` of `/<path>/` and `/LICENSE*`, `fetch --depth 1 --filter=blob:none origin <ref>`, `checkout FETCH_HEAD`) into a `mktemp -d` folder, adds the repo's root LICENSE when the skill has none, compares with `diff -rq -x UPSTREAM`, prints the commits, a compare link and `git diff --no-index --stat`, and on a `y` (only with a terminal on both ends) replaces the folder and rewrites the `commit:` line. The maintainer reviews and commits.
 
 Destination layouts live in `dest_dir()`: `claude` → `.claude/<type>/`, `generic` → `.ai/<type>/`; `--skills-dir`/`--agents-dir` override per type. `cmd_add` refuses to install into the stack repo itself.
 
