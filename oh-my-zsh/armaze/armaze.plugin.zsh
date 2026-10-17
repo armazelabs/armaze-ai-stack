@@ -64,7 +64,7 @@ _aistack() {
   fi
   case ${words[2]} in
     list|ls)
-      _arguments '--names[print type/name only]' '*:type:(skills agents)'
+      _arguments '--names[print type/name only]' '*:type:(skills agents plugins)'
       ;;
     add|install)
       local -a comps
@@ -76,6 +76,7 @@ _aistack() {
         '--agents-dir[override agents destination]:dir:_directories' \
         '(-s --skills)'{-s,--skills}'[only offer skills]' \
         '(-a --agents)'{-a,--agents}'[only offer agents]' \
+        '--plugins[only offer plugins]' \
         '(-f --force)'{-f,--force}'[overwrite without asking]' \
         '(-l --link)'{-l,--link}'[symlink instead of copy]' \
         '*:component:('"${comps[*]}"')'

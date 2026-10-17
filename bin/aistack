@@ -2,9 +2,9 @@
 #
 # aistack — pick skills and agents from the Armaze AI Stack and add them to a repo.
 #
-#   aistack list [skills|agents] [--names]
+#   aistack list [skills|agents|plugins] [--names]
 #   aistack add  [--to DIR] [--platform claude|generic] [--skills-dir DIR] [--agents-dir DIR]
-#               [--skills] [--agents] [--force] [--link] [NAME ...]
+#               [--skills] [--agents] [--plugins] [--force] [--link] [NAME ...]
 #   aistack update [--to DIR]
 #   aistack init [--to DIR] [--no-carry] [--no-plugins] [--launch|--no-launch]
 #   aistack upstream [NAME ...]          (for the stack's maintainer: skills/<name>/UPSTREAM)
@@ -25,7 +25,7 @@ setopt pipe_fail extended_glob typeset_silent
 
 readonly ARMAZE_VERSION="0.20.0"
 readonly MANIFEST_NAME=".armaze-stack"
-readonly -a TYPES=(skills agents)
+readonly -a TYPES=(plugins skills agents)   # this order is the order lists show them in
 # Components that were renamed, "type/old-name" -> new name. Entries stay for good: update
 # moves a project still on the old name over whenever it runs, and add accepts the old name.
 typeset -grA RENAMES=(
@@ -96,13 +96,14 @@ if ui_unicode && [[ ${ARMAZE_ICONS:-1} != 0 ]]; then
   ICON=(
     skills $''    # book
     agents $''    # user-secret
+    plugins $'\uf1e6'  # plug
     stack  $''    # cubes
     rev    $''    # branch
     dir    $''    # folder
     ok     $''    # check
   )
 else
-  ICON=( skills '#' agents '@' stack '=' rev '+' dir '/' ok 'v' )
+  ICON=( skills '#' agents '@' plugins '%' stack '=' rev '+' dir '/' ok 'v' )
 fi
 if ui_unicode; then
   G_ON=$'▶' G_OFF=$'○' G_DASH=$'┄' G_ELL=$'…' G_DOT=$'·' G_ENTER=$'⏎'
@@ -318,7 +319,7 @@ ${C_BOLD}aistack${C_RESET} — add skills and agents from the Armaze AI Stack to
 
 ${C_BOLD}Usage${C_RESET}
   aistack                                  Open the app on the add tab
-  aistack list [skills|agents] [--names]   List what the stack offers
+  aistack list [TYPE] [--names]            List what the stack offers (skills, agents, plugins)
   aistack add [options] [NAME ...]         Add components to a repo (the app if no NAME)
   aistack update [--to DIR]                Pull the latest stack, then refresh this project
   aistack init [options]                   Start a project here, with its own Claude login
@@ -334,6 +335,7 @@ ${C_BOLD}add options${C_RESET}
       --agents-dir DIR    Override where agents go (relative to the target)
   -s, --skills            Only offer skills
   -a, --agents            Only offer agents
+      --plugins           Only offer plugins
   -f, --force             Overwrite existing files without asking
   -l, --link              Symlink instead of copy (handy while developing a skill)
 
@@ -362,6 +364,7 @@ ${C_BOLD}init options${C_RESET}
 ${C_BOLD}Layouts${C_RESET}
   claude    .claude/skills/<name>/    .claude/agents/<name>.md
   generic   .ai/skills/<name>/        .ai/agents/<name>.md
+  plugins   enabled in .claude/settings.json; Claude Code installs and updates them
 
 ${C_BOLD}Stack${C_RESET}  $(pretty_path "$ARMAZE_STACK_DIR")
 USAGE
@@ -424,7 +427,7 @@ stack_changes() {  # <from-rev> <to-rev>
   for file in "${files[@]}"; do
     type=${file%%/*}
     name=${${file#*/}%%/*}
-    [[ $type == agents ]] && name=${name%.md}
+    [[ $type == (agents|plugins) ]] && name=${name%.md}
     [[ $name == (.|_)* || $name == (README|README.md) ]] && continue
     key="$type"$'\t'"$name"
     [[ -n ${state[$key]:-} ]] && continue
@@ -448,10 +451,11 @@ stack_changes() {  # <from-rev> <to-rev>
   done
 }
 
-type_singular() { case $1 in skills) print -r -- skill ;; agents) print -r -- agent ;; esac }
+type_singular() { case $1 in skills) print -r -- skill ;; agents) print -r -- agent ;; plugins) print -r -- plugin ;; esac }
 
 # Relative destination directory for a component type under a platform layout.
 dest_dir() {  # <platform> <type>
+  [[ $2 == plugins ]] && { print -r -- .claude; return }   # Claude Code plugins, whatever the layout
   case $1 in
     claude)  print -r -- ".claude/$2" ;;
     generic) print -r -- ".ai/$2" ;;
@@ -463,6 +467,8 @@ dest_leaf() {  # <type> <name>
   case $1 in
     skills) print -r -- "$2" ;;
     agents) if [[ -d "$ARMAZE_STACK_DIR/agents/$2" ]]; then print -r -- "$2"; else print -r -- "$2.md"; fi ;;
+    # a plugin is an entry in settings.json, not a file; the #name keeps one manifest row per plugin
+    plugins) print -r -- "settings.json#$2" ;;
   esac
 }
 
@@ -473,6 +479,7 @@ component_src() {  # <type> <name>
     agents)
       if [[ -d "$ARMAZE_STACK_DIR/agents/$2" ]]; then print -r -- "$ARMAZE_STACK_DIR/agents/$2"
       else print -r -- "$ARMAZE_STACK_DIR/agents/$2.md"; fi ;;
+    plugins) print -r -- "$ARMAZE_STACK_DIR/plugins/$2.md" ;;   # its card; Claude Code fetches the plugin
   esac
 }
 
@@ -491,6 +498,7 @@ component_doc_rel() {  # <type> <name>
       else
         print -r -- "agents/$name.md"
       fi ;;
+    plugins) print -r -- "plugins/$name.md" ;;
   esac
 }
 
@@ -507,6 +515,7 @@ component_exists() {  # <type> <name>
       local rel
       rel=$(component_doc_rel agents "$2") || return 1
       [[ -f "$ARMAZE_STACK_DIR/$rel" ]] ;;
+    plugins) [[ $2 != README && -f "$ARMAZE_STACK_DIR/plugins/$2.md" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -531,6 +540,10 @@ list_names() {  # <type>
         [[ -f "$p/AGENT.md" || -f "$p/SKILL.md" ]] && names+=("${p:t}")
       done
       print -rl -- ${(ou)names} ;;
+    plugins)
+      for p in "$src"/[^._]*.md(N.); do
+        [[ ${p:t} == README.md ]] || print -r -- "${p:t:r}"
+      done ;;
   esac
 }
 
@@ -669,7 +682,37 @@ pick_mode() {  # sets REPLY (not printed: inside $(...) stdout is a pipe and the
 
 # "installed" tag for a component already present under <dest dir>, else empty.
 pick_tag() {  # <type> <name> <dest dir>
+  if [[ $1 == plugins ]]; then   # a plugin is installed when the project's settings enable it
+    [[ -n $3 && -f $3/settings.json ]] && grep -q "\"$(plugin_meta "$2" plugin)\": *true" "$3/settings.json" \
+      && print -r -- "${ICON[ok]} installed ${G_DOT} "
+    return 0
+  fi
   [[ -n $3 && -e "$3/$(dest_leaf "$1" "$2")" ]] && print -r -- "${ICON[ok]} installed ${G_DOT} "
+}
+
+# A value from a plugin card's front matter: plugin (<name>@<marketplace>) or marketplace (owner/repo).
+plugin_meta() {  # <name> <key>
+  awk -v k="$2:" 'NR == 1 && /^---/ { fm = 1; next } fm && /^---/ { exit } fm && $1 == k { print $2; f = 1; exit } END { exit !f }' \
+    "$ARMAZE_STACK_DIR/plugins/$1.md"
+}
+
+# A plugin isn't copied: Claude Code installs it. Declaring its marketplace and installing it at project
+# scope writes both into <project>/.claude/settings.json, so everyone who opens the project gets it,
+# and Claude Code keeps it up to date. A project set up by aistack init installs it into its own login.
+plugin_install() {  # <name> <project dir>
+  local name=$1 dir=$2 id mp out
+  id=$(plugin_meta "$name" plugin) && mp=$(plugin_meta "$name" marketplace) \
+    || { warn "plugins/$name.md needs plugin: and marketplace: in its front matter"; return 1 }
+  command -v claude >/dev/null || { warn "plugin $name is installed by Claude Code, and there's no claude command here"; return 1 }
+  local -a run=(claude)
+  [[ -d $dir/.claude-local ]] && run=(claude_in "$dir/.claude-local")
+  info "adding plugin $name ${C_DIM}($id, needs the network)${C_RESET}"
+  if ! out=$(cd "$dir" && "${run[@]}" plugin marketplace add "$mp" --scope project 2>&1 \
+      && "${run[@]}" plugin install "$id" --scope project 2>&1); then
+    print -r -- "$out" | tail -3 >&2
+    warn "couldn't add plugin $name"; return 1
+  fi
+  ok "plugin ${C_BOLD}$name${C_RESET} → $(pretty_path "$dir/.claude/settings.json") ${C_DIM}(Claude Code installs it)${C_RESET}"
 }
 
 # Numbered picker for one type. Fills SELECTED with names.
@@ -1102,6 +1145,7 @@ app_open() {  # <tab> [types...]
   local -A dest_rel
   dest_rel[skills]=$(dest_dir claude skills)
   dest_rel[agents]=$(dest_dir claude agents)
+  dest_rel[plugins]=$(dest_dir claude plugins)
   app_run "$1"
 }
 
@@ -1116,6 +1160,7 @@ install_one() {  # <type> <name> <dest> <force 0|1> <copy|link>
   local shown=$(pretty_path "$dest")
 
   component_exists "$type" "$name" || { warn "no such $(type_singular $type): $name"; return 1 }
+  [[ $type == plugins ]] && { plugin_install "$name" "${dest%%/.claude/*}"; return }
 
   if [[ -e $dest || -L $dest ]]; then
     if [[ -L $dest && ${dest:A} == ${src:A} ]]; then
@@ -1159,8 +1204,9 @@ cmd_list() {
       --names)      names_only=1 ;;
       skills|skill) types+=(skills) ;;
       agents|agent) types+=(agents) ;;
+      plugins|plugin) types+=(plugins) ;;
       -h|--help)    usage; return 0 ;;
-      *)            die "unknown argument '$1' (expected: skills, agents, --names)" ;;
+      *)            die "unknown argument '$1' (expected: skills, agents, plugins, --names)" ;;
     esac
     shift
   done
@@ -1216,7 +1262,7 @@ cmd_list() {
     fi
     for name in "${names[@]}"; do
       desc=$(component_description "$(component_doc "$type" "$name")")
-      if [[ -e "$target/$(dest_dir claude "$type")/$(dest_leaf "$type" "$name")" ]]; then
+      if [[ -n $(pick_tag "$type" "$name" "$target/$(dest_dir claude "$type")") ]]; then
         mark="${C_ITEM}${ICON[ok]}${C_RESET}"
       else
         mark=' '
@@ -1241,6 +1287,7 @@ cmd_add() {
       --agents-dir)   [[ -n ${2:-} ]] || die "$1 needs a value"; agents_dir=$2; shift 2 ;;
       -s|--skills)    types+=(skills); shift ;;
       -a|--agents)    types+=(agents); shift ;;
+      --plugins)      types+=(plugins); shift ;;
       -f|--force)     force=1; shift ;;
       -l|--link)      mode=link; shift ;;
       -h|--help)      usage; return 0 ;;
@@ -1262,6 +1309,7 @@ cmd_add() {
   local -A dest_rel
   dest_rel[skills]=${skills_dir:-$(dest_dir "$platform" skills)}
   dest_rel[agents]=${agents_dir:-$(dest_dir "$platform" agents)}
+  dest_rel[plugins]=$(dest_dir "$platform" plugins)
 
   local -a queue=()
   local type name entry
@@ -1353,6 +1401,7 @@ cmd_update() {
     local -A dest_rel
     dest_rel[skills]=$(dest_dir claude skills)
     dest_rel[agents]=$(dest_dir claude agents)
+    dest_rel[plugins]=$(dest_dir claude plugins)
     app_run update
     return
   fi
@@ -1413,6 +1462,11 @@ do_update() {
     if [[ -n ${RENAMES[$type/$name]:-} ]]; then
       if migrate_renamed "$type" "$name" "$rel"; then (( updated += 1 )); else (( failed += 1 )); fi
       continue
+    fi
+    if [[ $type == plugins ]]; then   # nothing to copy: Claude Code updates plugins itself
+      print -r -- "  ${C_DIM}plugin $name is kept up to date by Claude Code${C_RESET}"
+      manifest_upsert "$target" "$type" "$name" "$rel"
+      (( unchanged += 1 )); continue
     fi
     dest="$target/$rel"
     src=$(component_src "$type" "$name")

@@ -27,7 +27,7 @@ cd ~/my-project                 # or any folder, even an empty one
 aistack                         # the app, opened on the add tab (see below)
 
 aistack list                    # the app on its add tab; piped, a plain list with descriptions
-aistack list agents             # just one type
+aistack list agents             # just one type (skills, agents or plugins)
 aistack list --names            # plain type/name lines (what tab completion uses)
 
 aistack add                     # the app on its add tab
@@ -133,6 +133,8 @@ By default `aistack` uses the Claude Code layout. Pass `--platform generic` for 
 |--------|--------|--------|
 | `claude` (default) | `.claude/skills/<name>/` | `.claude/agents/<name>.md` |
 | `generic` | `.ai/skills/<name>/` | `.ai/agents/<name>.md` |
+
+Plugins aren't copied: `aistack add <plugin>` enables it in the project's `.claude/settings.json`, and Claude Code installs it for everyone who opens the project and keeps it up to date (Claude Code only, see [plugins](plugins/README.md)).
 | custom | `--skills-dir DIR` | `--agents-dir DIR` |
 
 The target is the git repo you are standing in (or `--to DIR`). Components are **copied**, so they get committed with your project and keep working for anyone who clones it.
@@ -151,6 +153,7 @@ armaze-ai-stack/
 ├── oh-my-zsh/armaze/          # oh-my-zsh plugin: PATH + tab completion
 ├── skills/                    # one directory per skill, each with a SKILL.md
 ├── agents/                    # one Markdown file per agent
+├── plugins/                   # Claude Code plugins, one card each; Claude Code installs them
 ├── workflows/                 # multi-step processes composing skills and agents
 └── tools/                     # scripts, CLIs, MCP servers
 ```
