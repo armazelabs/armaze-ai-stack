@@ -2,6 +2,28 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.21.0 - 2026-10-17
+
+**Plugins come to the shelf, with superpowers and impeccable, plus three new skills: sync-repo, grill-me and grilling.** Run `aistack update`, then `aistack` to see them. A plugin needs Claude Code: after adding one, commit the project's `.claude/settings.json`.
+
+### Added
+
+- **Plugins**, a third kind of component beside skills and agents. `aistack add <plugin>` has Claude Code turn the plugin on for the project, in `.claude/settings.json`; commit that file and everyone who opens the project gets it. Claude Code installs and updates plugins itself, so `aistack update` leaves them alone. It needs the `claude` command and the network; without `claude`, the plugin is skipped with a warning. `aistack list plugins` and `aistack add --plugins` show only plugins.
+- **superpowers** (plugin, from obra/superpowers): skills for brainstorming, plans, test-driven development, systematic debugging, code review and parallel agents. It introduces itself at the start of every session.
+- **impeccable** (plugin, from pbakaus/impeccable): design fluency for frontend work. One skill with 24 commands, such as `/impeccable audit`, `critique` and `polish`, four review and asset agents, and hooks that check UI changes as you edit.
+- **sync-repo** keeps a cleaned copy of the repo for the client. Each pushed commit becomes one commit there, with the same dates. AI files, internal docs and Figma references never reach it. Every commit is checked: only comments changed, nothing leaks. A Playwright comparison of both apps is offered, and nothing is pushed without a yes. It needs Node and git; say **"set up sync-repo"** once per project.
+- **grill-me** and **grilling**, from mattpocock/skills. `/grill-me` starts a relentless interview to sharpen a plan or design, and grilling asks the questions round by round, with a recommended answer for each. grill-me only runs grilling, so adding grill-me adds grilling too, unless the project has it already.
+- The app's add tab shows the selected component's README beside the list. → or a click moves into it, ↑↓ scroll it, and ← or esc come back. The mouse works: a click selects a row, and the wheel scrolls what is under the pointer.
+- Every skill and agent of our own has a README in one shape: a short summary, when to use it, what it does, how to use it, an example, tips and related components.
+- `aistack upstream`, for the stack's maintainer. Skills that come from other GitHub repos (changelog-generator, content-research-writer, remove-ai-marks, grill-me, grilling) are kept as copies, which change only when the maintainer accepts an upstream update. Members get accepted updates through `aistack update`, as before.
+
+### Changed
+
+- The app is as wide as the terminal and redraws when the window is resized. `ARMAZE_WIDTH` now only caps the width.
+- The list tab is gone: the add tab already shows everything, with a check beside what the project has. `aistack list` in a terminal opens the add tab; piped, it still prints the plain list.
+- Components are listed by their titles, such as "Code to Figma" and "Research Workspace". Commands still take the names (`aistack add code-to-figma`).
+- Plugins are listed first, then skills, then agents.
+
 ## 0.20.0 - 2026-10-16
 
 **time-tracker keeps each day at the multipliers it was recorded at.** After `aistack update`, say **"update time tracker setup"** in each project that tracks time, let one collect run, then commit `config.json` and the `computers/` folder.
