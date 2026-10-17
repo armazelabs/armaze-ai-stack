@@ -2,6 +2,23 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.22.0 - 2026-10-17
+
+**design-unicorn arrives: a crew of seven agents that design, check and build your screens.** Run `aistack update`, then `aistack add design-unicorn` in a project and start it with `claude --agent design-unicorn`. Its first run checks your stack with you and installs the design skills it uses.
+
+### Added
+
+- **design-unicorn**: a director who runs the work and talks to you, plus a designer, reviewer, engineer, researcher, writer and apprentice. Works with any stack, in Figma or in code, and keeps its board and tasks in `project-management/design-unicorn/`, committed so the team shares one board. Adding it also adds `unicorn` and `time-tracker`.
+- Its first run checks your stack and asks you to confirm it, then asks how the crew should work: Figma or code, where it stops for your approval, what it does with git, quality or cost, and whether the design skills go in all your projects or this one. It asks once; `/unicorn setup` changes the answers.
+- Every question the director asks is one you answer by clicking: a few options, the recommended one first, and "Other" to type your own.
+- Commit messages describe the change only. They never name the crew or any of its members.
+- The crew follows time-tracker's budget and wraps up when your hours are used.
+- `unicorn`: the `/unicorn` command for the crew: setup, roll-out, quick, board, stand-down, resume and rollback.
+- `aistack add --global NAME…` adds skills, agents and plugins for all your projects (into your Claude folder); `aistack update --global` refreshes them.
+- A skill or agent can list the skills it can't work without in a `needs:` front-matter line; adding it adds them too, unless the project or your global skills have them.
+- Skills from other repos: `better-ui`, `design-taste-frontend`, `emil-design-eng`, `expo-animation` and `expo-native-ui`.
+- Plugins: `figma` and `frontend-design`.
+
 ## 0.21.1 - 2026-10-17
 
 **The app now shows what your project has, keeps it up to date, and tells you when a new release is out.** Run `aistack update` once to get this release; from then on, `aistack` offers each new one itself.
