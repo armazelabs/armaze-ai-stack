@@ -360,7 +360,9 @@ ${C_BOLD}add options${C_RESET}
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
   -g, --global            Refresh what add --global put in your Claude folder
-  Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies.
+  Anywhere: just pulls the stack. Inside a project: also refreshes that project's copies,
+  removes what the stack renamed or took off the shelf (edited copies go to .armaze-backup/)
+  and adds skills a component now needs. The app does the same as it opens.
 
 ${C_BOLD}init options${C_RESET}
   -t, --to DIR            Folder to set up (default: the current directory)
@@ -852,6 +854,12 @@ tui() {  # <start view: list | help>
   local view=list
   [[ $1 == help ]] && view=help
 
+  # Bring the project in line with the stack before reading it (renamed, removed and newly needed
+  # components; this is also where "update & restart" lands), so the rows show it as it now is.
+  # What changed is shown in a modal once the first frame is up.
+  local tidied=''
+  (( add_ok )) && [[ -f $target/$MANIFEST_NAME ]] && tidied=$(tidy_project 2>&1)
+
   # Rows: one entry per drawn row; r_type '' = not selectable. r_title is what the row shows
   # (component_title); r_name stays the name everything else uses. For a component, r_have is 1
   # when the project has it, r_old 1 when its copy differs from the stack's (the rule update
@@ -1280,6 +1288,16 @@ tui() {  # <start view: list | help>
   trap 'print -n -- $app_off; print; exit 130' INT TERM
   local key seq size drawn_size=$(stty size 2>/dev/null)
   local -F SECONDS t0
+  # what tidy_project changed as the app opened: one line each, colour codes and markers dropped
+  if [[ -n $tidied ]]; then
+    local -a tl=("${(@f)${tidied//$'\e'\[[0-9;]#m/}}")
+    tl=("${(@)tl:#}"); tl=("${(@)tl#(✔|==>|!|\*) }")
+    modal=done
+    modal_text=("${C_BOLD}Brought up to date with the stack${C_RESET}" '')
+    for seq in "${(@)tl[1,5]}"; do modal_wrap "$seq" 2 "$C_MUTED"; done
+    (( $#tl > 5 )) && modal_text+=("${C_MUTED}${G_ELL} and $(( $#tl - 5 )) more${C_RESET}")
+    modal_text+=('' "${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}ok${C_RESET}")
+  fi
   draw
   while true; do
     t0=$SECONDS
@@ -1689,17 +1707,118 @@ cmd_update() {
 # Move one manifest entry from a renamed component's old name to its new one: install the
 # new name beside the old copy (a link stays a link), remove the old copy, swap the row.
 # Reads $target from the caller. Returns 0 moved, 1 failed.
-migrate_renamed() {  # <type> <old-name> <relpath>
-  local type=$1 old=$2 rel=$3
+migrate_renamed() {  # <type> <old-name> <relpath> [stack_rev it was installed from]
+  local type=$1 old=$2 rel=$3 rev=${4:-}
   local new=${RENAMES[$type/$old]}
   local newrel="${rel:h}/$(dest_leaf "$type" "$new")"
   local olddest="$target/$rel" newdest="$target/$newrel" mode=copy
   [[ -L $olddest ]] && mode=link
   install_one "$type" "$new" "$newdest" 1 "$mode" || return 1
-  rm -rf -- "$olddest"
-  manifest_remove "$target" "$rel"
+  retire_copy "$type" "$old" "$rel" "$rev" || return 1
   manifest_upsert "$target" "$type" "$new" "$newrel"
-  ok "$(type_singular $type) $old is now ${C_BOLD}$new${C_RESET} — removed $(pretty_path "$olddest")"
+  ok "$(type_singular $type) $old is now ${C_BOLD}$new${C_RESET} — $REPLY"
+}
+
+# 0 when the copy at <dest> isn't what the stack shipped at <rev> (a manifest row's stack_rev), so
+# the owner edited it. A rev this checkout can't read counts as edited; a symlink never is.
+copy_edited() {  # <type> <name> <dest> <rev>
+  local type=$1 name=$2 dest=$3 rev=$4 src tmp
+  [[ -L $dest ]] && return 1
+  case $type in
+    skills) src=skills/$name ;;
+    agents) [[ -d $dest ]] && src=agents/$name || src=agents/$name.md ;;
+    *)      return 1 ;;
+  esac
+  [[ -n $rev ]] && git -C "$ARMAZE_STACK_DIR" cat-file -e "$rev:$src" 2>/dev/null || return 0
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/aistack-old.XXXXXX") || return 0
+  if git -C "$ARMAZE_STACK_DIR" archive "$rev" -- "$src" 2>/dev/null | tar -x -C "$tmp" 2>/dev/null \
+      && diff -rq -- "$tmp/$src" "$dest" >/dev/null 2>&1; then
+    rm -rf -- "$tmp"; return 1
+  fi
+  rm -rf -- "$tmp"; return 0
+}
+
+# Take a component the stack renamed or removed out of $target (the caller's) and drop its manifest
+# row. A plugin is turned off; a copy is deleted, or, when the owner edited it, moved to
+# .armaze-backup/<date>/ (gitignored in a project) so nothing is lost. REPLY says what happened.
+retire_copy() {  # <type> <name> <relpath> <rev>
+  local type=$1 name=$2 rel=$3 rev=$4 dest="$target/$3" id out bak scope=project
+  local -i n=1
+  if [[ $type == plugins ]]; then
+    # the card is gone from the stack, so its id comes from the release it was installed from
+    id=$(git -C "$ARMAZE_STACK_DIR" show "$rev:plugins/$name.md" 2>/dev/null \
+      | awk 'NR == 1 && /^---/ { fm = 1; next } fm && /^---/ { exit } fm && $1 == "plugin:" { print $2; exit }')
+    [[ -n $id ]] || { warn "plugin $name: can't tell its id any more (claude plugin uninstall turns it off)"; return 1 }
+    command -v claude >/dev/null || { warn "plugin $name is turned off by Claude Code, and there's no claude command here"; return 1 }
+    [[ $target == ${$(global_dir):A} ]] && scope=user
+    local -a run=(claude)
+    [[ -d $target/.claude-local ]] && run=(claude_in "$target/.claude-local")
+    if ! out=$(cd "$target" && "${run[@]}" plugin uninstall "$id" --scope $scope 2>&1); then
+      print -r -- "$out" | tail -3 >&2
+      warn "couldn't turn off plugin $name"; return 1
+    fi
+    REPLY="turned it off"
+  elif [[ -e $dest || -L $dest ]]; then
+    if copy_edited "$type" "$name" "$dest" "$rev"; then
+      bak="$target/.armaze-backup/$(date +%Y-%m-%d)/$rel"
+      while [[ -e $bak || -L $bak ]]; do bak="$target/.armaze-backup/$(date +%Y-%m-%d)-$(( ++n ))/$rel"; done
+      { mkdir -p -- "${bak:h}" && mv -- "$dest" "$bak" } || { warn "couldn't move $(pretty_path "$dest") aside"; return 1 }
+      [[ $target == ${$(global_dir):A} ]] || gitignore_add "$target" .armaze-backup/
+      REPLY="your edited copy is in $(pretty_path "$bak")"
+    else
+      rm -rf -- "$dest" || { warn "couldn't remove $(pretty_path "$dest")"; return 1 }
+      REPLY="removed $(pretty_path "$dest")"
+    fi
+  else
+    REPLY="it was already gone"
+  fi
+  manifest_remove "$target" "$rel"
+}
+
+# Append <line> to <dir>/.gitignore unless it is there already.
+gitignore_add() {  # <dir> <line>
+  local gi=$1/.gitignore
+  [[ -f $gi ]] && grep -qxF -- "$2" "$gi" && return 0
+  { [[ -s $gi && -n $(tail -c1 "$gi") ]] && print; print -r -- "$2" } >> "$gi"
+}
+
+# Bring $target's components in line with the stack before anything is re-copied: what the stack
+# renamed moves to its new name, what it took off the shelf leaves (retire_copy), and a skill a
+# component now needs is added. Every update path runs it: do_update, and the app as it opens.
+# Documents the components wrote are never touched. One line per change.
+tidy_project() {
+  local manifest="$target/$MANIFEST_NAME"
+  [[ -f $manifest ]] || return 0
+  local line type name rel rev rest need skills_rel
+  local -a entries=("${(@f)$(grep -v '^#' "$manifest")}"); entries=("${(@)entries:#}")
+  for line in "${entries[@]}"; do
+    IFS=$'\t' read -r type name rel rev rest <<< "$line"
+    [[ -n $type && -n $name && -n $rel ]] || continue
+    if [[ -n ${RENAMES[$type/$name]:-} ]]; then
+      migrate_renamed "$type" "$name" "$rel" "$rev"
+    elif ! component_exists "$type" "$name"; then
+      retire_copy "$type" "$name" "$rel" "$rev" \
+        && ok "$(type_singular $type) $name is no longer on the shelf — $REPLY"
+    fi
+  done
+  # what is installed now, and the skills it needs that neither the target nor your global skills have
+  entries=("${(@f)$(grep -v '^#' "$manifest" 2>/dev/null)}"); entries=("${(@)entries:#}")
+  for line in "${entries[@]}"; do
+    IFS=$'\t' read -r type name rel rest <<< "$line"
+    [[ -n $type && $type != plugins ]] && component_exists "$type" "$name" || continue
+    case $type in
+      skills) skills_rel=${rel:h} ;;
+      *)      skills_rel=${rel:h:h}/skills; skills_rel=${skills_rel#./} ;;
+    esac
+    for need in ${(f)"$(component_needs "$type" "$name")"}; do
+      [[ -e $target/$skills_rel/$need || -e $(global_dir)/skills/$need ]] && continue
+      component_exists skills "$need" || continue
+      if install_one skills "$need" "$target/$skills_rel/$need" 0 copy >/dev/null; then
+        manifest_upsert "$target" skills "$need" "$skills_rel/$need"
+        ok "$name now needs ${C_BOLD}$need${C_RESET}, so it's added too"
+      fi
+    done
+  done
 }
 
 # Pull the stack, then re-copy whatever $target's manifest records.
@@ -1724,6 +1843,7 @@ do_update() {
   fi
   info "target  $(pretty_path "$target")"
   print
+  tidy_project
 
   local -a entries=("${(@f)$(grep -v '^#' "$manifest")}"); entries=("${(@)entries:#}")
   if (( ! $#entries )); then
