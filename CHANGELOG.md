@@ -2,6 +2,18 @@
 
 All notable changes to the Armaze AI Stack — the shared shelf of skills and agents, and the `aistack` command that installs them — are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.23.3 - 2026-10-17
+
+**`/studio start <account>` opens the crew under the Claude account you name.** Run `aistack update` to get it in your projects.
+
+### Added
+
+- `/studio start` takes the shell command you use for another Claude account, such as `/studio start claude-girudo`. Every tab starts with it instead of `claude`, so the whole crew works on that account. It is remembered until `/studio stop`, and the director uses it too when it reopens a tab. Plain `/studio start` works as before.
+
+### Changed
+
+- Quitting the `aistack` app leaves a clear screen.
+
 ## 0.23.2 - 2026-10-17
 
 **Updating now removes what the stack renamed or took off the shelf, everywhere.** Run `aistack update`, or take the app's update: a leftover `unicorn` becomes `studio`.
