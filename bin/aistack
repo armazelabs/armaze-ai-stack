@@ -48,9 +48,16 @@ typeset -gi STACK_SELF_CHANGED=0  # 1: stack_pull brought a different bin/aistac
 if [[ ( -t 1 || -n ${CLICOLOR_FORCE:-} ) && -z "${NO_COLOR:-}" ]]; then
   C_RESET=$'\e[0m' C_BOLD=$'\e[1m' C_DIM=$'\e[2m'
   C_RED=$'\e[31m' C_GREEN=$'\e[32m' C_YELLOW=$'\e[33m' C_BLUE=$'\e[34m'
-  # 256-colour accents for the banner layout, muted so they sit next to any prompt theme.
-  C_ACCENT=$'\e[38;5;110m' C_SHADOW=$'\e[38;5;238m' C_HEAD=$'\e[1;38;5;110m'
-  C_ITEM=$'\e[38;5;114m' C_MUTED=$'\e[38;5;243m' C_KEY=$'\e[1;38;5;75m'
+  if [[ ${ARMAZE_THEME:-} == classic ]]; then
+    # the fixed 256-colour accents the banner layout had before 0.23, tuned for dark terminals
+    C_ACCENT=$'\e[38;5;110m' C_SHADOW=$'\e[38;5;238m' C_HEAD=$'\e[1;38;5;110m'
+    C_ITEM=$'\e[38;5;114m' C_MUTED=$'\e[38;5;243m' C_KEY=$'\e[1;38;5;75m'
+  else
+    # the terminal theme's own named colours, so the layout looks right on light and dark themes
+    # and recolours in place when the terminal switches between them
+    C_ACCENT=$'\e[34m' C_SHADOW=$'\e[90m' C_HEAD=$'\e[1;34m'
+    C_ITEM=$'\e[32m' C_MUTED=$'\e[90m' C_KEY=$'\e[1;94m'
+  fi
 else
   C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE=""
   C_ACCENT="" C_SHADOW="" C_HEAD="" C_ITEM="" C_MUTED="" C_KEY=""
@@ -347,6 +354,7 @@ ${C_BOLD}add options${C_RESET}
   When it opens, the app checks for a new stack release and offers to update and restart.
   ARMAZE_PICKER=menu for a numbered list instead, =fzf for fuzzy search.
   ARMAZE_ICONS=0 for ASCII markers; ARMAZE_WIDTH=N caps the box width; ARMAZE_ALIGN=left.
+  Colours follow your terminal theme; ARMAZE_THEME=classic for the fixed palette instead.
 
 ${C_BOLD}update options${C_RESET}
   -t, --to DIR            Target repo (default: current git repo, else the current directory)
