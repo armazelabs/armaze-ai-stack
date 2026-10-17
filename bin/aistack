@@ -1283,9 +1283,9 @@ tui() {  # <start view: list | help>
     modal_text+=('' "${C_KEY}${G_ENTER}${C_RESET} ${C_MUTED}remove${C_RESET}    ${C_KEY}esc${C_RESET} ${C_MUTED}back${C_RESET}")
   }
 
-  local app_off=$'\e[?1000l\e[?1006l\e[?25h'   # undoes the line below; every way out prints it
+  local app_off=$'\e[?1000l\e[?1006l\e[?25h\e[H\e[2J'   # undoes the line below and clears the screen; every way out prints it
   print -n -- $'\e[?25l\e[?1000h\e[?1006h\e[H\e[2J'   # hide the cursor, report mouse clicks and wheel (SGR), clear
-  trap 'print -n -- $app_off; print; exit 130' INT TERM
+  trap 'print -n -- $app_off; exit 130' INT TERM
   local key seq size drawn_size=$(stty size 2>/dev/null)
   local -F SECONDS t0
   # what tidy_project changed as the app opened: one line each, colour codes and markers dropped
@@ -1329,7 +1329,7 @@ tui() {  # <start view: list | help>
             modal=''
           fi ;;
         q)       modal='' ;;
-        $'\x03') print -n -- $app_off; print; exit 130 ;;
+        $'\x03') print -n -- $app_off; exit 130 ;;
       esac
       draw; continue
     fi
@@ -1375,12 +1375,11 @@ tui() {  # <start view: list | help>
           fi
         fi ;;
       q|$'\x04') break ;;                                    # q, ctrl-d
-      $'\x03')   print -n -- $app_off; print; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
+      $'\x03')   print -n -- $app_off; exit 130 ;;  # ctrl-c arrives as a byte in raw mode
     esac
     draw
   done
   print -n -- $app_off
-  print
   UI_BOX=0 UI_CAPTURE=0
   (( chk )) && exec {chk}<&-
 }
